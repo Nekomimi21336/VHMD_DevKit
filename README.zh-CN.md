@@ -34,7 +34,7 @@
 - **简单的外部 API**：UDP + JSON(`127.0.0.1:39570`)。一个数据报即可批量更新所有设备。可选 VMT 兼容 OSC
 - **完整的控制器输入**：扳机 / 握把 / 摇杆 / A/B/X/Y / 系统 / 菜单、振动回传、手指骨骼(弯曲值或直接指定骨骼)
 - **视线输入**(SteamVR 的眼动追踪组件)
-- 支持 **Windows / Linux**(尚未在 Linux 版 SteamVR 上验证)
+- 支持 **Windows / Linux**。Linux 上采用直接模式(由驱动接收 SteamVR 渲染的画面)，可通过基于共享内存的查看器确认画面(v0.3.0，尚待在 Linux 版 SteamVR 上确认)
 - **Python 客户端**(无依赖)及示例、可在 SteamVR 上运行的自动验证脚本
 - **不冒充其他设备**：以自有控制器类型 `vhmd_*` 注册。现有应用的按键绑定通过 SteamVR 的重映射复用
 
@@ -107,7 +107,10 @@ ctest --test-dir build --output-on-failure
 tools/install_driver.sh
 ```
 
-详见 [docs/zh-CN/linux.md](docs/zh-CN/linux.md)(实机验证检查清单、关于虚拟显示的注意事项)。
+- Linux 版 SteamVR 无法以“绘制到桌面窗口”的方式启动，因此在 Linux 上驱动以直接模式运行，直接接收 SteamVR 的渲染结果。渲染出的画面可以用 `python3 clients/python/examples/preview_viewer.py` 查看。
+- 实机确认使用 `python3 tests/integration/linux_check.py`(从启动到退出 SteamVR 全部自动完成，并输出报告)。
+
+详见 [docs/zh-CN/linux.md](docs/zh-CN/linux.md)。
 
 ## 使用方法(Python)
 
@@ -167,8 +170,10 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 
 | 类型 | 命令 | 内容 |
 |---|---|---|
-| C++ 单元测试 | `ctest --preset vs2022-release` | 36 项(解析器、坐标变换、配置、超时、路由器、UDP) |
-| Python 单元测试 | `python -m pytest tests/python` | 8 项(客户端) |
+| C++ 单元测试 | `ctest --preset vs2022-release` | 37 项(解析器、坐标变换、配置、超时、路由器、UDP) |
+| Python 单元测试 | `python -m pytest tests/python` | 13 项(客户端、预览读取) |
+| Linux 捕获自测 | `ctest`(Linux) | 用真实 Vulkan 确认共享图像 → 共享内存(无需 SteamVR) |
+| Linux 实机确认 | `python3 tests/integration/linux_check.py` | 直接模式的显示路径 + 集成测试，输出报告 |
 | SteamVR 集成测试 | `python tests/integration/run_integration.py` | 29 项(枚举、按需添加、误差、延迟、输入、骨骼、非法数据包、负载、退出处理) |
 | 反复启动/退出 | `python tests/integration/stress_restart.py --cycles 30` | 每次都检查驱动的退出处理以及是否崩溃 |
 
@@ -199,6 +204,7 @@ driver/
     device_provider.*   设备管理、接收 / 更新线程、按需添加
     device_base.*       所有设备通用
     hmd_device.*        HMD、虚拟显示、视线
+    linux/              Linux 的直接模式、帧捕获、Vulkan 的动态加载
     controller_device.* 控制器、振动、骨骼
     tracker_device.*    追踪器、角色
     math/ protocol/ config/ state/ net/ util/   不依赖 OpenVR 的核心(单元测试对象)
@@ -216,10 +222,10 @@ third_party/            OpenVR SDK(子模块 v2.15.6)、nlohmann/json 3.11.3
 | SteamVR | 2.17.10(Windows 11) |
 | OpenVR SDK | v2.15.6 |
 | Windows 编译器 | MSVC 14.44(Visual Studio 2022 Build Tools 17.14)、CMake 4.3 |
-| Linux 编译器 | gcc 13.3(Ubuntu 24.04 / WSL2)、CMake 3.28 |
+| Linux 编译器 | gcc 13.3(Ubuntu 24.04 / WSL2)、CMake 3.28、Vulkan 使用 Mesa llvmpipe 进行自测 |
 | Python | 3.12(3.10 及以上)、验证用 pyopenvr 2.12 |
 
-详细结果：[docs/verification.md](docs/verification.md)(日文)。在 VRChat 上的运行确认(GUI 操作)以及在 Linux 版 SteamVR 上的运行均尚未验证。
+详细结果：[docs/verification.md](docs/verification.md)(日文)。在 VRChat 上的运行确认(GUI 操作)以及直接模式(v0.3.0)在 Linux 版 SteamVR 上的运行均尚未验证。v0.2.0 已在 Linux 版 SteamVR 2.17.10 上确认到驱动加载为止，并发现了合成器无法启动的问题([docs/zh-CN/linux.md](docs/zh-CN/linux.md))。
 
 ## 许可证
 

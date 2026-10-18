@@ -130,6 +130,8 @@ Passed to `IVRDriverInput::CreateEyeTrackingComponent("/eyetracking")` as `VREye
 | `reset` | `id` (all devices if omitted) | Restores the default pose from the config file |
 | `add` | `id` (all on-demand devices if omitted) | Adds on-demand devices to SteamVR immediately (applied on the next frame). `{"ok":true,"ids":[...]}` |
 
+`display` in `status`: `mode` (`window` / `direct`), `width`, `height`, `refresh_hz`. In direct mode (Linux), additionally `swap_sets_created`, `swap_sets_alive`, `layers_submitted`, `presents`, `vsyncs`, `eye_texture` (`width`, `height`, `vk_format`), `preview` (`state`, `submitted`, `written`, `active`).
+
 Each device in `status`: `id, serial, kind, role, enabled, on_demand, timeout_policy, index` (SteamVR device index, -1 if not registered)`, pose_packets, input_packets, rate_hz` (receive rate)`, age_s` (seconds since last receipt)`, latency_ms` (if `ts` is present).
 
 ### Driver → client: `haptic`

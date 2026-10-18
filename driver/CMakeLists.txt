@@ -52,6 +52,28 @@ set_target_properties(driver_vhmd PROPERTIES
   PDB_OUTPUT_DIRECTORY "$<1:${CMAKE_BINARY_DIR}/pdb>")
 
 if(UNIX AND NOT APPLE)
+  # Direct-mode HMD output (required by Linux SteamVR) + shared-memory preview.
+  # Only Vulkan *headers* are needed: libvulkan is dlopen()ed at runtime.
+  target_sources(driver_vhmd PRIVATE
+    src/linux/direct_mode.cpp
+    src/linux/frame_capture.cpp
+    src/linux/vk_loader.cpp)
+  find_path(VHMD_VULKAN_INCLUDE_DIR vulkan/vulkan.h)
+  if(NOT VHMD_VULKAN_INCLUDE_DIR)
+    include(FetchContent)
+    message(STATUS "Vulkan headers not found; fetching KhronosGroup/Vulkan-Headers ${VHMD_VULKAN_HEADERS_TAG}")
+    FetchContent_Declare(vulkan_headers
+      GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
+      GIT_TAG ${VHMD_VULKAN_HEADERS_TAG}
+      GIT_SHALLOW TRUE
+      SOURCE_SUBDIR do-not-build)
+    FetchContent_MakeAvailable(vulkan_headers)
+    set(VHMD_VULKAN_INCLUDE_DIR "${vulkan_headers_SOURCE_DIR}/include" CACHE PATH "Vulkan headers" FORCE)
+  endif()
+  message(STATUS "Vulkan headers: ${VHMD_VULKAN_INCLUDE_DIR}")
+  target_include_directories(driver_vhmd SYSTEM PRIVATE ${VHMD_VULKAN_INCLUDE_DIR})
+  target_link_libraries(driver_vhmd PRIVATE ${CMAKE_DL_LIBS})
+
   # vrserver loads many drivers into one process: export nothing but the
   # entry point, and link libstdc++/libgcc statically so the driver does not
   # depend on the (possibly older) libstdc++ of the SteamVR runtime.

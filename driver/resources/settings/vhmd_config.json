@@ -19,6 +19,18 @@
   // false = register every enabled tracker at startup (old behaviour).
   "trackersOnDemand": true,
   "log": { "errorsPerSecond": 5, "verbose": false },
+  // HMD output. auto = "direct" on Linux (required by Linux SteamVR: the
+  // compositor hands the eye images to the driver), "window" on Windows.
+  "display": { "mode": "auto" },
+  // Direct mode only: latest eye images (both eyes side by side, RGBA8) in
+  // shared memory for clients/python/examples/preview_viewer.py and your tools.
+  "preview": {
+    "enabled": true,
+    "path": "/dev/shm/vhmd_preview",
+    "fps": 15,
+    "maxEyeWidth": 960,
+    "vulkanDevice": -1      // Vulkan physical device index; -1 = first (must be the GPU SteamVR uses)
+  },
   "vmt": {
     "enabled": false,      // accept VMT compatible OSC on the same port
     "indexMap": { }        // e.g. { "0": "tracker_0", "1": "left_hand" }

@@ -35,6 +35,7 @@
 | 网络 | `driver/src/net/` | 否(内部切换 WinSock/BSD) | ○(回环) |
 | 工具 | `driver/src/util/` | 否 | 部分 |
 | 设备、Provider | `driver/src/*.cpp` | 是 | 集成测试 |
+| Linux 直接模式 | `driver/src/linux/` | 是(+ Vulkan，运行时加载) | 捕获部分用自测，整体用 `linux_check.py` |
 
 不依赖 OpenVR 的部分汇总在静态库 `vhmd_core` 中，驱动 DLL 和测试可执行文件都会链接它。
 
@@ -45,6 +46,9 @@
 | vrserver 主线程 | `Init` / `RunFrame` / `Cleanup`、`Activate` / `Deactivate` | — |
 | 接收 | `UdpReceiver::Loop`。poll 每 100 ms 超时一次并检查停止标志 | 在 `Cleanup` 中 `Stop()` → join(最长约 100 ms) |
 | 更新 | `DeviceProvider::UpdateLoop`。以固定周期更新所有设备 | 在 `Cleanup` 中设置停止标志 → join(最长 1 个周期) |
+| vsync(Linux) | `DirectModeComponent::VsyncLoop`。按显示刷新率通知 `VsyncEvent` | 在 HMD 的 `Deactivate` 中停止 |
+| 捕获(Linux) | `FrameCapture::Worker`。只接收最新一帧，缩小后写入共享内存 | 销毁设备时 join |
+| 合成器(SteamVR 侧) | 调用 `CreateSwapTextureSet` / `SubmitLayer` / `Present` / `PostPresent`。`PostPresent` 会被阻塞到下一次 vsync | — |
 
 - `Init`：读取配置 → 为所有设备生成 `DeviceState` 和设备对象 → 仅对**非按需**设备(默认是 HMD 和左右控制器这 3 点)调用 `TrackedDeviceAdded` → 启动接收、更新线程。
 - 按需添加：接收线程收到发往未注册追踪器的消息时，先把值放入缓冲区，再调用 `RequestAdd(id)`(只是加入队列)。`RunFrame`(vrserver 主线程)通过 `ProcessPendingAdds()` 处理队列并调用 `TrackedDeviceAdded`。缓冲的值会在 `Activate` 之后 100 ms 开始发送，因此添加后立即处于同步状态。
@@ -69,7 +73,7 @@
 | 新的消息类型 | 在 `protocol/messages.h` 中添加结构体 → `parser.cpp` 的 `ParseOne` → `MessageRouter::HandleDatagram` → `DeviceState` → 设备的钩子 |
 | 新的传输方式 (WebSocket、共享内存等) | 以与 `UdpReceiver` 相同的方式接收，然后调用 `MessageRouter::HandleDatagram()` 即可(路由器与传输方式无关) |
 | 兼容其他协议 | 与 `protocol/osc.*` 一样，添加一个返回 `ParseResult` 的解析器，并加入 `HandleDatagram` 的判定 |
-| 实际画面显示(未来) | 在 `HmdDevice::GetComponent` 中改为返回 `IVRDriverDirectModeComponent` / `IVRVirtualDisplay` 而非 `IVRDisplayComponent` 的实现 |
+| 利用画面(编码 / 推流 / 录制) | Linux：`linux/frame_capture.cpp` 的 `Capture()` 是接收左右眼画面的地方，可以在共享内存之外添加其他输出。如果 Windows 也要采用相同方式，则用 D3D11 共享纹理实现 `IVRDriverDirectModeComponent` |
 | 添加控制器输入 | `controller_device.cpp` 的 `InputDef` 表、`resources/input/vhmd_controller_profile.json`，必要时还有重映射(`tools/gen_remapping.py`)和旧版绑定 |
 
 ## 平台抽象(未来的 Linux 支持)

@@ -41,7 +41,9 @@
 | トラッカーのみモード (`hmd.enabled=false`) | ドライバが HMD を追加しないことは確認。この PC では実ヘッドセット(PICO 4S)が未接続のため、SteamVR に HMD が無く他デバイスも有効化されない → **未検証** | 実 HMD 接続時に `docs/verification.md` の手順で確認 |
 | VMT の Joint / Follow / Skeleton / ルーム行列 | 未実装(破棄してログ) | `protocol/osc.cpp` に追加 |
 | 実行時のデバイス追加・削除 | OpenVR はデバイス削除 API が無いため、台数は起動時の設定で決定 | `TrackedDeviceAdded` は後からも呼べるので「最初のパケットで追加」モードは追加可能 |
-| Linux ビルド | WSL2 (Ubuntu 24.04, gcc 13.3) でビルド・単体テスト成功。**Linux 版 SteamVR 上では未検証**。仮想ディスプレイ (`IVRDisplayComponent`) が Linux のコンポジタで起動するかが最大の不明点 | `docs/linux.md`。起動しなければ `IVRVirtualDisplay` 実装 |
+| Linux の表示経路 | v0.2.0 を Linux 版 SteamVR 2.17.10(Arch、KDE Wayland)で試した結果、ドライバは読み込まれ HMD も認識されたが、コンポジタが `CannotDRMLeaseDisplay` で起動しなかった(null ドライバも同じ。Valve issue #889)。`IVRVirtualDisplay` は Linux で壊れている(issue #409)。**v0.3.0 で `IVRDriverDirectModeComponent` を実装**(ALVR の Linux ドライバと同じ方式。共有 Vulkan イメージを `IVRIPCResourceManagerClient` で確保し、vsync はドライバが通知)。**Linux 版 SteamVR 上では未検証** | `tests/integration/linux_check.py` で確認。ALVR の動作確認が SteamVR の安定版かベータ版かは未確認 |
+| 共有イメージの読み取り | 作成時と同じパラメータで OPAQUE_FD としてインポートし、最初の 1 回だけ UNDEFINED から遷移(ALVR と同じ扱い)。同期は dma-buf の書き込みフェンスを上限付きで待つ。プレビュー用途なので、間に合わなければ欠けたフレームになるだけ | — |
+| libvulkan への依存 | 実行時に `dlopen`。Vulkan が無い環境でもドライバは読み込まれ、プレビューだけが無効になる | — |
 | Linux の配布性 | `.so` はビルド環境の glibc 以上を要求(Ubuntu 24.04 ビルドで 2.38)。libstdc++/libgcc は静的リンク | 対象 PC でビルド、または古い環境/Steam Runtime SDK でビルド |
 | macOS | 対象外 | |
 | 送信→反映の遅延 | 更新スレッド周期待ち(120 Hz で最大 8.3 ms) | 受信スレッドから即時 `TrackedDevicePoseUpdated` するモード |

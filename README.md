@@ -34,7 +34,7 @@
 - **シンプルな外部 API**: UDP + JSON(`127.0.0.1:39570`)。1 データグラムで全デバイスをまとめて更新可能。任意で VMT 互換 OSC
 - **コントローラ入力一式**: トリガー / グリップ / スティック / A・B・X・Y / システム / メニュー、振動の返送、指スケルトン(曲げ値 or ボーン直接指定)
 - **視線入力**(SteamVR のアイトラッキングコンポーネント)
-- **Windows / Linux** 対応(Linux 版 SteamVR 上は未検証)
+- **Windows / Linux** 対応。Linux はダイレクトモード(SteamVR が描いた映像をドライバが受け取る方式)で、映像は共有メモリ経由のビューアで確認可能(v0.3.0。Linux 版 SteamVR 上での確認待ち)
 - **Python クライアント**(依存なし)とサンプル、SteamVR 上で動く自動検証スクリプト
 - **なりすましなし**: 独自のコントローラタイプ `vhmd_*` で登録。既存アプリのバインディングは SteamVR のリマッピングで流用
 
@@ -107,7 +107,10 @@ ctest --test-dir build --output-on-failure
 tools/install_driver.sh
 ```
 
-詳しくは [docs/linux.md](docs/linux.md)(実機確認チェックリスト、仮想ディスプレイに関する注意)。
+- Linux 版 SteamVR は「デスクトップのウィンドウに描く」方式で起動できないため、Linux ではドライバが SteamVR の描画結果を直接受け取るダイレクトモードで動きます。描画された映像は `python3 clients/python/examples/preview_viewer.py` で見られます。
+- 実機での確認は `python3 tests/integration/linux_check.py`(SteamVR の起動〜終了まで自動、レポートを出力)。
+
+詳しくは [docs/linux.md](docs/linux.md)。
 
 ## 使い方(Python)
 
@@ -167,8 +170,10 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 
 | 種類 | コマンド | 内容 |
 |---|---|---|
-| C++ 単体テスト | `ctest --preset vs2022-release` | 36 件(パーサ、座標変換、設定、タイムアウト、ルーター、UDP) |
-| Python 単体テスト | `python -m pytest tests/python` | 8 件(クライアント) |
+| C++ 単体テスト | `ctest --preset vs2022-release` | 37 件(パーサ、座標変換、設定、タイムアウト、ルーター、UDP) |
+| Python 単体テスト | `python -m pytest tests/python` | 13 件(クライアント、プレビュー読み取り) |
+| Linux キャプチャセルフテスト | `ctest`(Linux) | 実際の Vulkan で共有イメージ → 共有メモリを確認(SteamVR 不要) |
+| Linux 実機確認 | `python3 tests/integration/linux_check.py` | ダイレクトモードの表示経路 + 統合テスト、レポート出力 |
 | SteamVR 統合テスト | `python tests/integration/run_integration.py` | 29 項目(列挙、オンデマンド追加、誤差、遅延、入力、スケルトン、不正パケット、負荷、終了処理) |
 | 起動/終了の繰り返し | `python tests/integration/stress_restart.py --cycles 30` | 毎回ドライバの終了処理とクラッシュ有無を確認 |
 
@@ -199,6 +204,7 @@ driver/
     device_provider.*   デバイス管理、受信 / 更新スレッド、オンデマンド追加
     device_base.*       全デバイス共通
     hmd_device.*        HMD、仮想ディスプレイ、視線
+    linux/              Linux のダイレクトモード、フレームキャプチャ、Vulkan の動的ロード
     controller_device.* コントローラ、振動、スケルトン
     tracker_device.*    トラッカー、ロール
     math/ protocol/ config/ state/ net/ util/   OpenVR 非依存のコア(単体テスト対象)
@@ -216,10 +222,10 @@ third_party/            OpenVR SDK(サブモジュール v2.15.6)、nlohmann/jso
 | SteamVR | 2.17.10(Windows 11) |
 | OpenVR SDK | v2.15.6 |
 | Windows コンパイラ | MSVC 14.44(Visual Studio 2022 Build Tools 17.14)、CMake 4.3 |
-| Linux コンパイラ | gcc 13.3(Ubuntu 24.04 / WSL2)、CMake 3.28 |
+| Linux コンパイラ | gcc 13.3(Ubuntu 24.04 / WSL2)、CMake 3.28、Vulkan は Mesa llvmpipe でセルフテスト |
 | Python | 3.12(3.10 以上)、検証用に pyopenvr 2.12 |
 
-結果の詳細: [docs/verification.md](docs/verification.md)。VRChat 上での動作確認(GUI 操作)と Linux 版 SteamVR 上での動作は未検証です。
+結果の詳細: [docs/verification.md](docs/verification.md)。VRChat 上での動作確認(GUI 操作)と、Linux 版 SteamVR 上でのダイレクトモード(v0.3.0)の動作は未検証です。v0.2.0 では Linux 版 SteamVR 2.17.10 でドライバの読み込みまで確認し、コンポジタが起動しない問題が見つかりました([docs/linux.md](docs/linux.md))。
 
 ## ライセンス
 

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(VHMD_DevKit VERSION 0.2.0 LANGUAGES CXX)
+project(VHMD_DevKit VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,6 +19,8 @@ option(VHMD_BUILD_TESTS "Build unit tests" ON)
 # otherwise the tag is fetched at configure time.
 set(VHMD_OPENVR_TAG "v2.15.6" CACHE STRING "OpenVR SDK tag")
 set(VHMD_OPENVR_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openvr" CACHE PATH "OpenVR SDK checkout")
+# Linux only, used when no system vulkan/vulkan.h is found.
+set(VHMD_VULKAN_HEADERS_TAG "v1.3.296" CACHE STRING "Vulkan-Headers tag")
 if(NOT EXISTS "${VHMD_OPENVR_DIR}/headers/openvr_driver.h")
   include(FetchContent)
   message(STATUS "OpenVR not found in ${VHMD_OPENVR_DIR}; fetching ${VHMD_OPENVR_TAG}")

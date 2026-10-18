@@ -34,7 +34,7 @@ No hardware needed: poses and inputs sent from an external process over UDP/JSON
 - **Simple external API**: UDP + JSON (`127.0.0.1:39570`). A single datagram can update all devices at once. Optional VMT-compatible OSC
 - **Full controller input set**: trigger / grip / stick / A, B, X, Y / system / menu, haptics sent back to the client, finger skeleton (curl values or direct bone specification)
 - **Eye gaze input** (SteamVR's eye tracking component)
-- **Windows / Linux** support (not yet verified on Linux SteamVR)
+- **Windows / Linux** support. On Linux the driver runs in direct mode (the driver receives the frames SteamVR renders), and the output can be viewed with a viewer via shared memory (v0.3.0; awaiting confirmation on SteamVR for Linux)
 - **Python client** (no dependencies) with samples, plus automated verification scripts that run against SteamVR
 - **No impersonation**: registers its own controller types `vhmd_*`. Existing apps' bindings are reused via SteamVR remapping
 
@@ -107,7 +107,10 @@ ctest --test-dir build --output-on-failure
 tools/install_driver.sh
 ```
 
-For details, see [docs/en/linux.md](docs/en/linux.md) (on-hardware verification checklist, notes on the virtual display).
+- SteamVR for Linux cannot start in "draw into a desktop window" mode, so on Linux the driver runs in direct mode, receiving SteamVR's rendered output directly. You can view the rendered frames with `python3 clients/python/examples/preview_viewer.py`.
+- To verify on real hardware, run `python3 tests/integration/linux_check.py` (automates everything from starting SteamVR to shutting it down, and writes a report).
+
+For details, see [docs/en/linux.md](docs/en/linux.md).
 
 ## Usage (Python)
 
@@ -167,8 +170,10 @@ Settings are loaded when SteamVR starts. Either edit the source-side files and r
 
 | Kind | Command | Contents |
 |---|---|---|
-| C++ unit tests | `ctest --preset vs2022-release` | 36 tests (parser, coordinate conversion, config, timeouts, router, UDP) |
-| Python unit tests | `python -m pytest tests/python` | 8 tests (client) |
+| C++ unit tests | `ctest --preset vs2022-release` | 37 tests (parser, coordinate conversion, config, timeouts, router, UDP) |
+| Python unit tests | `python -m pytest tests/python` | 13 tests (client, preview reader) |
+| Linux capture self-test | `ctest` (Linux) | Checks shared image → shared memory with real Vulkan (no SteamVR needed) |
+| Linux on-hardware check | `python3 tests/integration/linux_check.py` | Direct-mode display path + integration tests, writes a report |
 | SteamVR integration tests | `python tests/integration/run_integration.py` | 29 items (enumeration, on-demand addition, error, latency, input, skeleton, invalid packets, load, shutdown) |
 | Repeated start/stop | `python tests/integration/stress_restart.py --cycles 30` | Checks the driver's shutdown and whether it crashed on every cycle |
 
@@ -199,6 +204,7 @@ driver/
     device_provider.*   Device management, receive / update threads, on-demand addition
     device_base.*       Common to all devices
     hmd_device.*        HMD, virtual display, eye gaze
+    linux/              Linux direct mode, frame capture, dynamic loading of Vulkan
     controller_device.* Controllers, haptics, skeleton
     tracker_device.*    Trackers, roles
     math/ protocol/ config/ state/ net/ util/   OpenVR-independent core (covered by unit tests)
@@ -216,10 +222,10 @@ third_party/            OpenVR SDK (submodule v2.15.6), nlohmann/json 3.11.3
 | SteamVR | 2.17.10 (Windows 11) |
 | OpenVR SDK | v2.15.6 |
 | Windows compiler | MSVC 14.44 (Visual Studio 2022 Build Tools 17.14), CMake 4.3 |
-| Linux compiler | gcc 13.3 (Ubuntu 24.04 / WSL2), CMake 3.28 |
+| Linux compiler | gcc 13.3 (Ubuntu 24.04 / WSL2), CMake 3.28, Vulkan self-tested with Mesa llvmpipe |
 | Python | 3.12 (3.10 or later), pyopenvr 2.12 for verification |
 
-Detailed results: [docs/verification.md](docs/verification.md) (Japanese). Operation in VRChat (GUI interaction) and on SteamVR for Linux has not been verified.
+Detailed results: [docs/verification.md](docs/verification.md) (Japanese). Operation in VRChat (GUI interaction) and direct mode (v0.3.0) on SteamVR for Linux have not been verified. With v0.2.0, loading the driver was confirmed on SteamVR for Linux 2.17.10, and an issue where the compositor fails to start was found ([docs/en/linux.md](docs/en/linux.md)).
 
 ## License
 

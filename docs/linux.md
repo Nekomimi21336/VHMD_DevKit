@@ -2,41 +2,58 @@
 
 # Linux 版 SteamVR での使い方
 
-Linux ネイティブの SteamVR に `driver_vhmd.so` を読み込ませる手順です。Proton で動く Windows ゲーム(VRChat 等)も Linux 版 SteamVR に接続するので、このドライバが必要になります。送信側のプロトコル・Python クライアントは Windows と共通です。
+Linux ネイティブの SteamVR に `driver_vhmd.so` を読み込ませる手順です。Proton で動く Windows ゲーム(VRChat など)も Linux 版 SteamVR に接続するので、このドライバが必要になります。送信側のプロトコルと Python クライアントは Windows と共通です。
+
+## 仕組み: Linux では「ダイレクトモード」で動く
+
+Linux 版 SteamVR のコンポジタは、Windows のように「デスクトップ上のウィンドウに描く」ことができません。ダイレクトモード(DRM リース)で取れる表示先が無いと、`VRInitError_Compositor_CannotDRMLeaseDisplay` で起動を止めます。SteamVR 同梱の null ドライバでも同じで、Valve も既知の問題として扱っています([SteamVR-for-Linux#889](https://github.com/ValveSoftware/SteamVR-for-Linux/issues/889))。
+
+そこで v0.3.0 から、Linux の仮想 HMD は **`IVRDriverDirectModeComponent`** を実装しています。
+
+```
+アプリ ──▶ vrcompositor ──(共有 Vulkan イメージ / dma-buf)──▶ driver_vhmd.so
+                                                              ├─ vsync を自分で通知(既定 90 Hz)
+                                                              └─ 最新フレームを /dev/shm/vhmd_preview へ(任意)
+```
+
+- 実ディスプレイも DRM リースも不要です。左右の目の画像はドライバが確保した共有 Vulkan イメージに描かれ、`Present` で渡されます(`IVRIPCResourceManagerClient` の Linux 専用 API)。
+- ALVR の Linux ドライバ(2026-10 の master)と同じ方式です。コードは流用せず、OpenVR ヘッダに沿って実装しました。
+- Windows は従来どおりデスクトップのウィンドウ方式です(`display.mode`: `auto` / `window` / `direct`)。
 
 ## 状態(2026-10-18 時点)
 
 | 項目 | 状態 |
 |---|---|
-| Linux ビルド (gcc 13.3, Ubuntu 24.04 / WSL2) | ✅ 警告 0(`-Wall -Wextra -Wpedantic`) |
-| C++ 単体テスト 36 件 | ✅ すべて成功(UDP ループバック含む) |
-| 公開シンボル | ✅ `HmdDriverFactory` のみ(リンカのバージョンスクリプト) |
-| 依存ライブラリ | ✅ `libc`, `libm`, `ld-linux` のみ(libstdc++ / libgcc は静的リンク) |
-| `tools/*.sh` | ✅ 偽の SteamVR 環境で install / uninstall / `--clean-settings` を確認 |
-| 統合テストの Linux 対応 (`tests/integration/steamvr_util.py`) | ⚠ WSL 上で読み込みとプロセス検出のみ確認 |
-| **実機の Linux 版 SteamVR での動作** | ❌ **未検証**(この開発 PC には Linux 版 SteamVR が無い) |
+| Linux ビルド(gcc 13.3、Ubuntu 24.04 / WSL2) | ✅ 警告 0(`-Wall -Wextra -Wpedantic`) |
+| C++ 単体テスト 37 件 | ✅ すべて成功(ASan / TSan でも問題なし) |
+| フレームキャプチャのセルフテスト(`tests/linux/capture_selftest.cpp`) | ✅ 実際の Vulkan(Mesa llvmpipe)で fd インポート → 縮小 → 共有メモリ → 画素値まで確認 |
+| 公開シンボル / 依存ライブラリ | ✅ `HmdDriverFactory` のみ / `libc`、`libm`、`ld-linux` のみ(libvulkan は実行時に `dlopen`) |
+| v0.2.0 を Linux 版 SteamVR 2.17.10(Arch、KDE Wayland)で実行 | ✅ ドライバのロード、HMD 認識、コントローラのリマップ / ❌ コンポジタが `CannotDRMLeaseDisplay` で起動せず(null ドライバも同様)→ v0.3.0 のダイレクトモードで対応 |
+| **v0.3.0(ダイレクトモード)を Linux 版 SteamVR で実行** | ❌ **未検証**。下の `linux_check.py` で確認してください |
 
 ## 前提
 
 - x86_64 Linux、Steam + SteamVR(Linux ネイティブ版)
 - g++ 9 以上(または clang)、CMake 3.20 以上、Git、Python 3.10 以上
+- Vulkan ドライバ(SteamVR が動く環境なら入っています)。Vulkan のヘッダ(`vulkan-headers` / `libvulkan-dev`)は無ければ configure 時に自動取得します
 - Ubuntu / Debian 例: `sudo apt install build-essential cmake ninja-build git python3`
+- Arch 例: `sudo pacman -S base-devel cmake ninja git python vulkan-headers`
 
 ## ビルド
 
 ```bash
-git clone --recurse-submodules <このリポジトリ>
-cd VirtualHMD
+git clone --recurse-submodules https://github.com/Nekomimi21336/VHMD_DevKit.git
+cd VHMD_DevKit
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-出力: `build/driver/vhmd/bin/linux64/driver_vhmd.so`(+ `driver.vrdrivermanifest`, `resources/`)。
+出力: `build/driver/vhmd/bin/linux64/driver_vhmd.so`(+ `driver.vrdrivermanifest`、`resources/`)。
 
 ### glibc の注意
 
-できあがった `.so` は**ビルドした環境の glibc 以上**を要求します(Ubuntu 24.04 でビルドすると glibc 2.38 以上)。`tools/verify_env.sh` の `driver_needs_glibc` で確認できます。**SteamVR を動かす PC 自身でビルドする**のが確実です。古いディストリにも配る場合は、古い環境(または Steam Runtime SDK のコンテナ)でビルドしてください。
+できあがった `.so` は、**ビルドした環境の glibc 以上**を要求します(Ubuntu 24.04 でビルドすると glibc 2.38 以上)。`tools/verify_env.sh` の `driver_needs_glibc` で確認できます。**SteamVR を動かす PC 自身でビルドする**のが確実です。
 
 ## 登録・解除
 
@@ -46,47 +63,73 @@ tools/install_driver.sh        # vrpathreg.sh adddriver build/driver/vhmd
 tools/uninstall_driver.sh --clean-settings   # 登録解除 + SteamVR 設定から vhmd の項目を削除(バックアップ付き)
 ```
 
-- `vrpathreg.sh` は `<SteamVR>/bin/vrpathreg.sh`。SteamVR の場所は `~/.config/openvr/openvrpaths.vrpath` の `runtime`、無ければ `~/.steam/steam`, `~/.local/share/Steam`, Flatpak の順に探します。
-- SteamVR 本体フォルダへのコピーはしません。
+- `vrpathreg.sh` は `<SteamVR>/bin/vrpathreg.sh` です。SteamVR の場所は `~/.config/openvr/openvrpaths.vrpath` の `runtime` から、無ければ `~/.steam/steam`、`~/.local/share/Steam`、Flatpak の順に探します。
+- SteamVR 本体のフォルダへのコピーはしません。
 - **ビルドし直すときは SteamVR を終了してください。**
 
 ## 使う
 
 ```bash
-python3 clients/python/examples/fullbody_sway.py
+python3 clients/python/examples/fullbody_sway.py --points 6
 ```
 
-ログ: `~/.steam/steam/logs/vrserver.txt`(場所は `openvrpaths.vrpath` の `log`)。`vhmd:` で始まる行がこのドライバのものです。
+SteamVR が仮想 HMD に描いている映像を見るには:
 
-## 最大のリスク: 仮想ディスプレイ
+```bash
+python3 clients/python/examples/preview_viewer.py                 # ウィンドウで表示(標準ライブラリのみ)
+python3 clients/python/examples/preview_viewer.py --snapshot eyes.png
+```
 
-HMD は `IVRDisplayComponent` で「デスクトップ上のウィンドウ」として表示する方式(Windows で動作確認済み、OpenVR サンプル `simplehmd` と同じ)です。**Linux 版 SteamVR のコンポジタがこの方式で起動するかは不明**です。起動しない場合の兆候と対処:
+自作ツールから読むときは `vhmd_client.preview.PreviewReader` を使います(形式: `driver/src/util/preview_shm.h`。左右の目を横に並べた RGBA8、sRGB)。
 
-| 兆候 | 対処 |
+| 設定(`vhmd_config.json` の `preview`) | 既定 | 内容 |
+|---|---|---|
+| `enabled` | `true` | 共有メモリへの書き出し |
+| `path` | `/dev/shm/vhmd_preview` | 書き出し先 |
+| `fps` | `15` | 書き出しの上限レート(コンポジタの描画レートとは無関係) |
+| `maxEyeWidth` | `960` | 片目あたりの最大幅(縮小して書き出す) |
+| `vulkanDevice` | `-1` | 使う GPU の番号。`-1` は最初の GPU。**SteamVR と同じ GPU を選ぶ必要があります**(複数 GPU の PC で映像が来ない場合に変更) |
+
+プレビューの処理で失敗しても無効になるだけで、SteamVR への描画には影響しません。
+
+ログ: `~/.steam/steam/logs/vrserver.txt`(場所は `openvrpaths.vrpath` の `log`)。`vhmd:` で始まる行がこのドライバのものです。`config list` の応答の `display` に、モード、present 数、vsync 数、プレビューの状態が入ります。
+
+## 実機での確認(自動)
+
+```bash
+pip install openvr
+python3 tests/integration/linux_check.py
+```
+
+SteamVR の起動から終了までを自動で行い、`tests/integration/results/linux_check_<日時>/` にレポート(`report.md`、`report.json`)、プレビューのスナップショット(`eyes.png`)、ログの抜粋を出力します。**このフォルダを送ってもらえれば状況が分かります。** 確認する内容:
+
+| # | 確認 | 期待 |
+|---|---|---|
+| 1 | 環境(ディストリ、セッション種別、GPU、Vulkan、SteamVR のビルドとブランチ) | 情報 |
+| 2 | ドライバのビルド・登録 | ✅ |
+| 3 | SteamVR がドライバを読み込み、UDP に応答 | ✅ |
+| 4 | HMD がダイレクトモード、vsync が回っている | ✅ |
+| 5 | コンポジタがスワップテクスチャを作り、毎秒 30 回以上 present | ✅ これが今回の本題 |
+| 6 | `vrcompositor.txt` に `CannotDRMLeaseDisplay` などが無い | ✅ |
+| 7 | プレビューに進んでいくフレームがあり、`eyes.png` を保存 | ✅ |
+| 8 | 通常の統合テスト(`run_integration.py`: 列挙、ポーズ、入力、スケルトン、負荷) | ✅ |
+| 9 | SteamVR 終了時にドライバの終了処理が走る | ✅ |
+
+`--skip-integration` で 8 を省略できます(表示経路だけ確認したいとき)。
+
+## うまくいかないとき
+
+| 症状 | 確認すること |
 |---|---|
-| SteamVR が「ヘッドセットが見つからない / コンポジタが起動しない」 | まず `hmd.enabled: false`(実 HMD と併用するトラッカー/コントローラ専用モード)で他の機能だけ使う |
-| 実 HMD が無い PC で HMD も仮想にしたい | `IVRVirtualDisplay` を実装する(`HmdDevice::GetComponent` で返すコンポーネントを差し替え。`docs/architecture.md` の拡張ポイント参照) |
-| `vrcompositor` のログに Vulkan / ディスプレイのエラー | `vhmd_display` の `windowWidth/Height` を画面内に収める、Wayland なら X11 セッションでも試す |
-
-## 実機での確認チェックリスト
-
-結果を記入して `docs/verification.md` に反映してください。
-
-| # | 手順 | 期待結果 | 結果 |
-|---|---|---|---|
-| L1 | `tools/verify_env.sh` | SteamVR のパス、glibc ≥ `driver_needs_glibc` | 未検証 |
-| L2 | `tools/install_driver.sh` → SteamVR 起動 | `vrserver.txt` に `Loaded server driver vhmd` と `vhmd: listening on udp://127.0.0.1:39570` | 未検証 |
-| L3 | 同ログ | `Active HMD set to vhmd.VHMD-HMD-0`(実 HMD 未接続時)。コンポジタが起動するか(上記リスク) | 未検証 |
-| L4 | `pip install openvr` → `python3 tests/integration/run_integration.py` | Windows と同じ 29 項目。`--stop-relaunchers` は自動起動オーバーレイを終了させるので必要時のみ | 未検証 |
-| L5 | `python3 clients/python/examples/fullbody_sway.py` + SteamVR の「ヘッドセットのビュー」 | 視点とデバイスが動く | 未検証 |
-| L6 | Proton で VRChat を VR モード起動 | HMD・手・トラッカーが反映される | 未検証 |
-| L7 | `hmd.enabled: false` + 実 HMD | 実 HMD と並んでコントローラ/トラッカーが追加される | 未検証 |
-| L8 | SteamVR を終了 | `vhmd: shutting down` が出て vrserver が終了する(ハングしない) | 未検証 |
+| 5 が 0(present が来ない) | `vrcompositor.txt` の末尾。SteamVR のバージョン(ALVR はベータ版で動作確認していた可能性があり、安定版 2.17.10 で同じように動くかは未確認)。`steamvr.vrsettings` に、以前 ALVR などで入れた起動オプションや `forcedDriver` が残っていないか |
+| present は来るがプレビューが真っ黒 / 来ない | `report.json` の `display.preview.state`。複数 GPU の場合は `preview.vulkanDevice` |
+| VRChat が起動しない | 1〜7 がすべて ✅ になってから試してください。Proton 側のログ(`PROTON_LOG=1`) |
+| 実 HMD と併用したい | `"hmd": {"enabled": false}`(コントローラ / トラッカーだけ追加) |
 
 ## Linux 対応で入れた変更
 
-- `driver/driver_exports.map` + `-Wl,--version-script`: `HmdDriverFactory` 以外を非公開(vrserver は複数ドライバを同じプロセスに読み込むためシンボル衝突を防ぐ)。
-- `-static-libstdc++ -static-libgcc`: SteamVR 実行環境の libstdc++ が古くても読み込めるように。`-Wl,--no-undefined` で未解決シンボルをビルド時に検出。
-- gcc 固有の警告 4 件を修正(初期化、OSC バンドルの長さ読み取りの戻り値確認、一時オブジェクトへの参照)。
-- `.gitattributes`: `*.sh` を LF 固定(Windows の `core.autocrlf` で壊れないように)。
-- `tests/integration/steamvr_util.py`: `/proc` によるプロセス検出、シグナルでの停止、`vrstartup.sh` 起動、`~/.steam` / XDG パス。OpenVR クライアントの検出は `vrclient.so` を読み込んだプロセスで行い、Steam 本体・`steamapps` 配下(Proton ゲーム含む)は対象外。
+- **v0.3.0**: `driver/src/linux/`(`direct_mode.*`: ダイレクトモードのコンポーネントと vsync クロック、`frame_capture.*`: 共有イメージのインポートと縮小コピー、`vk_loader.*`: libvulkan の動的ロード)、`util/preview_shm.h`、Python の `preview.py` / `preview_viewer.py`、`tests/linux/capture_selftest.cpp`、`tests/integration/linux_check.py`。
+- `driver/driver_exports.map` + `-Wl,--version-script`: `HmdDriverFactory` 以外を非公開にします(vrserver は複数のドライバを同じプロセスに読み込むため)。
+- `-static-libstdc++ -static-libgcc`: SteamVR の実行環境の libstdc++ が古くても読み込めるようにします。
+- `.gitattributes`: `*.sh` を LF に固定します。
+- `tests/integration/steamvr_util.py`: `/proc` でのプロセス検出、シグナルでの停止、`vrstartup.sh` での起動、`~/.steam` / XDG のパス。

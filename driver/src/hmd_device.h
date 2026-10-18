@@ -2,6 +2,9 @@
 // (IVRDisplayComponent, same approach as openvr samples/drivers/simplehmd).
 #pragma once
 
+#include <memory>
+
+#include "config/driver_config.h"
 #include "device_base.h"
 
 namespace vhmd {
@@ -39,15 +42,25 @@ private:
     DisplayConfig cfg_;
 };
 
+class DirectModeComponent; // linux/direct_mode.h
+
 class HmdDevice : public VirtualDevice {
 public:
-    HmdDevice(std::shared_ptr<DeviceState> state, const DisplayConfig& display);
+    // `direct_mode` (Linux only) makes the compositor hand the eye images to
+    // the driver instead of opening a window; see linux/direct_mode.h.
+    HmdDevice(std::shared_ptr<DeviceState> state, const DisplayConfig& display, bool direct_mode,
+              const PreviewConfig& preview);
+    ~HmdDevice() override;
 
     vr::ETrackedDeviceClass DeviceClass() const override { return vr::TrackedDeviceClass_HMD; }
     void* GetComponent(const char* name_and_version) override;
+    bool DirectMode() const;
+    // JSON object describing the display path (for config op "list").
+    std::string DisplayStatusJson() const;
 
 protected:
     void OnActivate(vr::PropertyContainerHandle_t container) override;
+    void OnDeactivate() override;
     void OnInput(const std::string& name, float value) override;
     void OnGaze(const GazeMessage& m) override;
     // Protocol positions are the head (HMD) position. Only when configured
@@ -58,6 +71,7 @@ private:
     DisplayConfig display_cfg_;
     bool head_model_;
     HmdDisplayComponent display_;
+    std::unique_ptr<DirectModeComponent> direct_;
     vr::VRInputComponentHandle_t system_click_ = vr::k_ulInvalidInputComponentHandle;
     vr::VRInputComponentHandle_t eye_tracking_ = vr::k_ulInvalidInputComponentHandle;
 };

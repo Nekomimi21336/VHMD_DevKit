@@ -173,6 +173,23 @@ ConfigLoadResult LoadConfigFromJson(std::string_view text) {
             if (d.kind == DeviceKind::Tracker) d.on_demand = c.trackers_on_demand;
         }
 
+        if (auto d = root.find("display"); d != root.end() && d->is_object()) {
+            Get(*d, "mode", c.display_mode, w, "display.");
+            if (c.display_mode != "auto" && c.display_mode != "window" && c.display_mode != "direct") {
+                w.emplace_back("display.mode: expected auto|window|direct");
+                c.display_mode = "auto";
+            }
+        }
+        if (auto p = root.find("preview"); p != root.end() && p->is_object()) {
+            Get(*p, "enabled", c.preview.enabled, w, "preview.");
+            Get(*p, "path", c.preview.path, w, "preview.");
+            Get(*p, "fps", c.preview.fps, w, "preview.");
+            c.preview.fps = std::clamp(c.preview.fps, 1.0, 120.0);
+            int max_w = static_cast<int>(c.preview.max_eye_width);
+            Get(*p, "maxEyeWidth", max_w, w, "preview.");
+            c.preview.max_eye_width = static_cast<uint32_t>(std::clamp(max_w, 16, 8192));
+            Get(*p, "vulkanDevice", c.preview.vulkan_device, w, "preview.");
+        }
         if (auto t = root.find("timeout"); t != root.end() && t->is_object()) {
             Get(*t, "ms", c.timeout_ms, w, "timeout.");
             c.timeout_ms = std::max(c.timeout_ms, 1.0);

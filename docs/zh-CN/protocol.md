@@ -130,6 +130,8 @@
 | `reset` | `id`(省略时为全部设备) | 恢复为配置文件中的默认姿态 |
 | `add` | `id`(省略时为全部按需设备) | 立即将按需设备添加到 SteamVR(下一帧生效)。`{"ok":true,"ids":[...]}` |
 
+`status` 的 `display`：`mode`(`window` / `direct`)、`width`、`height`、`refresh_hz`。在直接模式(Linux)下还包含 `swap_sets_created`、`swap_sets_alive`、`layers_submitted`、`presents`、`vsyncs`、`eye_texture`(`width`、`height`、`vk_format`)、`preview`(`state`、`submitted`、`written`、`active`)。
+
 `status` 中每个设备包含：`id, serial, kind, role, enabled, on_demand, timeout_policy, index`(SteamVR 设备编号，未注册为 -1)`, pose_packets, input_packets, rate_hz`(接收速率)`, age_s`(距最后接收的秒数)`, latency_ms`(有 `ts` 时)。
 
 ### 驱动 → 客户端：`haptic`

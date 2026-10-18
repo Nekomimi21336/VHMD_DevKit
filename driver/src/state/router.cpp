@@ -135,6 +135,10 @@ std::string MessageRouter::StatusJson(Clock::time_point now, std::optional<doubl
         devs.push_back(std::move(e));
     }
     j["devices"] = std::move(devs);
+    if (hooks_.display_status) {
+        json d = json::parse(hooks_.display_status(), nullptr, false);
+        if (!d.is_discarded()) j["display"] = std::move(d);
+    }
     return j.dump();
 }
 

@@ -9,3 +9,17 @@ target_link_libraries(vhmd_unit_tests PRIVATE vhmd_core)
 target_compile_options(vhmd_unit_tests PRIVATE ${VHMD_WARNINGS})
 target_compile_definitions(vhmd_unit_tests PRIVATE VHMD_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME unit COMMAND vhmd_unit_tests)
+
+if(UNIX AND NOT APPLE)
+  # Direct-mode frame capture against a real Vulkan device (no SteamVR).
+  # Skipped (exit 77) when no Vulkan driver is available.
+  add_executable(vhmd_capture_selftest
+    linux/capture_selftest.cpp
+    ${PROJECT_SOURCE_DIR}/driver/src/linux/frame_capture.cpp
+    ${PROJECT_SOURCE_DIR}/driver/src/linux/vk_loader.cpp)
+  target_include_directories(vhmd_capture_selftest SYSTEM PRIVATE ${VHMD_OPENVR_DIR}/headers ${VHMD_VULKAN_INCLUDE_DIR})
+  target_link_libraries(vhmd_capture_selftest PRIVATE vhmd_core ${CMAKE_DL_LIBS})
+  target_compile_options(vhmd_capture_selftest PRIVATE ${VHMD_WARNINGS})
+  add_test(NAME capture_selftest COMMAND vhmd_capture_selftest)
+  set_tests_properties(capture_selftest PROPERTIES SKIP_RETURN_CODE 77)
+endif()

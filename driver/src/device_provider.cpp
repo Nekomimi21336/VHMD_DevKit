@@ -66,6 +66,7 @@ vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* driver_context) {
     hooks.device_index = [this](const std::string& id) { return DeviceIndexFor(id); };
     hooks.set_role = [this](const std::string& id, const RoleInfo& role) { return SetRole(id, role); };
     hooks.request_add = [this](const std::string& id) { RequestAdd(id); };
+    hooks.display_status = [this]() { return hmd_ ? hmd_->DisplayStatusJson() : std::string("{}"); };
     router_ = std::make_unique<MessageRouter>(config_, states_, hooks);
 
     std::string err;
@@ -96,9 +97,17 @@ void DeviceProvider::CreateDevices() {
 
         std::unique_ptr<VirtualDevice> dev;
         switch (dc.kind) {
-        case DeviceKind::Hmd:
-            dev = std::make_unique<HmdDevice>(state, display);
+        case DeviceKind::Hmd: {
+#if defined(__linux__)
+            const bool direct = config_.display_mode != "window";
+#else
+            const bool direct = config_.display_mode == "direct";
+#endif
+            auto h = std::make_unique<HmdDevice>(state, display, direct, config_.preview);
+            hmd_ = h.get();
+            dev = std::move(h);
             break;
+        }
         case DeviceKind::Controller: {
             auto c = std::make_unique<ControllerDevice>(state);
             controllers_.push_back(c.get());
@@ -237,6 +246,7 @@ void DeviceProvider::Cleanup() {
     router_.reset();
     controllers_.clear();
     trackers_.clear();
+    hmd_ = nullptr;
     devices_.clear();
     pending_adds_.clear();
     registered_.clear();

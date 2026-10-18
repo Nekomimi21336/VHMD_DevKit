@@ -43,6 +43,14 @@ struct DeviceConfig {
     bool head_model = false;                      // hmd only: true = pos is the neck pivot
 };
 
+struct PreviewConfig {
+    bool enabled = true;
+    std::string path = "/dev/shm/vhmd_preview";
+    double fps = 15.0;
+    uint32_t max_eye_width = 960;
+    int vulkan_device = -1;
+};
+
 struct DriverConfig {
     std::string bind_address = "127.0.0.1";
     uint16_t port = 39570;
@@ -58,6 +66,12 @@ struct DriverConfig {
 
     bool apply_tracker_roles = true; // write roles to SteamVR "trackers" settings if unset
     bool trackers_on_demand = true;  // default for trackers without "onDemand"
+
+    // HMD output. "window": IVRDisplayComponent desktop window (Windows).
+    // "direct": IVRDriverDirectModeComponent (Linux; the compositor hands the
+    // eye images to the driver). "auto": direct on Linux, window elsewhere.
+    std::string display_mode = "auto";
+    PreviewConfig preview; // direct mode only: eye images to shared memory
     int log_errors_per_second = 5;
     bool verbose = false;
 

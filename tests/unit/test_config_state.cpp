@@ -79,6 +79,19 @@ TEST(router_requests_on_demand_registration) {
     CHECK(bad && bad->find("\"ok\":false") != std::string::npos);
 }
 
+TEST(config_display_and_preview) {
+    auto d = DefaultConfig();
+    CHECK(d.display_mode == "auto" && d.preview.enabled && d.preview.fps == 15.0);
+    auto r = LoadConfigFromJson(R"({"display":{"mode":"direct"},"preview":{"enabled":false,"path":"/tmp/x","fps":500,"maxEyeWidth":4,"vulkanDevice":1}})");
+    CHECK(r.config.display_mode == "direct");
+    CHECK(!r.config.preview.enabled && r.config.preview.path == "/tmp/x");
+    CHECK(r.config.preview.fps == 120.0);          // clamped
+    CHECK(r.config.preview.max_eye_width == 16);   // clamped
+    CHECK(r.config.preview.vulkan_device == 1);
+    auto bad = LoadConfigFromJson(R"({"display":{"mode":"hologram"}})");
+    CHECK(bad.config.display_mode == "auto" && !bad.warnings.empty());
+}
+
 TEST(config_shipped_file_parses_cleanly) {
     std::ifstream f(VHMD_SOURCE_DIR "/driver/resources/settings/vhmd_config.json");
     CHECK(f.good());

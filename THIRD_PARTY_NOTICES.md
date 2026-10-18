@@ -36,6 +36,18 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+## Vulkan-Headers (KhronosGroup) — Apache-2.0 OR MIT
+
+Linux builds only, and only when the system has no `vulkan/vulkan.h`: CMake fetches the headers
+(tag `v1.3.296`) at configure time. Only header declarations are compiled into the driver; no Vulkan
+code is redistributed. https://github.com/KhronosGroup/Vulkan-Headers
+
+## Design reference: ALVR (MIT)
+
+The Linux direct-mode output (`driver/src/linux/`) follows the design of ALVR's Linux driver
+(https://github.com/alvr-org/ALVR, `alvr/server_openvr/cpp/platform/linux/`). No ALVR code is
+included; the implementation was written against the OpenVR headers.
+
 ## nlohmann/json 3.11.3 — MIT
 
 `third_party/nlohmann/json.hpp` (single header, unmodified; SHA-256 9bea4c8066ef4a1c206b2be5a36302f8926f7fdc6087af5d20b417d0cf103ea6).

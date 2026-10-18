@@ -105,6 +105,31 @@ python tests/integration/stress_restart.py --cycles 30 --stop-relaunchers --rela
 
 `tools/uninstall_driver.ps1 -CleanSettings` を実行し、前後の `steamvr.vrsettings` を比較: vhmd 由来のトラッカーロール 8 件だけが削除され、**それ以外の内容は完全に一致**。外部ドライバ登録も元の 2 件(PICO, AMD)に戻ることを確認。その後 `install_driver.ps1` で再登録済み。
 
+## 1.7 Linux(v0.3.0 ダイレクトモード)
+
+### 外部の Linux 環境での実行(v0.2.0、2026-10-18、協力者による)
+
+| 項目 | 結果 |
+|---|---|
+| 環境 | Arch Linux、KDE Plasma(Wayland)、SteamVR 2.17.10、glibc 2.44 |
+| `tools/verify_env.sh` / `install_driver.sh` | ✅ SteamVR を検出し登録成功(SteamVR 本体へのコピーなし) |
+| ドライバのロード、`Using existing HMD vhmd.VHMD-HMD-0` | ✅ |
+| コントローラのリマップ(knuckles → vhmd_controller)、レガシーバインディング | ✅ |
+| vrcompositor | ❌ `VRInitError_Compositor_CannotDRMLeaseDisplay` で起動せず(`SDL_VIDEODRIVER=x11` でも同じ)。SteamVR 同梱の null ドライバでも 18 回中 18 回失敗 |
+
+→ Linux 版 SteamVR はウィンドウ方式の仮想ディスプレイでは動かないと判断し、v0.3.0 でダイレクトモード(`IVRDriverDirectModeComponent`)を実装しました([linux.md](linux.md))。
+
+### この PC での確認(v0.3.0、WSL2 Ubuntu 24.04)
+
+| 項目 | 結果 |
+|---|---|
+| Linux ビルド(gcc 13.3、警告 0)、単体テスト 37 件 | ✅ |
+| AddressSanitizer / ThreadSanitizer での単体テストとキャプチャセルフテスト | ✅ 指摘なし |
+| キャプチャセルフテスト(Mesa llvmpipe の Vulkan で、SteamVR と同じパラメータの共有イメージを作り fd で渡す) | ✅ インポート → 2 倍縮小 → 共有メモリ。左右の画素値が一致(255,0,0 / 0,0,255)、テクスチャ範囲指定、破棄済みハンドル、終了時のファイル削除 |
+| `.so` の公開シンボル / 依存 | ✅ `HmdDriverFactory` のみ / `libc`、`libm`、`ld-linux`(libvulkan は `dlopen`) |
+| Windows への影響(統合テスト 29 項目、ウィンドウ方式のまま) | ✅ |
+| **Linux 版 SteamVR 上でのダイレクトモード** | ❌ 未検証(`tests/integration/linux_check.py` で確認予定) |
+
 ## 2. 手動検証手順(要件 10.2)
 
 GUI 操作が必要なため未実施の項目です。結果欄に記入してください。

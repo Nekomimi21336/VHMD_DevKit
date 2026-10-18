@@ -4,7 +4,14 @@
 #include <cmath>
 #include <cstring>
 
+#include <nlohmann/json.hpp>
+
 #include "util/log.h"
+#include "util/platform.h"
+#if defined(VHMD_PLATFORM_POSIX) && defined(__linux__)
+#include "linux/direct_mode.h"
+#define VHMD_HAS_DIRECT_MODE 1
+#endif
 
 namespace vhmd {
 namespace {
@@ -79,13 +86,68 @@ bool HmdDisplayComponent::ComputeInverseDistortion(vr::HmdVector2_t*, vr::EVREye
     return false; // let SteamVR estimate from ComputeDistortion (identity)
 }
 
-HmdDevice::HmdDevice(std::shared_ptr<DeviceState> state, const DisplayConfig& display)
-    : VirtualDevice(std::move(state)), display_cfg_(display), head_model_(State().Config().head_model), display_(display) {}
+#if !defined(VHMD_HAS_DIRECT_MODE)
+// Incomplete elsewhere; only ever null there.
+class DirectModeComponent {};
+#endif
+
+HmdDevice::HmdDevice(std::shared_ptr<DeviceState> state, const DisplayConfig& display, bool direct_mode,
+                     const PreviewConfig& preview)
+    : VirtualDevice(std::move(state)), display_cfg_(display), head_model_(State().Config().head_model), display_(display) {
+#if defined(VHMD_HAS_DIRECT_MODE)
+    if (direct_mode) {
+        CaptureSettings cs;
+        cs.enabled = preview.enabled;
+        cs.path = preview.path;
+        cs.fps = preview.fps;
+        cs.max_eye_width = preview.max_eye_width;
+        cs.vulkan_device = preview.vulkan_device;
+        direct_ = std::make_unique<DirectModeComponent>(display.display_frequency, cs);
+    }
+#else
+    if (direct_mode) Log(LogLevel::Warning, "display.mode=direct is only implemented on Linux; using window mode");
+    (void)preview;
+#endif
+}
+
+HmdDevice::~HmdDevice() = default;
+
+bool HmdDevice::DirectMode() const { return direct_ != nullptr; }
+
+std::string HmdDevice::DisplayStatusJson() const {
+    nlohmann::json j;
+    j["mode"] = direct_ ? "direct" : "window";
+    j["width"] = display_cfg_.render_width;
+    j["height"] = display_cfg_.render_height;
+    j["refresh_hz"] = display_cfg_.display_frequency;
+#if defined(VHMD_HAS_DIRECT_MODE)
+    if (direct_) {
+        const DirectModeStats s = direct_->Stats();
+        j["swap_sets_created"] = s.swap_sets_created;
+        j["swap_sets_alive"] = s.swap_sets_alive;
+        j["layers_submitted"] = s.layers_submitted;
+        j["presents"] = s.presents;
+        j["vsyncs"] = s.vsyncs;
+        j["eye_texture"] = {{"width", s.last_width}, {"height", s.last_height}, {"vk_format", s.last_format}};
+        if (!s.last_error.empty()) j["error"] = s.last_error;
+        j["preview"] = {{"state", s.capture.state},
+                        {"submitted", s.capture.submitted},
+                        {"written", s.capture.written},
+                        {"active", s.capture.active}};
+    }
+#endif
+    return j.dump();
+}
 
 void* HmdDevice::GetComponent(const char* name_and_version) {
     if (std::strcmp(name_and_version, vr::IVRDisplayComponent_Version) == 0) {
         return static_cast<vr::IVRDisplayComponent*>(&display_);
     }
+#if defined(VHMD_HAS_DIRECT_MODE)
+    if (direct_ && std::strcmp(name_and_version, vr::IVRDriverDirectModeComponent_Version) == 0) {
+        return static_cast<vr::IVRDriverDirectModeComponent*>(direct_.get());
+    }
+#endif
     return nullptr;
 }
 
@@ -98,7 +160,23 @@ void HmdDevice::OnActivate(vr::PropertyContainerHandle_t c) {
     p->SetFloatProperty(c, vr::Prop_DisplayFrequency_Float, display_cfg_.display_frequency);
     p->SetFloatProperty(c, vr::Prop_SecondsFromVsyncToPhotons_Float, display_cfg_.seconds_vsync_to_photons);
     p->SetBoolProperty(c, vr::Prop_IsOnDesktop_Bool, false);
-    p->SetBoolProperty(c, vr::Prop_DisplayDebugMode_Bool, true);
+#if defined(VHMD_HAS_DIRECT_MODE)
+    if (direct_) {
+        // The driver owns the output: it allocates the eye images, receives
+        // them in Present and announces vsyncs itself. Debug (window) mode
+        // must stay off or the compositor goes looking for a window again.
+        p->SetBoolProperty(c, vr::Prop_DriverDirectModeSendsVsyncEvents_Bool, true);
+        p->SetBoolProperty(c, vr::Prop_Hmd_AllowsClientToControlTextureIndex, true);
+        p->SetBoolProperty(c, vr::Prop_SupportsXrTextureSets_Bool, true);
+        p->SetBoolProperty(c, vr::Prop_HasDriverDirectModeComponent_Bool, true);
+        direct_->Start();
+        Log(LogLevel::Info, "HMD display: direct mode (eye images handed to the driver)");
+    } else
+#endif
+    {
+        p->SetBoolProperty(c, vr::Prop_DisplayDebugMode_Bool, true);
+        Log(LogLevel::Info, "HMD display: desktop window (extended mode)");
+    }
     p->SetStringProperty(c, vr::Prop_InputProfilePath_String, "{vhmd}/input/vhmd_hmd_profile.json");
     p->SetStringProperty(c, vr::Prop_ControllerType_String, "vhmd_hmd");
 
@@ -113,6 +191,12 @@ void HmdDevice::OnActivate(vr::PropertyContainerHandle_t c) {
             eye_tracking_ = vr::k_ulInvalidInputComponentHandle;
         }
     }
+}
+
+void HmdDevice::OnDeactivate() {
+#if defined(VHMD_HAS_DIRECT_MODE)
+    if (direct_) direct_->Stop();
+#endif
 }
 
 void HmdDevice::OnInput(const std::string& name, float value) {

@@ -35,6 +35,7 @@
 | Network | `driver/src/net/` | None (switches between WinSock/BSD internally) | ○ (loopback) |
 | Utilities | `driver/src/util/` | None | Partial |
 | Devices and provider | `driver/src/*.cpp` | Yes | Integration tests |
+| Linux direct mode | `driver/src/linux/` | Yes (+ Vulkan, loaded at runtime) | Capture by self-test, everything by `linux_check.py` |
 
 The OpenVR-independent parts are bundled into the static library `vhmd_core`, which both the driver DLL and the test executables link against.
 
@@ -45,6 +46,9 @@ The OpenVR-independent parts are bundled into the static library `vhmd_core`, wh
 | vrserver main | `Init` / `RunFrame` / `Cleanup`, `Activate` / `Deactivate` | — |
 | Receive | `UdpReceiver::Loop`. poll times out every 100 ms to check the stop flag | `Stop()` in `Cleanup` → join (up to ~100 ms) |
 | Update | `DeviceProvider::UpdateLoop`. Updates all devices at a fixed rate | Stop flag in `Cleanup` → join (up to 1 cycle) |
+| vsync (Linux) | `DirectModeComponent::VsyncLoop`. Signals `VsyncEvent` at the display refresh rate | Stopped in the HMD's `Deactivate` |
+| Capture (Linux) | `FrameCapture::Worker`. Takes only the latest frame, downscales it and writes it to shared memory | Joined when the device is destroyed |
+| Compositor (SteamVR side) | Calls `CreateSwapTextureSet` / `SubmitLayer` / `Present` / `PostPresent`. `PostPresent` is made to wait until the next vsync | — |
 
 - `Init`: load config → create `DeviceState` and device objects for all devices → `TrackedDeviceAdded` only for devices that are **not on demand** (by default, the 3 points: HMD and left/right controllers) → start the receive and update threads.
 - On-demand addition: when the receive thread gets a message addressed to an unregistered tracker, it stores the values in the buffer and then calls `RequestAdd(id)` (which only enqueues). `RunFrame` (vrserver main thread) processes the queue in `ProcessPendingAdds()` and calls `TrackedDeviceAdded`. Buffered values are sent starting 100 ms after `Activate`, so the device is in sync immediately after being added.
@@ -69,7 +73,7 @@ The OpenVR-independent parts are bundled into the static library `vhmd_core`, wh
 | New message type | Add a struct to `protocol/messages.h` → `ParseOne` in `parser.cpp` → `MessageRouter::HandleDatagram` → `DeviceState` → device hook |
 | New transport (WebSocket, shared memory, etc.) | Receive in the same way as `UdpReceiver` and just call `MessageRouter::HandleDatagram()` (the router is transport-independent) |
 | Compatibility with another protocol | Add a parser that returns a `ParseResult`, like `protocol/osc.*`, and add it to the detection in `HandleDatagram` |
-| Real display output (future) | Replace the implementation so that `HmdDevice::GetComponent` returns `IVRDriverDirectModeComponent` / `IVRVirtualDisplay` instead of `IVRDisplayComponent` |
+| Using the frames (encoding / streaming / recording) | Linux: `Capture()` in `linux/frame_capture.cpp` is where the left and right eyes are received. You can add another output in place of shared memory. To use the same approach on Windows, implement `IVRDriverDirectModeComponent` with D3D11 shared textures |
 | Adding controller inputs | The `InputDef` table in `controller_device.cpp`, `resources/input/vhmd_controller_profile.json`, and if needed the remapping (`tools/gen_remapping.py`) and legacy bindings |
 
 ## Platform abstraction (future Linux support)

@@ -34,7 +34,7 @@
 - **간단한 외부 API**: UDP + JSON(`127.0.0.1:39570`). 데이터그램 1개로 모든 디바이스를 한 번에 갱신 가능. 선택적으로 VMT 호환 OSC
 - **컨트롤러 입력 일체**: 트리거 / 그립 / 스틱 / A·B·X·Y / 시스템 / 메뉴, 진동 피드백 반환, 손가락 스켈레톤(굽힘 값 또는 본 직접 지정)
 - **시선 입력**(SteamVR의 아이 트래킹 컴포넌트)
-- **Windows / Linux** 지원(Linux판 SteamVR에서는 미검증)
+- **Windows / Linux** 지원. Linux는 다이렉트 모드(SteamVR이 그린 영상을 드라이버가 받는 방식)로 동작하며, 영상은 공유 메모리를 통한 뷰어로 확인 가능(v0.3.0. Linux판 SteamVR에서의 확인 대기 중)
 - **Python 클라이언트**(의존성 없음)와 예제, SteamVR 위에서 동작하는 자동 검증 스크립트
 - **위장 없음**: 독자적인 컨트롤러 타입 `vhmd_*`로 등록. 기존 앱의 바인딩은 SteamVR의 리매핑으로 재사용
 
@@ -107,7 +107,10 @@ ctest --test-dir build --output-on-failure
 tools/install_driver.sh
 ```
 
-자세한 내용은 [docs/ko/linux.md](docs/ko/linux.md)(실제 장비 확인 체크리스트, 가상 디스플레이에 관한 주의 사항).
+- Linux판 SteamVR은 "데스크톱 창에 그리는" 방식으로 시작할 수 없으므로, Linux에서는 드라이버가 SteamVR의 렌더링 결과를 직접 받는 다이렉트 모드로 동작합니다. 렌더링된 영상은 `python3 clients/python/examples/preview_viewer.py`로 볼 수 있습니다.
+- 실제 장비에서의 확인은 `python3 tests/integration/linux_check.py`(SteamVR 시작부터 종료까지 자동, 리포트 출력).
+
+자세한 내용은 [docs/ko/linux.md](docs/ko/linux.md).
 
 ## 사용법 (Python)
 
@@ -167,8 +170,10 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 
 | 종류 | 명령 | 내용 |
 |---|---|---|
-| C++ 단위 테스트 | `ctest --preset vs2022-release` | 36건(파서, 좌표 변환, 설정, 타임아웃, 라우터, UDP) |
-| Python 단위 테스트 | `python -m pytest tests/python` | 8건(클라이언트) |
+| C++ 단위 테스트 | `ctest --preset vs2022-release` | 37건(파서, 좌표 변환, 설정, 타임아웃, 라우터, UDP) |
+| Python 단위 테스트 | `python -m pytest tests/python` | 13건(클라이언트, 프리뷰 읽기) |
+| Linux 캡처 셀프 테스트 | `ctest`(Linux) | 실제 Vulkan으로 공유 이미지 → 공유 메모리를 확인(SteamVR 불필요) |
+| Linux 실제 장비 확인 | `python3 tests/integration/linux_check.py` | 다이렉트 모드의 표시 경로 + 통합 테스트, 리포트 출력 |
 | SteamVR 통합 테스트 | `python tests/integration/run_integration.py` | 29개 항목(열거, 온디맨드 추가, 오차, 지연, 입력, 스켈레톤, 잘못된 패킷, 부하, 종료 처리) |
 | 시작/종료 반복 | `python tests/integration/stress_restart.py --cycles 30` | 매번 드라이버의 종료 처리와 크래시 여부를 확인 |
 
@@ -199,6 +204,7 @@ driver/
     device_provider.*   디바이스 관리, 수신 / 갱신 스레드, 온디맨드 추가
     device_base.*       모든 디바이스 공통
     hmd_device.*        HMD, 가상 디스플레이, 시선
+    linux/              Linux의 다이렉트 모드, 프레임 캡처, Vulkan 동적 로드
     controller_device.* 컨트롤러, 진동, 스켈레톤
     tracker_device.*    트래커, 롤
     math/ protocol/ config/ state/ net/ util/   OpenVR 비의존 코어(단위 테스트 대상)
@@ -216,10 +222,10 @@ third_party/            OpenVR SDK(서브모듈 v2.15.6), nlohmann/json 3.11.3
 | SteamVR | 2.17.10(Windows 11) |
 | OpenVR SDK | v2.15.6 |
 | Windows 컴파일러 | MSVC 14.44(Visual Studio 2022 Build Tools 17.14), CMake 4.3 |
-| Linux 컴파일러 | gcc 13.3(Ubuntu 24.04 / WSL2), CMake 3.28 |
+| Linux 컴파일러 | gcc 13.3(Ubuntu 24.04 / WSL2), CMake 3.28, Vulkan은 Mesa llvmpipe로 셀프 테스트 |
 | Python | 3.12(3.10 이상), 검증용으로 pyopenvr 2.12 |
 
-결과 상세: [docs/verification.md](docs/verification.md) (일본어). VRChat에서의 동작 확인(GUI 조작)과 Linux판 SteamVR에서의 동작은 미검증입니다.
+결과 상세: [docs/verification.md](docs/verification.md) (일본어). VRChat에서의 동작 확인(GUI 조작)과, Linux판 SteamVR에서의 다이렉트 모드(v0.3.0) 동작은 미검증입니다. v0.2.0에서는 Linux판 SteamVR 2.17.10에서 드라이버 로드까지 확인했으며, 컴포지터가 시작되지 않는 문제가 발견되었습니다([docs/ko/linux.md](docs/ko/linux.md)).
 
 ## 라이선스
 

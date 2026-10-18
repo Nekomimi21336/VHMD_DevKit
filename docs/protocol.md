@@ -130,6 +130,8 @@
 | `reset` | `id`(省略時全台) | 設定ファイルの既定ポーズに戻す |
 | `add` | `id`(省略時はオンデマンド全台) | オンデマンドのデバイスを今すぐ SteamVR に追加(次のフレームで反映)。`{"ok":true,"ids":[...]}` |
 
+`status` の `display`: `mode`(`window` / `direct`)、`width`、`height`、`refresh_hz`。ダイレクトモード(Linux)では加えて `swap_sets_created`、`swap_sets_alive`、`layers_submitted`、`presents`、`vsyncs`、`eye_texture`(`width`、`height`、`vk_format`)、`preview`(`state`、`submitted`、`written`、`active`)。
+
 `status` の各デバイス: `id, serial, kind, role, enabled, on_demand, timeout_policy, index`(SteamVR デバイス番号、未登録は -1)`, pose_packets, input_packets, rate_hz`(受信レート)`, age_s`(最終受信からの秒数)`, latency_ms`(`ts` があれば)。
 
 ### ドライバ → クライアント: `haptic`

@@ -4,39 +4,56 @@
 
 本文介绍让 Linux 原生 SteamVR 加载 `driver_vhmd.so` 的步骤。通过 Proton 运行的 Windows 游戏(VRChat 等)同样连接到 Linux 版 SteamVR，因此需要本驱动。发送端的协议和 Python 客户端与 Windows 通用。
 
+## 原理：在 Linux 上以“直接模式”运行
+
+Linux 版 SteamVR 的合成器无法像 Windows 那样“绘制到桌面上的窗口”。如果没有可通过直接模式(DRM 租用)获得的显示目标，它会报 `VRInitError_Compositor_CannotDRMLeaseDisplay` 并停止启动。SteamVR 自带的 null 驱动也是如此，Valve 也将其作为已知问题处理([SteamVR-for-Linux#889](https://github.com/ValveSoftware/SteamVR-for-Linux/issues/889))。
+
+因此从 v0.3.0 起，Linux 上的虚拟 HMD 实现了 **`IVRDriverDirectModeComponent`**。
+
+```
+应用 ──▶ vrcompositor ──(共享 Vulkan 图像 / dma-buf)──▶ driver_vhmd.so
+                                                         ├─ 自行通知 vsync(默认 90 Hz)
+                                                         └─ 将最新帧写入 /dev/shm/vhmd_preview(可选)
+```
+
+- 既不需要真实显示器，也不需要 DRM 租用。左右眼图像绘制在驱动分配的共享 Vulkan 图像上，并通过 `Present` 传递(`IVRIPCResourceManagerClient` 的 Linux 专用 API)。
+- 与 ALVR 的 Linux 驱动(2026-10 的 master)方式相同。没有复用其代码，而是依照 OpenVR 头文件自行实现。
+- Windows 仍沿用以往的桌面窗口方式(`display.mode`：`auto` / `window` / `direct`)。
+
 ## 状态(截至 2026-10-18)
 
 | 项目 | 状态 |
 |---|---|
-| Linux 构建 (gcc 13.3, Ubuntu 24.04 / WSL2) | ✅ 0 个警告(`-Wall -Wextra -Wpedantic`) |
-| C++ 单元测试 36 项 | ✅ 全部通过(含 UDP 回环) |
-| 公开符号 | ✅ 仅 `HmdDriverFactory`(链接器版本脚本) |
-| 依赖库 | ✅ 仅 `libc`, `libm`, `ld-linux`(libstdc++ / libgcc 为静态链接) |
-| `tools/*.sh` | ✅ 已在模拟的 SteamVR 环境中确认 install / uninstall / `--clean-settings` |
-| 集成测试的 Linux 支持 (`tests/integration/steamvr_util.py`) | ⚠ 仅在 WSL 上确认了加载和进程检测 |
-| **在真实 Linux 版 SteamVR 上的运行** | ❌ **未验证**(这台开发 PC 上没有 Linux 版 SteamVR) |
+| Linux 构建(gcc 13.3、Ubuntu 24.04 / WSL2) | ✅ 0 个警告(`-Wall -Wextra -Wpedantic`) |
+| C++ 单元测试 37 项 | ✅ 全部通过(ASan / TSan 下也无问题) |
+| 帧捕获自测(`tests/linux/capture_selftest.cpp`) | ✅ 用真实 Vulkan(Mesa llvmpipe)确认了 fd 导入 → 缩小 → 共享内存 → 像素值 |
+| 公开符号 / 依赖库 | ✅ 仅 `HmdDriverFactory` / 仅 `libc`、`libm`、`ld-linux`(libvulkan 在运行时 `dlopen`) |
+| 在 Linux 版 SteamVR 2.17.10(Arch、KDE Wayland)上运行 v0.2.0 | ✅ 驱动加载、HMD 识别、控制器重映射 / ❌ 合成器因 `CannotDRMLeaseDisplay` 无法启动(null 驱动也一样)→ 由 v0.3.0 的直接模式解决 |
+| **在 Linux 版 SteamVR 上运行 v0.3.0(直接模式)** | ❌ **未验证**。请用下文的 `linux_check.py` 确认 |
 
 ## 前提
 
 - x86_64 Linux、Steam + SteamVR(Linux 原生版)
 - g++ 9 及以上(或 clang)、CMake 3.20 及以上、Git、Python 3.10 及以上
+- Vulkan 驱动(能运行 SteamVR 的环境中已安装)。Vulkan 头文件(`vulkan-headers` / `libvulkan-dev`)若不存在，会在 configure 时自动获取
 - Ubuntu / Debian 示例：`sudo apt install build-essential cmake ninja-build git python3`
+- Arch 示例：`sudo pacman -S base-devel cmake ninja git python vulkan-headers`
 
 ## 构建
 
 ```bash
-git clone --recurse-submodules <本仓库>
-cd VirtualHMD
+git clone --recurse-submodules https://github.com/Nekomimi21336/VHMD_DevKit.git
+cd VHMD_DevKit
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-输出：`build/driver/vhmd/bin/linux64/driver_vhmd.so`(+ `driver.vrdrivermanifest`, `resources/`)。
+输出：`build/driver/vhmd/bin/linux64/driver_vhmd.so`(+ `driver.vrdrivermanifest`、`resources/`)。
 
 ### glibc 注意事项
 
-生成的 `.so` 要求**不低于构建环境的 glibc 版本**(在 Ubuntu 24.04 上构建则需要 glibc 2.38 及以上)。可以用 `tools/verify_env.sh` 的 `driver_needs_glibc` 确认。最可靠的做法是**在运行 SteamVR 的 PC 上自行构建**。如果还要分发给较旧的发行版，请在旧环境(或 Steam Runtime SDK 的容器)中构建。
+生成的 `.so` 要求**不低于构建环境的 glibc 版本**(在 Ubuntu 24.04 上构建则需要 glibc 2.38 及以上)。可以用 `tools/verify_env.sh` 的 `driver_needs_glibc` 确认。最可靠的做法是**在运行 SteamVR 的 PC 上自行构建**。
 
 ## 注册、卸载
 
@@ -53,40 +70,66 @@ tools/uninstall_driver.sh --clean-settings   # 取消注册 + 从 SteamVR 设置
 ## 使用
 
 ```bash
-python3 clients/python/examples/fullbody_sway.py
+python3 clients/python/examples/fullbody_sway.py --points 6
 ```
 
-日志：`~/.steam/steam/logs/vrserver.txt`(位置取自 `openvrpaths.vrpath` 的 `log`)。以 `vhmd:` 开头的行来自本驱动。
+要查看 SteamVR 绘制到虚拟 HMD 上的画面：
 
-## 最大风险：虚拟显示
+```bash
+python3 clients/python/examples/preview_viewer.py                 # 在窗口中显示(仅用标准库)
+python3 clients/python/examples/preview_viewer.py --snapshot eyes.png
+```
 
-HMD 采用通过 `IVRDisplayComponent` 显示为“桌面上的窗口”的方式(已在 Windows 上确认可用，与 OpenVR 示例 `simplehmd` 相同)。**Linux 版 SteamVR 的合成器能否以这种方式启动尚不清楚**。无法启动时的迹象与对策：
+在自制工具中读取时，请使用 `vhmd_client.preview.PreviewReader`(格式见 `driver/src/util/preview_shm.h`：左右眼横向并排的 RGBA8，sRGB)。
 
-| 迹象 | 对策 |
+| 设置(`vhmd_config.json` 的 `preview`) | 默认值 | 说明 |
+|---|---|---|
+| `enabled` | `true` | 是否写入共享内存 |
+| `path` | `/dev/shm/vhmd_preview` | 写入位置 |
+| `fps` | `15` | 写入的速率上限(与合成器的渲染速率无关) |
+| `maxEyeWidth` | `960` | 单眼的最大宽度(缩小后写入) |
+| `vulkanDevice` | `-1` | 所用 GPU 的编号。`-1` 表示第一个 GPU。**必须选择与 SteamVR 相同的 GPU**(在多 GPU 的 PC 上收不到画面时修改) |
+
+预览处理即使失败也只会被禁用，不会影响 SteamVR 的渲染。
+
+日志：`~/.steam/steam/logs/vrserver.txt`(位置取自 `openvrpaths.vrpath` 的 `log`)。以 `vhmd:` 开头的行来自本驱动。`config list` 响应中的 `display` 包含模式、present 次数、vsync 次数和预览状态。
+
+## 实机确认(自动)
+
+```bash
+pip install openvr
+python3 tests/integration/linux_check.py
+```
+
+从启动到退出 SteamVR 全部自动完成，并在 `tests/integration/results/linux_check_<日期时间>/` 中输出报告(`report.md`、`report.json`)、预览截图(`eyes.png`)和日志摘录。**只要把这个文件夹发过来，就能了解情况。** 确认内容：
+
+| # | 确认项 | 预期 |
+|---|---|---|
+| 1 | 环境(发行版、会话类型、GPU、Vulkan、SteamVR 的构建版本和分支) | 信息 |
+| 2 | 驱动的构建、注册 | ✅ |
+| 3 | SteamVR 加载驱动并响应 UDP | ✅ |
+| 4 | HMD 处于直接模式，vsync 正在运行 | ✅ |
+| 5 | 合成器创建交换纹理，每秒 present 30 次以上 | ✅ 这是本次的重点 |
+| 6 | `vrcompositor.txt` 中没有 `CannotDRMLeaseDisplay` 等错误 | ✅ |
+| 7 | 预览中有持续更新的帧，并保存 `eyes.png` | ✅ |
+| 8 | 常规集成测试(`run_integration.py`：枚举、姿态、输入、骨骼、负载) | ✅ |
+| 9 | 退出 SteamVR 时执行驱动的退出处理 | ✅ |
+
+使用 `--skip-integration` 可以跳过第 8 项(只想确认显示路径时)。
+
+## 故障排查
+
+| 症状 | 检查项 |
 |---|---|
-| SteamVR 提示“找不到头显 / 合成器无法启动” | 先设置 `hmd.enabled: false`(与真实 HMD 配合使用的追踪器/控制器专用模式)，只使用其他功能 |
-| 在没有真实 HMD 的 PC 上也想让 HMD 为虚拟设备 | 实现 `IVRVirtualDisplay`(替换 `HmdDevice::GetComponent` 返回的组件。参见 `docs/architecture.md` 的扩展点) |
-| `vrcompositor` 的日志中出现 Vulkan / 显示相关错误 | 让 `vhmd_display` 的 `windowWidth/Height` 不超出屏幕范围；如果是 Wayland，也可尝试 X11 会话 |
-
-## 实机验证检查清单
-
-请填写结果并同步到 `docs/verification.md`。
-
-| # | 步骤 | 预期结果 | 结果 |
-|---|---|---|---|
-| L1 | `tools/verify_env.sh` | SteamVR 的路径、glibc ≥ `driver_needs_glibc` | 未验证 |
-| L2 | `tools/install_driver.sh` → 启动 SteamVR | `vrserver.txt` 中出现 `Loaded server driver vhmd` 和 `vhmd: listening on udp://127.0.0.1:39570` | 未验证 |
-| L3 | 同一日志 | `Active HMD set to vhmd.VHMD-HMD-0`(未连接真实 HMD 时)。合成器是否启动(见上述风险) | 未验证 |
-| L4 | `pip install openvr` → `python3 tests/integration/run_integration.py` | 与 Windows 相同的 29 项。`--stop-relaunchers` 会结束自动启动的叠加层，仅在需要时使用 | 未验证 |
-| L5 | `python3 clients/python/examples/fullbody_sway.py` + SteamVR 的“头显视图” | 视角和设备会移动 | 未验证 |
-| L6 | 通过 Proton 以 VR 模式启动 VRChat | HMD、手、追踪器均被反映 | 未验证 |
-| L7 | `hmd.enabled: false` + 真实 HMD | 与真实 HMD 并列添加控制器/追踪器 | 未验证 |
-| L8 | 退出 SteamVR | 输出 `vhmd: shutting down` 且 vrserver 正常退出(不挂起) | 未验证 |
+| 第 5 项为 0(没有 present) | `vrcompositor.txt` 的末尾。SteamVR 的版本(ALVR 可能是在测试版上确认运行的，在稳定版 2.17.10 上能否同样运行尚未确认)。`steamvr.vrsettings` 中是否残留以前通过 ALVR 等添加的启动选项或 `forcedDriver` |
+| 有 present 但预览全黑 / 没有画面 | `report.json` 的 `display.preview.state`。多 GPU 时检查 `preview.vulkanDevice` |
+| VRChat 无法启动 | 请在第 1~7 项全部为 ✅ 之后再尝试。查看 Proton 侧的日志(`PROTON_LOG=1`) |
+| 想与真实 HMD 一起使用 | `"hmd": {"enabled": false}`(只添加控制器 / 追踪器) |
 
 ## 为支持 Linux 所做的修改
 
-- `driver/driver_exports.map` + `-Wl,--version-script`：将 `HmdDriverFactory` 以外的符号设为非公开(vrserver 会把多个驱动加载到同一进程中，以此防止符号冲突)。
-- `-static-libstdc++ -static-libgcc`：即使 SteamVR 运行环境的 libstdc++ 较旧也能加载。通过 `-Wl,--no-undefined` 在构建时检测未解析的符号。
-- 修复了 4 个 gcc 特有的警告(初始化、检查 OSC bundle 长度读取的返回值、对临时对象的引用)。
-- `.gitattributes`：将 `*.sh` 固定为 LF(以免被 Windows 的 `core.autocrlf` 破坏)。
-- `tests/integration/steamvr_util.py`：通过 `/proc` 检测进程、用信号停止、通过 `vrstartup.sh` 启动、`~/.steam` / XDG 路径。OpenVR 客户端的检测以加载了 `vrclient.so` 的进程为准，Steam 本体及 `steamapps` 下的进程(含 Proton 游戏)不在此列。
+- **v0.3.0**：`driver/src/linux/`(`direct_mode.*`：直接模式组件和 vsync 时钟，`frame_capture.*`：共享图像的导入和缩小复制，`vk_loader.*`：libvulkan 的动态加载)、`util/preview_shm.h`、Python 的 `preview.py` / `preview_viewer.py`、`tests/linux/capture_selftest.cpp`、`tests/integration/linux_check.py`。
+- `driver/driver_exports.map` + `-Wl,--version-script`：将 `HmdDriverFactory` 以外的符号设为非公开(因为 vrserver 会把多个驱动加载到同一进程中)。
+- `-static-libstdc++ -static-libgcc`：即使 SteamVR 运行环境的 libstdc++ 较旧也能加载。
+- `.gitattributes`：将 `*.sh` 固定为 LF。
+- `tests/integration/steamvr_util.py`：通过 `/proc` 检测进程、用信号停止、通过 `vrstartup.sh` 启动、`~/.steam` / XDG 路径。

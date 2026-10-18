@@ -21,6 +21,7 @@ namespace vhmd {
 
 class ControllerDevice;
 class TrackerDevice;
+class HmdDevice;
 
 class DeviceProvider : public vr::IServerTrackedDeviceProvider {
 public:
@@ -50,6 +51,7 @@ private:
     std::vector<std::unique_ptr<VirtualDevice>> devices_;
     std::vector<ControllerDevice*> controllers_;
     std::vector<TrackerDevice*> trackers_;
+    HmdDevice* hmd_ = nullptr;
     std::unique_ptr<MessageRouter> router_;
 
     UdpReceiver receiver_;

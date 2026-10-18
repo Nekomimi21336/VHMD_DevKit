@@ -18,7 +18,7 @@
 
 namespace vhmd {
 
-inline constexpr const char* kDriverVersion = "0.2.0";
+inline constexpr const char* kDriverVersion = "0.3.0";
 
 struct RouterHooks {
     // Returns the SteamVR device index for a protocol id, or -1 if not added.
@@ -26,6 +26,8 @@ struct RouterHooks {
     // Asks the provider to register an on-demand device with SteamVR. Called
     // from the receive thread; must be cheap and idempotent.
     std::function<void(const std::string& id)> request_add;
+    // JSON object describing the HMD display path ("display" in status).
+    std::function<std::string()> display_status;
     // Applies a tracker role. Returns an error string (empty = success).
     std::function<std::string(const std::string& id, const RoleInfo& role)> set_role;
 };

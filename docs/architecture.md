@@ -35,6 +35,7 @@
 | ネットワーク | `driver/src/net/` | なし(WinSock/BSD を内部で切替) | ○(ループバック) |
 | ユーティリティ | `driver/src/util/` | なし | 一部 |
 | デバイス・プロバイダ | `driver/src/*.cpp` | あり | 統合テスト |
+| Linux ダイレクトモード | `driver/src/linux/` | あり(+ Vulkan、実行時ロード) | キャプチャはセルフテスト、全体は `linux_check.py` |
 
 OpenVR 非依存部分は静的ライブラリ `vhmd_core` にまとまっており、ドライバ DLL とテスト実行ファイルの両方がリンクします。
 
@@ -45,6 +46,9 @@ OpenVR 非依存部分は静的ライブラリ `vhmd_core` にまとまってお
 | vrserver メイン | `Init` / `RunFrame` / `Cleanup`、`Activate` / `Deactivate` | — |
 | 受信 | `UdpReceiver::Loop`。100 ms 毎に poll がタイムアウトし停止フラグを確認 | `Cleanup` で `Stop()` → join(最大 ~100 ms) |
 | 更新 | `DeviceProvider::UpdateLoop`。固定周期で全デバイスを更新 | `Cleanup` で停止フラグ → join(最大 1 周期) |
+| vsync(Linux) | `DirectModeComponent::VsyncLoop`。表示周波数で `VsyncEvent` を通知 | HMD の `Deactivate` で停止 |
+| キャプチャ(Linux) | `FrameCapture::Worker`。最新フレームだけを受け取り、縮小して共有メモリへ | デバイス破棄時に join |
+| コンポジタ(SteamVR 側) | `CreateSwapTextureSet` / `SubmitLayer` / `Present` / `PostPresent` を呼ぶ。`PostPresent` は次の vsync まで待たせる | — |
 
 - `Init`: 設定読込 → 全デバイスの `DeviceState` とデバイスオブジェクトを生成 → **オンデマンドでない**デバイス(既定では HMD と左右コントローラの 3 点)だけ `TrackedDeviceAdded` → 受信・更新スレッド開始。
 - オンデマンド追加: 受信スレッドが未登録トラッカー宛てのメッセージを受けると、値をバッファに入れてから `RequestAdd(id)`(キューに積むだけ)。`RunFrame`(vrserver メインスレッド)が `ProcessPendingAdds()` でキューを処理し `TrackedDeviceAdded` を呼ぶ。バッファ済みの値が `Activate` 後 100 ms から送られるので、追加直後から同期している。
@@ -69,7 +73,7 @@ OpenVR 非依存部分は静的ライブラリ `vhmd_core` にまとまってお
 | 新しいメッセージ型 | `protocol/messages.h` に構造体を追加 → `parser.cpp` の `ParseOne` → `MessageRouter::HandleDatagram` → `DeviceState` → デバイスのフック |
 | 新しいトランスポート (WebSocket, 共有メモリ等) | `UdpReceiver` と同じ形で受信し `MessageRouter::HandleDatagram()` を呼ぶだけ(ルーターはトランスポート非依存) |
 | 別プロトコル互換 | `protocol/osc.*` と同様に `ParseResult` を返すパーサを追加し、`HandleDatagram` の判定に追加 |
-| 実画面表示(将来) | `HmdDevice::GetComponent` で `IVRDisplayComponent` の代わりに `IVRDriverDirectModeComponent` / `IVRVirtualDisplay` を返す実装に差し替え |
+| 映像の利用(エンコード / 配信 / 録画) | Linux: `linux/frame_capture.cpp` の `Capture()` が左右の目を受け取る場所。共有メモリの代わりに別の出力を足せる。Windows でも同じ方式にするなら `IVRDriverDirectModeComponent` を D3D11 の共有テクスチャで実装する |
 | コントローラ入力の追加 | `controller_device.cpp` の `InputDef` 表、`resources/input/vhmd_controller_profile.json`、必要ならリマッピング(`tools/gen_remapping.py`)とレガシーバインディング |
 
 ## プラットフォーム抽象化(将来の Linux 対応)

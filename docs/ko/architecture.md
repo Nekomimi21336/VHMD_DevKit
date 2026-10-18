@@ -35,6 +35,7 @@
 | 네트워크 | `driver/src/net/` | 없음(WinSock/BSD를 내부에서 전환) | ○(루프백) |
 | 유틸리티 | `driver/src/util/` | 없음 | 일부 |
 | 디바이스·프로바이더 | `driver/src/*.cpp` | 있음 | 통합 테스트 |
+| Linux 다이렉트 모드 | `driver/src/linux/` | 있음(+ Vulkan, 실행 시 로드) | 캡처는 셀프 테스트, 전체는 `linux_check.py` |
 
 OpenVR 비의존 부분은 정적 라이브러리 `vhmd_core`로 묶여 있으며, 드라이버 DLL과 테스트 실행 파일 양쪽이 링크합니다.
 
@@ -45,6 +46,9 @@ OpenVR 비의존 부분은 정적 라이브러리 `vhmd_core`로 묶여 있으�
 | vrserver 메인 | `Init` / `RunFrame` / `Cleanup`, `Activate` / `Deactivate` | — |
 | 수신 | `UdpReceiver::Loop`. 100 ms마다 poll이 타임아웃되어 정지 플래그를 확인 | `Cleanup`에서 `Stop()` → join(최대 ~100 ms) |
 | 갱신 | `DeviceProvider::UpdateLoop`. 고정 주기로 모든 디바이스를 갱신 | `Cleanup`에서 정지 플래그 → join(최대 1주기) |
+| vsync(Linux) | `DirectModeComponent::VsyncLoop`. 표시 주파수로 `VsyncEvent`를 통지 | HMD의 `Deactivate`에서 정지 |
+| 캡처(Linux) | `FrameCapture::Worker`. 최신 프레임만 받아 축소하여 공유 메모리로 | 디바이스 파기 시 join |
+| 컴포지터(SteamVR 측) | `CreateSwapTextureSet` / `SubmitLayer` / `Present` / `PostPresent`를 호출. `PostPresent`는 다음 vsync까지 대기시킴 | — |
 
 - `Init`: 설정 로드 → 모든 디바이스의 `DeviceState`와 디바이스 객체를 생성 → **온디맨드가 아닌** 디바이스(기본적으로 HMD와 좌우 컨트롤러의 3점)만 `TrackedDeviceAdded` → 수신·갱신 스레드 시작.
 - 온디맨드 추가: 수신 스레드가 미등록 트래커 앞으로 온 메시지를 받으면, 값을 버퍼에 넣은 뒤 `RequestAdd(id)`(큐에 쌓기만 함). `RunFrame`(vrserver 메인 스레드)이 `ProcessPendingAdds()`로 큐를 처리하여 `TrackedDeviceAdded`를 호출. 버퍼된 값이 `Activate` 후 100 ms부터 전송되므로, 추가 직후부터 동기화되어 있음.
@@ -69,7 +73,7 @@ OpenVR 비의존 부분은 정적 라이브러리 `vhmd_core`로 묶여 있으�
 | 새로운 메시지 타입 | `protocol/messages.h`에 구조체 추가 → `parser.cpp`의 `ParseOne` → `MessageRouter::HandleDatagram` → `DeviceState` → 디바이스의 훅 |
 | 새로운 전송 계층 (WebSocket, 공유 메모리 등) | `UdpReceiver`와 같은 형태로 수신하여 `MessageRouter::HandleDatagram()`를 호출하기만 하면 됨(라우터는 전송 계층 비의존) |
 | 다른 프로토콜 호환 | `protocol/osc.*`와 마찬가지로 `ParseResult`를 반환하는 파서를 추가하고 `HandleDatagram`의 판정에 추가 |
-| 실제 화면 표시(향후) | `HmdDevice::GetComponent`에서 `IVRDisplayComponent` 대신 `IVRDriverDirectModeComponent` / `IVRVirtualDisplay`를 반환하는 구현으로 교체 |
+| 영상 활용(인코딩 / 송출 / 녹화) | Linux: `linux/frame_capture.cpp`의 `Capture()`가 좌우 눈을 받는 곳. 공유 메모리 대신 다른 출력을 추가할 수 있음. Windows에서도 같은 방식으로 하려면 `IVRDriverDirectModeComponent`를 D3D11 공유 텍스처로 구현 |
 | 컨트롤러 입력 추가 | `controller_device.cpp`의 `InputDef` 표, `resources/input/vhmd_controller_profile.json`, 필요하면 리매핑(`tools/gen_remapping.py`)과 레거시 바인딩 |
 
 ## 플랫폼 추상화(향후 Linux 지원)

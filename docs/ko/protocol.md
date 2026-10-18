@@ -130,6 +130,8 @@
 | `reset` | `id`(생략 시 전체) | 설정 파일의 기본 포즈로 되돌림 |
 | `add` | `id`(생략 시 온디맨드 전체) | 온디맨드 디바이스를 즉시 SteamVR에 추가(다음 프레임에 반영). `{"ok":true,"ids":[...]}` |
 
+`status`의 `display`: `mode`(`window` / `direct`), `width`, `height`, `refresh_hz`. 다이렉트 모드(Linux)에서는 추가로 `swap_sets_created`, `swap_sets_alive`, `layers_submitted`, `presents`, `vsyncs`, `eye_texture`(`width`, `height`, `vk_format`), `preview`(`state`, `submitted`, `written`, `active`).
+
 `status`의 각 디바이스: `id, serial, kind, role, enabled, on_demand, timeout_policy, index`(SteamVR 디바이스 번호, 미등록은 -1)`, pose_packets, input_packets, rate_hz`(수신 레이트)`, age_s`(마지막 수신 이후 초)`, latency_ms`(`ts`가 있는 경우).
 
 ### 드라이버 → 클라이언트: `haptic`
