@@ -105,7 +105,8 @@ def main() -> None:
         made.append(out)
         print(f"{out.name}: {len(files)} files, {out.stat().st_size / 1024:.0f} KiB")
     sums = "".join(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n" for p in made)
-    (args.out / "SHA256SUMS.txt").write_text(sums, encoding="utf-8")
+    # LF endings so `sha256sum -c` works on Linux too
+    (args.out / "SHA256SUMS.txt").write_bytes(sums.encode("utf-8"))
     print(sums, end="")
 
 
