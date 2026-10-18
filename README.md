@@ -193,4 +193,25 @@ third_party/                openvr (submodule, v2.15.6), nlohmann/json 3.11.3
 
 ## ライセンス
 
-BSD 3-Clause([LICENSE](LICENSE))。同梱物のライセンスは [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+**BSD 3-Clause License** — Copyright (c) 2026, Nekomimi21336([LICENSE](LICENSE))
+
+| | |
+|---|---|
+| ✅ 商用利用 | 可 |
+| ✅ 改造・派生物の作成 | 可 |
+| ✅ 再配布(ソース / ビルド済みバイナリ) | 可 |
+| 📄 **義務** | 再配布するときは、上の著作権表示・条件・免責文([LICENSE](LICENSE) の全文)を、ソースならそのまま、バイナリなら同梱ドキュメント等に含めること |
+| 🚫 禁止 | 著作権者の名前を、許可なく派生物の推奨・宣伝に使うこと |
+| ⚠ 無保証 | 本ソフトウェアは現状のまま提供され、利用による損害について著作権者は責任を負いません |
+
+上の要約は参考です。正式な条件は [LICENSE](LICENSE) の英文が優先します。
+
+クレジット表記の例(ドキュメントや About 画面などに):
+
+```
+This product includes VHMD_DevKit
+Copyright (c) 2026, Nekomimi21336 — BSD 3-Clause License
+https://github.com/Nekomimi21336/VHMD_DevKit
+```
+
+同梱しているサードパーティ(OpenVR SDK: BSD 3-Clause / nlohmann/json: MIT)のライセンスは [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) にあり、再配布時はこちらも一緒に含めてください(配布アーカイブには同梱済み)。
