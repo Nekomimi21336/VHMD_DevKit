@@ -29,13 +29,14 @@ COMMON = [
     "README.md", "README.en.md", "README.zh-CN.md", "README.ko.md",
     "LICENSE", "THIRD_PARTY_NOTICES.md",
     "docs", "clients/python",
+    "tests/integration",  # linux_check.py / soak_test.py etc., so testers need no clone
 ]
 TOOLS = {
     "win64": ["tools/common.ps1", "tools/install_driver.ps1", "tools/uninstall_driver.ps1", "tools/verify_env.ps1"],
     "linux64": ["tools/common.sh", "tools/install_driver.sh", "tools/uninstall_driver.sh", "tools/verify_env.sh"],
 }
 BINARY = {"win64": "driver_vhmd.dll", "linux64": "driver_vhmd.so"}
-SKIP_PARTS = {"__pycache__", ".pytest_cache"}
+SKIP_PARTS = {"__pycache__", ".pytest_cache", "results"}
 
 
 def collect(platform: str, driver_dir: Path) -> list[tuple[str, Path]]:
