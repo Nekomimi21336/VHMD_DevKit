@@ -29,7 +29,8 @@ Linux 版 SteamVR 的合成器无法像 Windows 那样“绘制到桌面上的�
 | 帧捕获自测(`tests/linux/capture_selftest.cpp`) | ✅ 用真实 Vulkan(Mesa llvmpipe)确认了 fd 导入 → 缩小 → 共享内存 → 像素值 |
 | 公开符号 / 依赖库 | ✅ 仅 `HmdDriverFactory` / 仅 `libc`、`libm`、`ld-linux`(libvulkan 在运行时 `dlopen`) |
 | 在 Linux 版 SteamVR 2.17.10(Arch、KDE Wayland)上运行 v0.2.0 | ✅ 驱动加载、HMD 识别、控制器重映射 / ❌ 合成器因 `CannotDRMLeaseDisplay` 无法启动(null 驱动也一样)→ 由 v0.3.0 的直接模式解决 |
-| **在 Linux 版 SteamVR 上运行 v0.3.0(直接模式)** | ❌ **未验证**。请用下文的 `linux_check.py` 确认 |
+| 在 WSL2 上的 Linux 版 SteamVR 2.17.10(软件 Vulkan)上运行 v0.3.0 | ✅ 驱动加载、直接模式、集成测试 21/23,合成器运行到 `Headset is using driver direct mode` / ❌ 由于 llvmpipe 不支持导入时间线信号量,渲染器初始化失败([verification.md](../verification.md),日文) |
+| **在使用真实 GPU 的 Linux 版 SteamVR 上运行 v0.3.0** | ❌ **未验证**。请用下文的 `linux_check.py` 确认 |
 
 ## 前提
 
@@ -125,6 +126,7 @@ python3 tests/integration/linux_check.py
 | 有 present 但预览全黑 / 没有画面 | `report.json` 的 `display.preview.state`。多 GPU 时检查 `preview.vulkanDevice` |
 | VRChat 无法启动 | 请在第 1~7 项全部为 ✅ 之后再尝试。查看 Proton 侧的日志(`PROTON_LOG=1`) |
 | 想与真实 HMD 一起使用 | `"hmd": {"enabled": false}`(只添加控制器 / 追踪器) |
+| 虚拟机、WSL 等没有 GPU 的环境 | 使用软件 Vulkan(llvmpipe)时,合成器会在渲染器初始化阶段以 `does not support timeline import` 停止。需要真实 GPU |
 
 ## 为支持 Linux 所做的修改
 

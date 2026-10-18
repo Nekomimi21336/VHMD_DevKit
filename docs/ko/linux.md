@@ -29,7 +29,8 @@ Linux판 SteamVR의 컴포지터는 Windows처럼 "데스크톱 위의 창에 �
 | 프레임 캡처 셀프 테스트(`tests/linux/capture_selftest.cpp`) | ✅ 실제 Vulkan(Mesa llvmpipe)으로 fd 임포트 → 축소 → 공유 메모리 → 픽셀 값까지 확인 |
 | 공개 심볼 / 의존 라이브러리 | ✅ `HmdDriverFactory`만 / `libc`, `libm`, `ld-linux`만(libvulkan은 실행 시 `dlopen`) |
 | v0.2.0을 Linux판 SteamVR 2.17.10(Arch, KDE Wayland)에서 실행 | ✅ 드라이버 로드, HMD 인식, 컨트롤러 리맵 / ❌ 컴포지터가 `CannotDRMLeaseDisplay`로 시작되지 않음(null 드라이버도 마찬가지) → v0.3.0의 다이렉트 모드로 대응 |
-| **v0.3.0(다이렉트 모드)을 Linux판 SteamVR에서 실행** | ❌ **미검증**. 아래의 `linux_check.py`로 확인해 주십시오 |
+| v0.3.0을 WSL2 위의 Linux판 SteamVR 2.17.10(소프트웨어 Vulkan)에서 실행 | ✅ 드라이버 로드, 다이렉트 모드, 통합 테스트 21/23, 컴포지터가 `Headset is using driver direct mode`까지 도달 / ❌ llvmpipe가 타임라인 세마포어 외부 가져오기를 지원하지 않아 렌더러 초기화 실패([verification.md](../verification.md), 일본어) |
+| **v0.3.0을 실제 GPU의 Linux판 SteamVR에서 실행** | ❌ **미검증**. 아래의 `linux_check.py`로 확인해 주십시오 |
 
 ## 전제 조건
 
@@ -125,6 +126,7 @@ SteamVR의 시작부터 종료까지를 자동으로 수행하고, `tests/integr
 | present는 오지만 프리뷰가 새까맣거나 오지 않음 | `report.json`의 `display.preview.state`. GPU가 여러 개라면 `preview.vulkanDevice` |
 | VRChat이 시작되지 않음 | 1~7이 모두 ✅가 된 뒤에 시도해 주십시오. Proton 측 로그(`PROTON_LOG=1`) |
 | 실제 HMD와 함께 사용하고 싶음 | `"hmd": {"enabled": false}`(컨트롤러 / 트래커만 추가) |
+| VM, WSL 등 GPU가 없는 환경 | 소프트웨어 Vulkan(llvmpipe)에서는 컴포지터가 렌더러 초기화 단계에서 `does not support timeline import`로 멈춥니다. 실제 GPU가 필요합니다 |
 
 ## Linux 지원을 위해 넣은 변경 사항
 

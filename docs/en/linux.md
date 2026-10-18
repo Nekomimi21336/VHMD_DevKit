@@ -29,7 +29,8 @@ app ──▶ vrcompositor ──(shared Vulkan image / dma-buf)──▶ driver
 | Frame capture self-test (`tests/linux/capture_selftest.cpp`) | ✅ Verified with real Vulkan (Mesa llvmpipe), from fd import → downscale → shared memory → pixel values |
 | Exported symbols / library dependencies | ✅ `HmdDriverFactory` only / `libc`, `libm`, `ld-linux` only (libvulkan is loaded at runtime with `dlopen`) |
 | v0.2.0 run on SteamVR for Linux 2.17.10 (Arch, KDE Wayland) | ✅ Driver loads, HMD recognized, controller remapping / ❌ Compositor fails to start with `CannotDRMLeaseDisplay` (same with the null driver) → addressed by direct mode in v0.3.0 |
-| **v0.3.0 (direct mode) run on SteamVR for Linux** | ❌ **Unverified**. Please check with `linux_check.py` below |
+| v0.3.0 run on SteamVR for Linux 2.17.10 under WSL2 (software Vulkan) | ✅ Driver loads, direct mode, integration test 21/23, the compositor reaches `Headset is using driver direct mode` / ❌ Renderer init fails because llvmpipe cannot import timeline semaphores ([verification.md](../verification.md), Japanese) |
+| **v0.3.0 run on SteamVR for Linux with a real GPU** | ❌ **Unverified**. Please check with `linux_check.py` below |
 
 ## Prerequisites
 
@@ -125,6 +126,7 @@ This automates everything from starting SteamVR to shutting it down, and writes 
 | Presents arrive but the preview is black / missing | `display.preview.state` in `report.json`. On multi-GPU systems, `preview.vulkanDevice` |
 | VRChat does not start | Try it only after 1–7 are all ✅. Proton's log (`PROTON_LOG=1`) |
 | You want to use it alongside a real HMD | `"hmd": {"enabled": false}` (adds only controllers / trackers) |
+| VMs, WSL and other setups without a GPU | With software Vulkan (llvmpipe) the compositor stops at renderer init with `does not support timeline import`. A real GPU is required |
 
 ## Changes made for Linux support
 

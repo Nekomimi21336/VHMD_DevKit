@@ -29,7 +29,8 @@ Linux 版 SteamVR のコンポジタは、Windows のように「デスクトッ
 | フレームキャプチャのセルフテスト(`tests/linux/capture_selftest.cpp`) | ✅ 実際の Vulkan(Mesa llvmpipe)で fd インポート → 縮小 → 共有メモリ → 画素値まで確認 |
 | 公開シンボル / 依存ライブラリ | ✅ `HmdDriverFactory` のみ / `libc`、`libm`、`ld-linux` のみ(libvulkan は実行時に `dlopen`) |
 | v0.2.0 を Linux 版 SteamVR 2.17.10(Arch、KDE Wayland)で実行 | ✅ ドライバのロード、HMD 認識、コントローラのリマップ / ❌ コンポジタが `CannotDRMLeaseDisplay` で起動せず(null ドライバも同様)→ v0.3.0 のダイレクトモードで対応 |
-| **v0.3.0(ダイレクトモード)を Linux 版 SteamVR で実行** | ❌ **未検証**。下の `linux_check.py` で確認してください |
+| v0.3.0 を WSL2 上の Linux 版 SteamVR 2.17.10(ソフトウェア Vulkan)で実行 | ✅ ドライバのロード、ダイレクトモード、統合テスト 21/23、コンポジタが `Headset is using driver direct mode` まで到達 / ❌ llvmpipe がタイムラインセマフォの外部取り込みに非対応でレンダラ初期化が失敗([verification.md](verification.md)) |
+| **v0.3.0 を実 GPU の Linux 版 SteamVR で実行** | ❌ **未検証**。下の `linux_check.py` で確認してください |
 
 ## 前提
 
@@ -125,6 +126,7 @@ SteamVR の起動から終了までを自動で行い、`tests/integration/resul
 | present は来るがプレビューが真っ黒 / 来ない | `report.json` の `display.preview.state`。複数 GPU の場合は `preview.vulkanDevice` |
 | VRChat が起動しない | 1〜7 がすべて ✅ になってから試してください。Proton 側のログ(`PROTON_LOG=1`) |
 | 実 HMD と併用したい | `"hmd": {"enabled": false}`(コントローラ / トラッカーだけ追加) |
+| VM / WSL など GPU の無い環境 | ソフトウェア Vulkan(llvmpipe)ではコンポジタのレンダラ初期化が `does not support timeline import` で止まります。実 GPU が必要です |
 
 ## Linux 対応で入れた変更
 

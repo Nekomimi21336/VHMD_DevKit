@@ -130,6 +130,26 @@ python tests/integration/stress_restart.py --cycles 30 --stop-relaunchers --rela
 | Windows への影響(統合テスト 29 項目、ウィンドウ方式のまま) | ✅ |
 | **Linux 版 SteamVR 上でのダイレクトモード** | ❌ 未検証(`tests/integration/linux_check.py` で確認予定) |
 
+### WSL2 上の Linux 版 SteamVR での実行(v0.3.0、2026-10-19)
+
+Windows の WSL2(Ubuntu 24.04)に、steamcmd で Linux 版 SteamVR 2.17.10(ビルド 1789498647)と Steam Linux Runtime 3.0(sniper)を入れ、GitHub から取得した v0.3.0 をビルド・登録して実行しました。GPU は使えないため、Vulkan はソフトウェア実装(Mesa llvmpipe)です。
+
+| 項目 | 結果 |
+|---|---|
+| ドライバのロード、`Active HMD set to vhmd.VHMD-HMD-0` | ✅ |
+| `vhmd: HMD display: direct mode`、vsync クロック 90 Hz | ✅ |
+| 3 点の登録、トラッカーのオンデマンド追加 | ✅ |
+| 統合テスト(Background アプリで読める範囲) | ✅ 23 項目中 21 項目(列挙、オンデマンド追加、ポーズ誤差、遅延、不正パケット、1000 pps、終了処理)。残り 2 項目は Scene アプリの接続で、コンポジタが動かないため失敗 |
+| vrcompositor が起動し、ダイレクトモードのドライバを認識 | ✅ `Direct mode: enabled`、`Headset is using driver direct mode`(v0.2.0 で出ていた `CannotDRMLeaseDisplay` は出ない) |
+| vrcompositor のレンダラ初期化 | ❌ `physical device does not support timeline import`(llvmpipe はタイムラインセマフォの外部取り込みに非対応。実 GPU のドライバは対応) |
+
+この環境特有の準備(実機の Linux では Steam クライアントが自動でやるので不要):
+- Steam クライアント無しで動かしたため、Steam が提供する起動サービスを `SteamLinuxRuntime_sniper/pressure-vessel/bin/steam-runtime-launcher-service --alongside-steam` で代わりに立て、コンポジタを `VALVE_SKIP_RUNTIME_SAFETY=1` でホストのライブラリで起動した。
+- Ubuntu 24.04 標準の Mesa 25.0 の llvmpipe は `VK_KHR_external_semaphore_fd` が無く、デバイス作成で失敗した。Mesa 26.2.5(kisak-mesa PPA)で解消。
+- 新しい Mesa では Vulkan on D3D12(dzn)が先頭に来るが拡張が足りないため、`VK_DRIVER_FILES` で llvmpipe に限定した。
+
+→ ドライバ側とダイレクトモードの受け入れまではソフトウェア Vulkan で確認できました。描画が流れることの確認には実 GPU が必要です(`tests/integration/linux_check.py` を実機で実行)。
+
 ## 2. 手動検証手順(要件 10.2)
 
 GUI 操作が必要なため未実施の項目です。結果欄に記入してください。
