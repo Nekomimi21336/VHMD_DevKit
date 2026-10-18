@@ -33,6 +33,7 @@
 - **트래커는 온디맨드**: 처음 보낸 시점에 SteamVR에 추가되며, 그 포즈에서 동기화된 상태로 시작(최대 16대)
 - **간단한 외부 API**: UDP + JSON(`127.0.0.1:39570`). 데이터그램 1개로 모든 디바이스를 한 번에 갱신 가능. 선택적으로 VMT 호환 OSC
 - **컨트롤러 입력 일체**: 트리거 / 그립 / 스틱 / A·B·X·Y / 시스템 / 메뉴, 진동 피드백 반환, 손가락 스켈레톤(굽힘 값 또는 본 직접 지정)
+- **컨트롤러와 핸드 트래킹 전환**: `hand_mode`로 SteamVR을 멈추지 않고 전환(VRChat에서는 버튼 조작 ⇄ 핸드 트래킹 조작). 보내는 ID와 내용은 그대로
 - **시선 입력**(SteamVR의 아이 트래킹 컴포넌트)
 - **Windows / Linux** 지원. Linux는 다이렉트 모드(SteamVR이 그린 영상을 드라이버가 받는 방식)로 동작하며, 영상은 공유 메모리를 통한 뷰어로 확인 가능(v0.3.0. Linux판 SteamVR에서의 확인 대기 중)
 - **Python 클라이언트**(의존성 없음)와 예제, SteamVR 위에서 동작하는 자동 검증 스크립트
@@ -174,7 +175,7 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 | Python 단위 테스트 | `python -m pytest tests/python` | 13건(클라이언트, 프리뷰 읽기) |
 | Linux 캡처 셀프 테스트 | `ctest`(Linux) | 실제 Vulkan으로 공유 이미지 → 공유 메모리를 확인(SteamVR 불필요) |
 | Linux 실제 장비 확인 | `python3 tests/integration/linux_check.py` | 다이렉트 모드의 표시 경로 + 통합 테스트, 리포트 출력 |
-| SteamVR 통합 테스트 | `python tests/integration/run_integration.py` | 29개 항목(열거, 온디맨드 추가, 오차, 지연, 입력, 스켈레톤, 잘못된 패킷, 부하, 종료 처리) |
+| SteamVR 통합 테스트 | `python tests/integration/run_integration.py` | 31개 항목(열거, 온디맨드 추가, 오차, 지연, 입력, 스켈레톤, 핸드 모드 전환, 잘못된 패킷, 부하, 종료 처리) |
 | 시작/종료 반복 | `python tests/integration/stress_restart.py --cycles 30` | 매번 드라이버의 종료 처리와 크래시 여부를 확인 |
 
 통합 테스트에는 `pip install openvr`이 필요합니다. 시작 후 SteamVR을 재시작해 버리는 오버레이 앱이 있는 환경에서는 `--stop-relaunchers`를 붙이십시오(Steam 본체와 게임은 대상 외).

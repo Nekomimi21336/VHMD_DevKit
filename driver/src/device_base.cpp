@@ -36,7 +36,20 @@ vr::DriverPose_t MakeDriverPose(const OutputPose& out, bool head_model) {
 }
 
 VirtualDevice::VirtualDevice(std::shared_ptr<DeviceState> state) : state_(std::move(state)) {
+    serial_ = state_->Config().serial;
+    key_ = state_->Config().id;
     last_pose_ = MakeDriverPose(OutputPose{state_->Config().default_pos, state_->Config().default_rot}, false);
+}
+
+VirtualDevice::VirtualDevice(std::shared_ptr<DeviceState> state, std::string serial, std::string key_suffix)
+    : VirtualDevice(std::move(state)) {
+    serial_ = std::move(serial);
+    key_ += key_suffix;
+}
+
+void VirtualDevice::AddFollower(VirtualDevice* follower) {
+    follower->is_follower_ = true;
+    followers_.push_back(follower);
 }
 
 vr::EVRInitError VirtualDevice::Activate(uint32_t object_id) {
@@ -45,7 +58,7 @@ vr::EVRInitError VirtualDevice::Activate(uint32_t object_id) {
     activated_at_ = Clock::now();
     const auto container = vr::VRProperties()->TrackedDeviceToPropertyContainer(object_id);
     OnActivate(container);
-    Log(LogLevel::Info, "activated %s (serial %s) as device index %u", Id().c_str(), Serial().c_str(), object_id);
+    Log(LogLevel::Info, "activated %s (serial %s) as device index %u", Key().c_str(), Serial().c_str(), object_id);
     return vr::VRInitError_None;
 }
 
@@ -73,22 +86,32 @@ vr::DriverPose_t VirtualDevice::GetPose() {
 
 void VirtualDevice::Update(Clock::time_point now) {
     // Read the shared buffers first (DeviceState has its own lock).
-    const OutputPose out = state_->ComputeOutput(now);
-    auto inputs = state_->TakeChangedInputs();
-    auto skeleton = state_->TakeSkeleton();
-    auto gaze = state_->TakeGaze();
+    Frame f;
+    f.out = state_->ComputeOutput(now);
+    f.inputs = state_->TakeChangedInputs();
+    f.skeleton = state_->TakeSkeleton();
+    f.gaze = state_->TakeGaze();
+    Publish(now, f);
+    for (auto* follower : followers_) follower->Publish(now, f);
+}
 
+void VirtualDevice::Publish(Clock::time_point now, const Frame& f) {
     std::lock_guard<std::mutex> lock(mu_);
     if (index_ == vr::k_unTrackedDeviceIndexInvalid) return;
     // vrserver finishes taking ownership of the device shortly after Activate()
     // returns; pose updates sent in that window are rejected with
     // "PoseUpdated ... owned by driver (-1)". Give it a moment.
     if (now - activated_at_ < kPublishDelayAfterActivate) return;
+    OutputPose out = f.out;
+    if (!active_) {
+        out.connected = false;
+        out.pose_valid = false;
+    }
     last_pose_ = MakeDriverPose(out, ApplyHeadModel());
     vr::VRServerDriverHost()->TrackedDevicePoseUpdated(index_, last_pose_, sizeof(vr::DriverPose_t));
-    for (const auto& [name, value] : inputs) OnInput(name, value);
-    if (skeleton) OnSkeleton(*skeleton);
-    if (gaze) OnGaze(*gaze);
+    for (const auto& [name, value] : f.inputs) OnInput(name, value);
+    if (f.skeleton) OnSkeleton(*f.skeleton);
+    if (f.gaze) OnGaze(*f.gaze);
     OnTick(now);
 }
 

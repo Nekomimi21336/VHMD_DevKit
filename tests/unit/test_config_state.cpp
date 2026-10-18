@@ -6,6 +6,8 @@
 #include <sstream>
 #include <thread>
 
+#include <nlohmann/json.hpp>
+
 #include "config/driver_config.h"
 #include "config/roles.h"
 #include "net/udp_socket.h"
@@ -90,6 +92,46 @@ TEST(config_display_and_preview) {
     CHECK(r.config.preview.vulkan_device == 1);
     auto bad = LoadConfigFromJson(R"({"display":{"mode":"hologram"}})");
     CHECK(bad.config.display_mode == "auto" && !bad.warnings.empty());
+}
+
+TEST(config_hand_mode_and_skeleton_level) {
+    auto d = DefaultConfig();
+    CHECK(d.hand_mode == "controllers");
+    CHECK(!d.Find("left_hand")->skeleton_full); // controllers default to a Partial skeleton
+    auto r = LoadConfigFromJson(R"({"controllers":{"handMode":"hands","skeletonLevel":"full"}})");
+    CHECK(r.config.hand_mode == "hands" && r.warnings.empty());
+    CHECK(r.config.Find("right_hand")->skeleton_full);
+    auto bad = LoadConfigFromJson(R"({"controllers":{"handMode":"feet"}})");
+    CHECK(bad.config.hand_mode == "controllers" && !bad.warnings.empty());
+}
+
+TEST(router_hand_mode_op) {
+    DriverConfig cfg = DefaultConfig();
+    std::vector<std::shared_ptr<DeviceState>> states;
+    for (const auto& d : cfg.devices) states.push_back(std::make_shared<DeviceState>(d, cfg));
+    const auto now = Clock::now();
+    {
+        MessageRouter router(cfg, states); // no hook: reported as unavailable
+        auto j = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"hand_mode","mode":"hands"})", now));
+        CHECK(j["ok"] == false);
+    }
+    std::string mode = "controllers";
+    RouterHooks hooks;
+    hooks.set_hand_mode = [&](const std::string& m) -> std::string {
+        if (m != "controllers" && m != "hands") return "bad mode";
+        mode = m;
+        return "";
+    };
+    hooks.hand_mode = [&] { return mode; };
+    MessageRouter router(cfg, states, hooks);
+    auto set = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"hand_mode","mode":"hands","seq":3})", now));
+    CHECK(set["ok"] == true && set["mode"] == "hands" && mode == "hands");
+    auto query = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"hand_mode"})", now));
+    CHECK(query["ok"] == true && query["mode"] == "hands");
+    auto bad = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"hand_mode","mode":"feet"})", now));
+    CHECK(bad["ok"] == false && bad["mode"] == "hands");
+    auto status = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"list"})", now));
+    CHECK(status["hand_mode"] == "hands");
 }
 
 TEST(config_shipped_file_parses_cleanly) {

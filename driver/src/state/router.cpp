@@ -112,6 +112,7 @@ std::string MessageRouter::StatusJson(Clock::time_point now, std::optional<doubl
     j["timeout_ms"] = config_.timeout_ms;
     j["timeout_policy"] = ToString(config_.timeout_policy);
     j["vmt_enabled"] = config_.vmt_enabled;
+    j["hand_mode"] = hooks_.hand_mode ? hooks_.hand_mode() : config_.hand_mode;
     j["packets"] = {{"total", total_packets_.load()}, {"rejected", rejected_.load()}};
     json devs = json::array();
     for (const auto& d : devices_) {
@@ -197,6 +198,18 @@ std::optional<std::string> MessageRouter::HandleConfig(const ConfigMessage& m, C
             if (!err.empty()) r["error"] = err;
             r["role"] = role->steamvr_role;
         }
+    } else if (m.op == "hand_mode") {
+        if (!hooks_.set_hand_mode) {
+            r["ok"] = false;
+            r["error"] = "hand_mode not available";
+        } else if (m.mode.empty()) {
+            r["ok"] = true; // query only
+        } else {
+            const std::string err = hooks_.set_hand_mode(m.mode);
+            r["ok"] = err.empty();
+            if (!err.empty()) r["error"] = err;
+        }
+        if (hooks_.hand_mode) r["mode"] = hooks_.hand_mode();
     } else {
         r["ok"] = false;
         r["error"] = "unknown op";

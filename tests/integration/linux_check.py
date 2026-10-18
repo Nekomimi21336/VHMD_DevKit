@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import platform
 import shutil
@@ -244,12 +245,17 @@ def main() -> int:
 
     # The compositor must still be presenting at the end: some GPUs fail a while after start-up.
     if up:
-        t_end = time.monotonic() + args.hold
-        while time.monotonic() < t_end:
-            time.sleep(1.0)
+        # Keep the headset moving like a worn one: a still HMD sends SteamVR into
+        # standby, where the compositor drops to about 10 frames per second.
+        def sway(seconds):
+            t_stop = time.monotonic() + seconds
+            while time.monotonic() < t_stop:
+                client.pose("hmd", (0.02 * math.sin(time.monotonic()), 1.6, 0.0))
+                time.sleep(1 / 30)
         try:
+            sway(args.hold)
             q1 = client.status().get("display", {}).get("presents", 0)
-            time.sleep(2.0)
+            sway(2.0)
             q2 = client.status().get("display", {}).get("presents", 0)
         except (TimeoutError, OSError):
             q1 = q2 = 0

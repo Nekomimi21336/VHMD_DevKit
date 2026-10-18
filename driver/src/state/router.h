@@ -30,6 +30,11 @@ struct RouterHooks {
     std::function<std::string()> display_status;
     // Applies a tracker role. Returns an error string (empty = success).
     std::function<std::string(const std::string& id, const RoleInfo& role)> set_role;
+    // Switches both hands between "controllers" and "hands" (hand tracking).
+    // Returns an error string (empty = success).
+    std::function<std::string(const std::string& mode)> set_hand_mode;
+    // Current hand mode ("controllers" / "hands"), for status.
+    std::function<std::string()> hand_mode;
 };
 
 class MessageRouter {

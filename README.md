@@ -33,6 +33,7 @@
 - **トラッカーはオンデマンド**: 初めて送った時点で SteamVR に追加され、そのポーズから同期して始まる(最大 16 台)
 - **シンプルな外部 API**: UDP + JSON(`127.0.0.1:39570`)。1 データグラムで全デバイスをまとめて更新可能。任意で VMT 互換 OSC
 - **コントローラ入力一式**: トリガー / グリップ / スティック / A・B・X・Y / システム / メニュー、振動の返送、指スケルトン(曲げ値 or ボーン直接指定)
+- **コントローラとハンドトラッキングの切り替え**: SteamVR を止めずに `hand_mode` で切り替え(VRChat ではボタン操作 ⇄ ハンドトラッキング操作)。送る ID と内容はそのまま
 - **視線入力**(SteamVR のアイトラッキングコンポーネント)
 - **Windows / Linux** 対応。Linux はダイレクトモード(SteamVR が描いた映像をドライバが受け取る方式)で、映像は共有メモリ経由のビューアで確認可能(v0.3.0。Linux 版 SteamVR 上での確認待ち)
 - **Python クライアント**(依存なし)とサンプル、SteamVR 上で動く自動検証スクリプト
@@ -174,7 +175,7 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 | Python 単体テスト | `python -m pytest tests/python` | 13 件(クライアント、プレビュー読み取り) |
 | Linux キャプチャセルフテスト | `ctest`(Linux) | 実際の Vulkan で共有イメージ → 共有メモリを確認(SteamVR 不要) |
 | Linux 実機確認 | `python3 tests/integration/linux_check.py` | ダイレクトモードの表示経路 + 統合テスト、レポート出力 |
-| SteamVR 統合テスト | `python tests/integration/run_integration.py` | 29 項目(列挙、オンデマンド追加、誤差、遅延、入力、スケルトン、不正パケット、負荷、終了処理) |
+| SteamVR 統合テスト | `python tests/integration/run_integration.py` | 31 項目(列挙、オンデマンド追加、誤差、遅延、入力、スケルトン、ハンドモード切り替え、不正パケット、負荷、終了処理) |
 | 起動/終了の繰り返し | `python tests/integration/stress_restart.py --cycles 30` | 毎回ドライバの終了処理とクラッシュ有無を確認 |
 
 統合テストには `pip install openvr` が必要です。起動後に SteamVR を再起動してしまうオーバーレイアプリがある環境では `--stop-relaunchers` を付けてください(Steam 本体やゲームは対象外)。

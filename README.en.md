@@ -33,6 +33,7 @@ No hardware needed: poses and inputs sent from an external process over UDP/JSON
 - **Trackers on demand**: a tracker is added to SteamVR the first time you send to it, and starts in sync with that pose (up to 16)
 - **Simple external API**: UDP + JSON (`127.0.0.1:39570`). A single datagram can update all devices at once. Optional VMT-compatible OSC
 - **Full controller input set**: trigger / grip / stick / A, B, X, Y / system / menu, haptics sent back to the client, finger skeleton (curl values or direct bone specification)
+- **Switch between controllers and hand tracking**: `hand_mode` changes it while SteamVR runs (in VRChat: button controls ⇄ hand-tracking controls). Ids and messages stay the same
 - **Eye gaze input** (SteamVR's eye tracking component)
 - **Windows / Linux** support. On Linux the driver runs in direct mode (the driver receives the frames SteamVR renders), and the output can be viewed with a viewer via shared memory (v0.3.0; awaiting confirmation on SteamVR for Linux)
 - **Python client** (no dependencies) with samples, plus automated verification scripts that run against SteamVR
@@ -174,7 +175,7 @@ Settings are loaded when SteamVR starts. Either edit the source-side files and r
 | Python unit tests | `python -m pytest tests/python` | 13 tests (client, preview reader) |
 | Linux capture self-test | `ctest` (Linux) | Checks shared image → shared memory with real Vulkan (no SteamVR needed) |
 | Linux on-hardware check | `python3 tests/integration/linux_check.py` | Direct-mode display path + integration tests, writes a report |
-| SteamVR integration tests | `python tests/integration/run_integration.py` | 29 items (enumeration, on-demand addition, error, latency, input, skeleton, invalid packets, load, shutdown) |
+| SteamVR integration tests | `python tests/integration/run_integration.py` | 31 items (enumeration, on-demand addition, error, latency, input, skeleton, hand mode switching, invalid packets, load, shutdown) |
 | Repeated start/stop | `python tests/integration/stress_restart.py --cycles 30` | Checks the driver's shutdown and whether it crashed on every cycle |
 
 The integration tests require `pip install openvr`. In environments with an overlay app that relaunches SteamVR after it starts, add `--stop-relaunchers` (Steam itself and games are not affected).

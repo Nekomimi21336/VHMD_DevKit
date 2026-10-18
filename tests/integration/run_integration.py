@@ -184,7 +184,14 @@ def main() -> int:
         status = client.status()
         rep.check("config list reply", status.get("type") == "status", f"{len(status.get('devices', []))} devices in status")
         devs = find_devices(system)
-        vh = {s: d for s, d in devs.items() if d["tracking_system"] == "vhmd"}
+        hands_mode = status.get("hand_mode") == "hands"
+
+        def standby_twin(d):
+            # Each hand has a controller and a hand-tracking twin; only the one
+            # matching the current hand_mode is connected.
+            return ("-HAND-" in d["serial"]) != hands_mode and d["class"] == openvr.TrackedDeviceClass_Controller
+
+        vh = {s: d for s, d in devs.items() if d["tracking_system"] == "vhmd" and not standby_twin(d)}
         rep.info["devices"] = list(devs.values())
         hmd = [d for d in vh.values() if d["class"] == openvr.TrackedDeviceClass_HMD]
         ctl = [d for d in vh.values() if d["class"] == openvr.TrackedDeviceClass_Controller]
@@ -221,7 +228,7 @@ def main() -> int:
         idx_now = {d["id"]: d["index"] for d in status["devices"] if d["index"] >= 0}
         synced = all(d in idx_now and wait_pose(system, idx_now[d], p, r)[0] for d, (p, r) in sent.items())
         rep.check("added trackers start at the pose that triggered them", synced)
-        vh = {s: d for s, d in find_devices(system).items() if d["tracking_system"] == "vhmd"}
+        vh = {s: d for s, d in find_devices(system).items() if d["tracking_system"] == "vhmd" and not standby_twin(d)}
         rep.check("all vhmd devices connected", all(d["connected"] for d in vh.values()))
         rep.check("own controller types (no impersonation)",
                   all(d["controller_type"].startswith("vhmd_") for d in vh.values()),

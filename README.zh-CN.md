@@ -33,6 +33,7 @@
 - **追踪器按需添加**：首次发送时才添加到 SteamVR，并从该姿态开始同步(最多 16 个)
 - **简单的外部 API**：UDP + JSON(`127.0.0.1:39570`)。一个数据报即可批量更新所有设备。可选 VMT 兼容 OSC
 - **完整的控制器输入**：扳机 / 握把 / 摇杆 / A/B/X/Y / 系统 / 菜单、振动回传、手指骨骼(弯曲值或直接指定骨骼)
+- **控制器与手部追踪的切换**：通过 `hand_mode` 在不停止 SteamVR 的情况下切换(在 VRChat 中为按键操作 ⇄ 手部追踪操作)。发送的 ID 和内容保持不变
 - **视线输入**(SteamVR 的眼动追踪组件)
 - 支持 **Windows / Linux**。Linux 上采用直接模式(由驱动接收 SteamVR 渲染的画面)，可通过基于共享内存的查看器确认画面(v0.3.0，尚待在 Linux 版 SteamVR 上确认)
 - **Python 客户端**(无依赖)及示例、可在 SteamVR 上运行的自动验证脚本
@@ -174,7 +175,7 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 | Python 单元测试 | `python -m pytest tests/python` | 13 项(客户端、预览读取) |
 | Linux 捕获自测 | `ctest`(Linux) | 用真实 Vulkan 确认共享图像 → 共享内存(无需 SteamVR) |
 | Linux 实机确认 | `python3 tests/integration/linux_check.py` | 直接模式的显示路径 + 集成测试，输出报告 |
-| SteamVR 集成测试 | `python tests/integration/run_integration.py` | 29 项(枚举、按需添加、误差、延迟、输入、骨骼、非法数据包、负载、退出处理) |
+| SteamVR 集成测试 | `python tests/integration/run_integration.py` | 31 项(枚举、按需添加、误差、延迟、输入、骨骼、手部模式切换、非法数据包、负载、退出处理) |
 | 反复启动/退出 | `python tests/integration/stress_restart.py --cycles 30` | 每次都检查驱动的退出处理以及是否崩溃 |
 
 集成测试需要 `pip install openvr`。如果环境中存在启动后会重启 SteamVR 的叠加层应用，请加上 `--stop-relaunchers`(Steam 本体和游戏不受影响)。

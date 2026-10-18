@@ -21,9 +21,14 @@ struct HapticEvent {
 class ControllerDevice : public VirtualDevice {
 public:
     explicit ControllerDevice(std::shared_ptr<DeviceState> state);
+    // Hand-tracking twin of a controller: same protocol id and data, its own
+    // serial ("VHMD-HAND-L/R"), always a Full skeleton. Apps such as VRChat
+    // treat a Full skeleton as tracked hands and a Partial one as a controller.
+    static std::unique_ptr<ControllerDevice> MakeHandTwin(std::shared_ptr<DeviceState> state);
 
     vr::ETrackedDeviceClass DeviceClass() const override { return vr::TrackedDeviceClass_Controller; }
     bool IsLeft() const { return left_; }
+    bool IsHandTwin() const { return hand_twin_; }
 
     // Returns the haptic request if `event` targets this controller.
     std::optional<HapticEvent> MatchHaptic(const vr::VREvent_t& event) const;
@@ -50,7 +55,11 @@ private:
     void UpdateSkeletonFromCurls(const std::array<float, 5>& curl, const std::array<float, 5>& splay);
     void PushSkeleton(const vr::VRBoneTransform_t* bones);
 
+    ControllerDevice(std::shared_ptr<DeviceState> state, std::string serial);
+    void InitReferenceBones();
+
     bool left_;
+    bool hand_twin_ = false;
     std::map<std::string, Component> components_;
     std::map<std::string, float> values_;
     std::map<std::string, bool> explicit_; // click/touch driven explicitly by the client

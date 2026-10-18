@@ -188,6 +188,15 @@ class VHMDClient:
     def set_role(self, tracker_id: str, role: str) -> Dict[str, Any]:
         return self.request("set_role", id=tracker_id, role=role)
 
+    def hand_mode(self, mode: str = "") -> str:
+        """Switch both hands between "controllers" and "hands" (hand tracking)
+        while SteamVR runs, or return the current mode when called without
+        one. The same ids ("left_hand", "right_hand") keep working in both."""
+        r = self.request("hand_mode", mode=mode) if mode else self.request("hand_mode")
+        if not r.get("ok"):
+            raise ValueError(r.get("error", "hand_mode failed"))
+        return r.get("mode", "")
+
     def reset(self, device_id: str = "") -> Dict[str, Any]:
         return self.request("reset", id=device_id) if device_id else self.request("reset")
 

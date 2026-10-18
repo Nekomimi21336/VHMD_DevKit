@@ -102,6 +102,7 @@
 - `bones`: OpenVR 핸드 스켈레톤(31개 본, `HandSkeletonBone` 순서)의 **부모 본 공간** 회전. `[w,x,y,z,px,py,pz]`로 위치를 함께 지정하거나, `positions`를 별도로 전달할 수 있습니다(생략 시 펼친 손의 참조 위치).
 - 마지막 `skeleton` 이후 500 ms 이상 아무것도 오지 않는 동안에는 `trigger`/`grip`/버튼의 터치 상태로부터 손가락 굽힘을 자동 생성합니다.
 - SteamVR에는 `WithController` / `WithoutController` 두 모션 레인지 모두에 같은 값을 보냅니다.
+- 컨트롤러와 핸드 트래킹을 **SteamVR을 멈추지 않고 전환**할 수 있습니다(`config`의 `hand_mode`). `controllers`(기본)는 실제 컨트롤러와 같은 취급이며 스켈레톤은 Partial(SteamVR이 손가락 본을 정리)입니다. `hands`에서는 손마다 별도의 디바이스(`VHMD-HAND-L/R`, 스켈레톤은 Full로 보낸 본을 그대로 반영)로 교체되며, VRChat 등은 핸드 트래킹으로 취급합니다(버튼으로 메뉴 조작은 비활성화되고 제스처 조작이 됩니다). 두 모드 모두 ID는 `left_hand` / `right_hand` 그대로이므로 보내는 내용을 바꿀 필요가 없습니다. 핸드 디바이스는 처음 `hands`로 전환할 때 추가됩니다.
 
 ### `gaze`(HMD의 시선)
 
@@ -129,6 +130,7 @@
 | `set_role` | `id`, `role` | SteamVR 설정의 `trackers` 섹션에 롤을 기록(사용자 설정을 덮어씀) |
 | `reset` | `id`(생략 시 전체) | 설정 파일의 기본 포즈로 되돌림 |
 | `add` | `id`(생략 시 온디맨드 전체) | 온디맨드 디바이스를 즉시 SteamVR에 추가(다음 프레임에 반영). `{"ok":true,"ids":[...]}` |
+| `hand_mode` | `mode`(`controllers` / `hands`, 생략 시 현재 모드만 반환) | 좌우 손을 컨트롤러 / 핸드 트래킹으로 전환(SteamVR은 멈추지 않음). `{"ok":true,"mode":"hands"}`. `status`에도 `hand_mode`가 포함됨 |
 
 `status`의 `display`: `mode`(`window` / `direct`), `width`, `height`, `refresh_hz`. 다이렉트 모드(Linux)에서는 추가로 `swap_sets_created`, `swap_sets_alive`, `layers_submitted`, `presents`, `vsyncs`, `eye_texture`(`width`, `height`, `vk_format`), `preview`(`state`, `submitted`, `written`, `active`).
 

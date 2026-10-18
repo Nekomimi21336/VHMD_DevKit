@@ -42,14 +42,18 @@ private:
     int DeviceIndexFor(const std::string& id) const;
     std::string SetRole(const std::string& id, const RoleInfo& role);
     void RegisterDevice(VirtualDevice& dev);
-    void RequestAdd(const std::string& id);
+    void RequestAdd(const std::string& key);
     void ProcessPendingAdds();
+    std::string SetHandMode(const std::string& mode);
 
     DriverConfig config_;
     std::string install_path_;
     std::vector<std::shared_ptr<DeviceState>> states_;
     std::vector<std::unique_ptr<VirtualDevice>> devices_;
-    std::vector<ControllerDevice*> controllers_;
+    std::vector<ControllerDevice*> controllers_; // controllers and their hand twins
+    std::vector<ControllerDevice*> hand_twins_;
+    std::mutex hand_mode_mu_;
+    std::string hand_mode_ = "controllers";
     std::vector<TrackerDevice*> trackers_;
     HmdDevice* hmd_ = nullptr;
     std::unique_ptr<MessageRouter> router_;

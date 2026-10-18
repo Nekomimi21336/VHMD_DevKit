@@ -66,6 +66,11 @@ vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* driver_context) {
     hooks.device_index = [this](const std::string& id) { return DeviceIndexFor(id); };
     hooks.set_role = [this](const std::string& id, const RoleInfo& role) { return SetRole(id, role); };
     hooks.request_add = [this](const std::string& id) { RequestAdd(id); };
+    hooks.set_hand_mode = [this](const std::string& mode) { return SetHandMode(mode); };
+    hooks.hand_mode = [this]() {
+        std::lock_guard<std::mutex> lock(hand_mode_mu_);
+        return hand_mode_;
+    };
     hooks.display_status = [this]() { return hmd_ ? hmd_->DisplayStatusJson() : std::string("{}"); };
     router_ = std::make_unique<MessageRouter>(config_, states_, hooks);
 
@@ -111,6 +116,14 @@ void DeviceProvider::CreateDevices() {
         case DeviceKind::Controller: {
             auto c = std::make_unique<ControllerDevice>(state);
             controllers_.push_back(c.get());
+            // Hand-tracking twin: same data, registered the first time "hands"
+            // mode is selected, connected only in that mode.
+            auto twin = ControllerDevice::MakeHandTwin(state);
+            twin->SetActive(false);
+            c->AddFollower(twin.get());
+            controllers_.push_back(twin.get());
+            hand_twins_.push_back(twin.get());
+            devices_.push_back(std::move(twin));
             dev = std::move(c);
             break;
         }
@@ -127,18 +140,37 @@ void DeviceProvider::CreateDevices() {
     size_t on_demand = 0;
     for (const auto& d : config_.devices) on_demand += d.enabled && d.on_demand;
     Log(LogLevel::Info, "registered %zu devices, %zu more on demand", registered_.size(), on_demand);
+    if (config_.hand_mode == "hands") SetHandMode("hands");
+}
+
+std::string DeviceProvider::SetHandMode(const std::string& mode) {
+    if (mode != "controllers" && mode != "hands") return "mode must be \"controllers\" or \"hands\"";
+    if (hand_twins_.empty()) return "no controllers";
+    const bool hands = mode == "hands";
+    {
+        std::lock_guard<std::mutex> lock(hand_mode_mu_);
+        if (hand_mode_ == mode) return "";
+        hand_mode_ = mode;
+    }
+    for (auto* c : controllers_) c->SetActive(c->IsHandTwin() == hands);
+    // The twins are registered with SteamVR on first use (from RunFrame).
+    if (hands) {
+        for (auto* t : hand_twins_) RequestAdd(t->Key());
+    }
+    Log(LogLevel::Info, "hand mode: %s", mode.c_str());
+    return "";
 }
 
 void DeviceProvider::RegisterDevice(VirtualDevice& dev) {
-    if (!registered_.insert(dev.Id()).second) return;
+    if (!registered_.insert(dev.Key()).second) return;
     if (!vr::VRServerDriverHost()->TrackedDeviceAdded(dev.Serial().c_str(), dev.DeviceClass(), &dev)) {
         Log(LogLevel::Error, "TrackedDeviceAdded failed for %s (%s)", dev.Id().c_str(), dev.Serial().c_str());
     }
 }
 
-void DeviceProvider::RequestAdd(const std::string& id) {
+void DeviceProvider::RequestAdd(const std::string& key) {
     std::lock_guard<std::mutex> lock(add_mu_);
-    if (!registered_.count(id)) pending_adds_.insert(id);
+    if (!registered_.count(key)) pending_adds_.insert(key);
 }
 
 void DeviceProvider::ProcessPendingAdds() {
@@ -149,7 +181,7 @@ void DeviceProvider::ProcessPendingAdds() {
     }
     for (const auto& id : ids) {
         for (auto& d : devices_) {
-            if (d->Id() != id) continue;
+            if (d->Key() != id) continue;
             std::lock_guard<std::mutex> lock(add_mu_); // guards registered_
             if (registered_.count(id)) break;
             Log(LogLevel::Info, "adding on-demand device %s (%s)", id.c_str(), d->Serial().c_str());
@@ -182,7 +214,9 @@ void DeviceProvider::UpdateLoop() {
                 worst_late_ms = 0.0;
             }
         }
-        for (auto& d : devices_) d->Update(now);
+        for (auto& d : devices_) {
+            if (!d->IsFollower()) d->Update(now); // followers are updated by their leader
+        }
 
         next += period;
         if (Clock::now() > next + period * 4) next = Clock::now(); // fell far behind: resync
@@ -199,13 +233,16 @@ void DeviceProvider::OnDatagram(std::string_view data, const Endpoint& from) {
 }
 
 int DeviceProvider::DeviceIndexFor(const std::string& id) const {
+    // A hand has two devices (controller and hand twin): report the active one.
+    int fallback = -1;
     for (const auto& d : devices_) {
-        if (d->Id() == id) {
-            const uint32_t idx = d->Index();
-            return idx == vr::k_unTrackedDeviceIndexInvalid ? -1 : static_cast<int>(idx);
-        }
+        if (d->Id() != id) continue;
+        const uint32_t idx = d->Index();
+        const int index = idx == vr::k_unTrackedDeviceIndexInvalid ? -1 : static_cast<int>(idx);
+        if (d->IsActive()) return index;
+        if (fallback < 0) fallback = index;
     }
-    return -1;
+    return fallback;
 }
 
 std::string DeviceProvider::SetRole(const std::string& id, const RoleInfo& role) {
@@ -245,6 +282,7 @@ void DeviceProvider::Cleanup() {
     if (update_thread_.joinable()) update_thread_.join();
     router_.reset();
     controllers_.clear();
+    hand_twins_.clear();
     trackers_.clear();
     hmd_ = nullptr;
     devices_.clear();

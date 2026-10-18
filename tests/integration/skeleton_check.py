@@ -110,6 +110,22 @@ def main() -> int:
                         "ok": open_ok and fist_ok,
                         "detail": f"index curl open={open_curl:.2f} fist={curl_or_nan('right'):.2f}"})
 
+        def hand_serial(role):
+            idx = system.getTrackedDeviceIndexForControllerRole(role)
+            if idx == openvr.k_unTrackedDeviceIndexInvalid:
+                return ""
+            return system.getStringTrackedDeviceProperty(idx, openvr.Prop_SerialNumber_String)
+
+        # Controllers report a Partial skeleton (SteamVR re-synthesizes the
+        # bones); switch to the hand-tracking twins (Full) while SteamVR runs.
+        ctl_serial = hand_serial(openvr.TrackedControllerRole_LeftHand)
+        mode = client.hand_mode("hands")
+        switched = wait_for(lambda: "HAND" in hand_serial(openvr.TrackedControllerRole_LeftHand)
+                            and skeleton_active("left"), timeout=15.0)
+        results.append({"name": "hand_mode hands: hand twins take the hand roles (no restart)",
+                        "ok": mode == "hands" and switched,
+                        "detail": f"{ctl_serial} -> {hand_serial(openvr.TrackedControllerRole_LeftHand)}"})
+
         # Explicit bones: a rotation sent for the index proximal bone must come back.
         try:
             ref = bones("left")
@@ -131,8 +147,15 @@ def main() -> int:
             detail = f"error {math.degrees(math3d.angle_between((o.w, o.x, o.y, o.z), target)):.3f} deg"
         except openvr.OpenVRError as e:
             detail = f"no bone data ({type(e).__name__})"
-        results.append({"name": "explicit bone rotations reach apps (index proximal, < 1 deg)",
+        results.append({"name": "explicit bone rotations reach apps (index proximal, < 1 deg, hands mode)",
                         "ok": bones_ok, "detail": detail})
+
+        mode = client.hand_mode("controllers")
+        back = wait_for(lambda: hand_serial(openvr.TrackedControllerRole_LeftHand) == ctl_serial
+                        and skeleton_active("left"), timeout=15.0)
+        results.append({"name": "hand_mode controllers: controllers take the hand roles back",
+                        "ok": mode == "controllers" and back,
+                        "detail": hand_serial(openvr.TrackedControllerRole_LeftHand)})
 
         # Inputs through SteamVR Input (profile + binding, not legacy).
         trig_ok = wait_for(lambda: abs(vrinput.getAnalogActionData(trig, openvr.k_ulInvalidInputValueHandle).x - 0.6) < 1e-3,

@@ -46,7 +46,13 @@
   "controllers": {
     "enabled": true,
     "skeleton": true,
-    "skeletonLevel": "full", // full = bone data passed through as sent | partial
+    // Skeleton level of the controllers. partial = like hardware controllers (apps
+    // such as VRChat use buttons); full = bone data passed through as sent (VRChat
+    // then treats the hands as hand tracking). The hand twins are always full.
+    "skeletonLevel": "partial",
+    // Which device each hand starts as: "controllers" or "hands" (hand tracking).
+    // Switch at runtime with {"type":"config","op":"hand_mode","mode":"hands"}.
+    "handMode": "controllers",
     "left":  { "serial": "VHMD-CTL-L", "pos": [-0.2, 1.2, -0.3] },
     "right": { "serial": "VHMD-CTL-R", "pos": [ 0.2, 1.2, -0.3] }
   },

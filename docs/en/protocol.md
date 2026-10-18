@@ -102,6 +102,7 @@ Values are numbers (-1 to 1) or booleans. A button counts as pressed at 0.5 or a
 - `bones`: rotations in **parent-bone space** for the OpenVR hand skeleton (31 bones, in `HandSkeletonBone` order). Positions can be given at the same time as `[w,x,y,z,px,py,pz]`, or passed separately in `positions` (if omitted, the reference positions of an open hand are used).
 - While nothing arrives for 500 ms or more after the last `skeleton`, finger curl is generated automatically from `trigger`/`grip`/button touch states.
 - The same values are sent to SteamVR for both the `WithController` and `WithoutController` motion ranges.
+- Controllers and hand tracking can be **switched while SteamVR runs** (`config` op `hand_mode`). `controllers` (default) behave like hardware controllers with a Partial skeleton (SteamVR tidies the finger bones). `hands` swaps each hand to a separate device (`VHMD-HAND-L/R`, Full skeleton: bones are passed through as sent), which apps such as VRChat treat as hand tracking (button-driven menus are disabled there; gestures are used instead). The ids stay `left_hand` / `right_hand` in both modes, so senders need no changes. The hand devices are added the first time `hands` is selected.
 
 ### `gaze` (HMD eye gaze)
 
@@ -129,6 +130,7 @@ Passed to `IVRDriverInput::CreateEyeTrackingComponent("/eyetracking")` as `VREye
 | `set_role` | `id`, `role` | Writes the role into the `trackers` section of the SteamVR settings (overwrites the user's setting) |
 | `reset` | `id` (all devices if omitted) | Restores the default pose from the config file |
 | `add` | `id` (all on-demand devices if omitted) | Adds on-demand devices to SteamVR immediately (applied on the next frame). `{"ok":true,"ids":[...]}` |
+| `hand_mode` | `mode` (`controllers` / `hands`; without it, only returns the current mode) | Switches both hands between controllers and hand tracking (SteamVR keeps running). `{"ok":true,"mode":"hands"}`. `status` also carries `hand_mode` |
 
 `display` in `status`: `mode` (`window` / `direct`), `width`, `height`, `refresh_hz`. In direct mode (Linux), additionally `swap_sets_created`, `swap_sets_alive`, `layers_submitted`, `presents`, `vsyncs`, `eye_texture` (`width`, `height`, `vk_format`), `preview` (`state`, `submitted`, `written`, `active`).
 

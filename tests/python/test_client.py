@@ -95,6 +95,25 @@ def test_request_matches_seq_and_skips_unrelated(server):
     t.join()
 
 
+def test_hand_mode(server):
+    seen = []
+
+    def fake_driver():
+        for reply in ({"ok": True, "mode": "hands"}, {"ok": False, "error": "bad mode", "mode": "hands"}):
+            msg, addr = recv_json(server)
+            seen.append(msg)
+            server.sendto(json.dumps({"type": "result", "seq": msg["seq"], **reply}).encode(), addr)
+
+    t = threading.Thread(target=fake_driver)
+    t.start()
+    with VHMDClient(port=server.getsockname()[1]) as c:
+        assert c.hand_mode("hands") == "hands"
+        with pytest.raises(ValueError):
+            c.hand_mode("feet")
+    t.join()
+    assert seen[0]["op"] == "hand_mode" and seen[0]["mode"] == "hands"
+
+
 def test_request_timeout():
     with VHMDClient(port=9, timeout=0.2) as c:  # nothing listens on the discard port
         assert c.ping() is False

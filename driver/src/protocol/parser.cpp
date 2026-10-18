@@ -227,6 +227,7 @@ std::string ParseConfig(const json& obj, Message& out) {
     m.op = op->get<std::string>();
     if (auto id = obj.find("id"); id != obj.end() && id->is_string()) m.id = id->get<std::string>();
     if (auto role = obj.find("role"); role != obj.end() && role->is_string()) m.role = role->get<std::string>();
+    if (auto mode = obj.find("mode"); mode != obj.end() && mode->is_string()) m.mode = mode->get<std::string>();
     if (auto seq = obj.find("seq"); seq != obj.end() && seq->is_number()) m.seq = seq->get<double>();
     out = std::move(m);
     return {};

@@ -235,9 +235,16 @@ ConfigLoadResult LoadConfigFromJson(std::string_view text) {
             Get(*ctl, "enabled", all_enabled, w, "controllers.");
             bool skeleton = true;
             Get(*ctl, "skeleton", skeleton, w, "controllers.");
-            std::string level = "full";
+            // Controllers report a Partial skeleton by default, like hardware
+            // controllers; the hand twins ("hands" mode) are always Full.
+            std::string level = "partial";
             Get(*ctl, "skeletonLevel", level, w, "controllers.");
             if (level != "full" && level != "partial") w.emplace_back("controllers.skeletonLevel: expected full|partial");
+            Get(*ctl, "handMode", c.hand_mode, w, "controllers.");
+            if (c.hand_mode != "controllers" && c.hand_mode != "hands") {
+                w.emplace_back("controllers.handMode: expected controllers|hands");
+                c.hand_mode = "controllers";
+            }
             for (auto& d : c.devices) {
                 if (d.kind != DeviceKind::Controller) continue;
                 d.enabled = all_enabled;

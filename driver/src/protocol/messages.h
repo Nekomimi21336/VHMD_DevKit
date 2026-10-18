@@ -54,6 +54,7 @@ struct ConfigMessage {
     std::string op;   // "list", "ping", "set_role", "reset", ...
     std::string id;   // optional device id argument
     std::string role; // optional role argument
+    std::string mode; // optional mode argument ("hand_mode")
     std::optional<double> seq; // echoed back in replies
 };
 

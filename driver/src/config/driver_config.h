@@ -38,7 +38,7 @@ struct DeviceConfig {
     // sends a message for it (or config op "add"). Default for trackers.
     bool on_demand = false;
     bool skeleton = true;                         // controllers only
-    bool skeleton_full = true;                    // controllers: VRSkeletalTracking_Full (else Partial)
+    bool skeleton_full = false;                   // controllers: VRSkeletalTracking_Full (else Partial)
     bool eye_tracking = true;                     // hmd only
     bool head_model = false;                      // hmd only: true = pos is the neck pivot
 };
@@ -66,6 +66,9 @@ struct DriverConfig {
 
     bool apply_tracker_roles = true; // write roles to SteamVR "trackers" settings if unset
     bool trackers_on_demand = true;  // default for trackers without "onDemand"
+    // "controllers" or "hands": which twin of each hand is connected at start
+    // (switchable at runtime with config op "hand_mode").
+    std::string hand_mode = "controllers";
 
     // HMD output. "window": IVRDisplayComponent desktop window (Windows).
     // "direct": IVRDriverDirectModeComponent (Linux; the compositor hands the

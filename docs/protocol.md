@@ -102,6 +102,7 @@
 - `bones`: OpenVR ハンドスケルトン(31 ボーン, `HandSkeletonBone` 順)の**親ボーン空間**の回転。`[w,x,y,z,px,py,pz]` で位置を同時指定するか、`positions` を別に渡せます(省略時は開いた手の参照位置)。
 - 最後の `skeleton` から 500 ms 以上何も来ない間は、`trigger`/`grip`/ボタンのタッチ状態から指の曲げを自動生成します。
 - SteamVR へは `WithController` / `WithoutController` 両方のモーションレンジに同じ値を送ります。
+- コントローラーとハンドトラッキングを**SteamVR を止めずに切り替え**られます(`config` の `hand_mode`)。`controllers`(既定)は実機のコントローラーと同じ扱いで、骨格は Partial(SteamVR が指の骨を整えます)。`hands` では手ごとに別のデバイス(`VHMD-HAND-L/R`、骨格は Full で送ったボーンをそのまま反映)に入れ替わり、VRChat などはハンドトラッキングとして扱います(ボタンでのメニュー操作は無効になり、ジェスチャー操作になります)。どちらのモードでも ID は `left_hand` / `right_hand` のままで、送る内容を変える必要はありません。ハンド側のデバイスは初めて `hands` にしたときに追加されます。
 
 ### `gaze`(HMD の視線)
 
@@ -129,6 +130,7 @@
 | `set_role` | `id`, `role` | SteamVR 設定の `trackers` セクションにロールを書き込み(ユーザー設定を上書き) |
 | `reset` | `id`(省略時全台) | 設定ファイルの既定ポーズに戻す |
 | `add` | `id`(省略時はオンデマンド全台) | オンデマンドのデバイスを今すぐ SteamVR に追加(次のフレームで反映)。`{"ok":true,"ids":[...]}` |
+| `hand_mode` | `mode`(`controllers` / `hands`、省略時は現在のモードを返すだけ) | 左右の手をコントローラー / ハンドトラッキングで切り替え(SteamVR は止まりません)。`{"ok":true,"mode":"hands"}`。`status` にも `hand_mode` が入ります |
 
 `status` の `display`: `mode`(`window` / `direct`)、`width`、`height`、`refresh_hz`。ダイレクトモード(Linux)では加えて `swap_sets_created`、`swap_sets_alive`、`layers_submitted`、`presents`、`vsyncs`、`eye_texture`(`width`、`height`、`vk_format`)、`preview`(`state`、`submitted`、`written`、`active`)。
 

@@ -85,6 +85,26 @@ void SanitizeBones(vr::VRBoneTransform_t* bones, size_t count) {
 
 ControllerDevice::ControllerDevice(std::shared_ptr<DeviceState> state)
     : VirtualDevice(std::move(state)), left_(State().Config().role != "right") {
+    InitReferenceBones();
+}
+
+ControllerDevice::ControllerDevice(std::shared_ptr<DeviceState> state, std::string serial)
+    : VirtualDevice(std::move(state), std::move(serial), "#hand"), left_(State().Config().role != "right"),
+      hand_twin_(true) {
+    InitReferenceBones();
+}
+
+std::unique_ptr<ControllerDevice> ControllerDevice::MakeHandTwin(std::shared_ptr<DeviceState> state) {
+    std::string serial = state->Config().serial;
+    if (const auto pos = serial.find("CTL"); pos != std::string::npos) {
+        serial.replace(pos, 3, "HAND");
+    } else {
+        serial += "-HAND";
+    }
+    return std::unique_ptr<ControllerDevice>(new ControllerDevice(std::move(state), std::move(serial)));
+}
+
+void ControllerDevice::InitReferenceBones() {
     // Open-hand reference pose: positions for messages that only carry rotations.
     MyHandSimulation sim;
     sim.ComputeSkeletonTransforms(left_ ? vr::TrackedControllerRole_LeftHand : vr::TrackedControllerRole_RightHand,
@@ -126,11 +146,15 @@ std::string ControllerDevice::CanonicalInputName(const std::string& raw, bool le
 void ControllerDevice::OnActivate(vr::PropertyContainerHandle_t c) {
     auto* p = vr::VRProperties();
     auto* in = vr::VRDriverInput();
-    SetCommonProperties(c, left_ ? "VHMD Virtual Controller (Left)" : "VHMD Virtual Controller (Right)",
-                        "generic_controller");
+    const char* model = hand_twin_ ? (left_ ? "VHMD Virtual Hand (Left)" : "VHMD Virtual Hand (Right)")
+                                   : (left_ ? "VHMD Virtual Controller (Left)" : "VHMD Virtual Controller (Right)");
+    SetCommonProperties(c, model, "generic_controller");
     SetIcons(c, "controller");
     p->SetInt32Property(c, vr::Prop_ControllerRoleHint_Int32,
                         left_ ? vr::TrackedControllerRole_LeftHand : vr::TrackedControllerRole_RightHand);
+    // Only one of a controller / hand twin is connected at a time; if both
+    // ever are, SteamVR gives the hand role to the controller.
+    p->SetInt32Property(c, vr::Prop_ControllerHandSelectionPriority_Int32, hand_twin_ ? -1 : 0);
     p->SetStringProperty(c, vr::Prop_ControllerType_String, "vhmd_controller");
     p->SetStringProperty(c, vr::Prop_InputProfilePath_String, "{vhmd}/input/vhmd_controller_profile.json");
     p->SetInt32Property(c, vr::Prop_DeviceClass_Int32, vr::TrackedDeviceClass_Controller);
@@ -152,13 +176,13 @@ void ControllerDevice::OnActivate(vr::PropertyContainerHandle_t c) {
     });
     in->CreateHapticComponent(c, "/output/haptic", &haptic_);
 
-    if (State().Config().skeleton) {
+    if (hand_twin_ || State().Config().skeleton) {
         const auto err = in->CreateSkeletonComponent(
             c, left_ ? "/input/skeleton/left" : "/input/skeleton/right",
             left_ ? "/skeleton/hand/left" : "/skeleton/hand/right", "/pose/raw",
             // Partial lets SteamVR re-synthesize finger bones (explicit bone
             // rotations are then not passed through as sent); Full passes them.
-            State().Config().skeleton_full ? vr::VRSkeletalTracking_Full : vr::VRSkeletalTracking_Partial,
+            hand_twin_ || State().Config().skeleton_full ? vr::VRSkeletalTracking_Full : vr::VRSkeletalTracking_Partial,
             nullptr, 0, &skeleton_);
         if (err != vr::VRInputError_None) {
             Log(LogLevel::Warning, "%s: CreateSkeletonComponent failed (%d)", Id().c_str(), err);

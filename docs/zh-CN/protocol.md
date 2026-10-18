@@ -102,6 +102,7 @@
 - `bones`：OpenVR 手部骨骼(31 根骨骼，按 `HandSkeletonBone` 顺序)在**父骨骼空间**中的旋转。可以用 `[w,x,y,z,px,py,pz]` 同时指定位置，也可以单独传入 `positions`(省略时使用张开手的参考位置)。
 - 自最后一条 `skeleton` 起 500 ms 以上没有收到任何内容期间，会根据 `trigger`/`grip`/按键的触摸状态自动生成手指弯曲。
 - 向 SteamVR 的 `WithController` / `WithoutController` 两种运动范围发送相同的值。
+- 控制器与手部追踪可以**在不停止 SteamVR 的情况下切换**(`config` 的 `hand_mode`)。`controllers`(默认)与硬件控制器的处理方式相同，骨骼为 Partial(由 SteamVR 整理手指骨骼)。`hands` 时每只手换成另一个设备(`VHMD-HAND-L/R`，骨骼为 Full，发送的骨骼原样反映)，VRChat 等会将其视为手部追踪(此时按键菜单操作无效，改为手势操作)。两种模式下 ID 都保持 `left_hand` / `right_hand`，发送内容无需修改。手部设备在首次切换到 `hands` 时添加。
 
 ### `gaze`(HMD 的视线)
 
@@ -129,6 +130,7 @@
 | `set_role` | `id`, `role` | 将角色写入 SteamVR 设置的 `trackers` 部分(覆盖用户设置) |
 | `reset` | `id`(省略时为全部设备) | 恢复为配置文件中的默认姿态 |
 | `add` | `id`(省略时为全部按需设备) | 立即将按需设备添加到 SteamVR(下一帧生效)。`{"ok":true,"ids":[...]}` |
+| `hand_mode` | `mode`(`controllers` / `hands`，省略时仅返回当前模式) | 在控制器 / 手部追踪之间切换左右手(SteamVR 不会停止)。`{"ok":true,"mode":"hands"}`。`status` 中也包含 `hand_mode` |
 
 `status` 的 `display`：`mode`(`window` / `direct`)、`width`、`height`、`refresh_hz`。在直接模式(Linux)下还包含 `swap_sets_created`、`swap_sets_alive`、`layers_submitted`、`presents`、`vsyncs`、`eye_texture`(`width`、`height`、`vk_format`)、`preview`(`state`、`submitted`、`written`、`active`)。
 
