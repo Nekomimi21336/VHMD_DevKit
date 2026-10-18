@@ -36,6 +36,8 @@
 | `tracker_6` | 〃 | `TrackerRole_RightElbow` | `VHMD-TRK-6` |
 | `tracker_7` | 〃 | `TrackerRole_Chest` | `VHMD-TRK-7` |
 
+- **基本は 3 点**(`hmd`, `left_hand`, `right_hand`)。この 3 台だけが SteamVR 起動時に登録されます。
+- **トラッカーはオンデマンド**: そのトラッカー宛てのメッセージ(`pose` 等)が初めて届いた時点で SteamVR に追加され、届いたポーズから同期して始まります(実測で約 40 ms)。足 2 本を送れば 5 点、腰も送れば 6 点。`config` の `op: "add"` で先に追加することもできます。追加されたデバイスは SteamVR を終了するまで残り(OpenVR にデバイス削除 API が無いため)、送信が止まると `disconnect`(灰色表示)になります。起動時から全台登録したい場合は `"trackersOnDemand": false`。
 - トラッカーは設定で最大 16 台。`id` とロールは `vhmd_config.json` の `trackers` 配列で変更できます。
 - **ロール名でも指定可能**: 同じロールのトラッカーが 1 台だけなら `"id": "waist"` のように短いロール名で送れます(`tracker_0` と同じ)。
 - ロール名は 3 形式を受け付けます: `waist` / `vive_tracker_waist` / `TrackerRole_Waist`。
@@ -124,8 +126,9 @@
 | `roles` | | 利用可能なロール一覧 |
 | `set_role` | `id`, `role` | SteamVR 設定の `trackers` セクションにロールを書き込み(ユーザー設定を上書き) |
 | `reset` | `id`(省略時全台) | 設定ファイルの既定ポーズに戻す |
+| `add` | `id`(省略時はオンデマンド全台) | オンデマンドのデバイスを今すぐ SteamVR に追加(次のフレームで反映)。`{"ok":true,"ids":[...]}` |
 
-`status` の各デバイス: `id, serial, kind, role, enabled, index`(SteamVR デバイス番号、未登録は -1)`, pose_packets, input_packets, rate_hz`(受信レート)`, age_s`(最終受信からの秒数)`, latency_ms`(`ts` があれば)。
+`status` の各デバイス: `id, serial, kind, role, enabled, on_demand, timeout_policy, index`(SteamVR デバイス番号、未登録は -1)`, pose_packets, input_packets, rate_hz`(受信レート)`, age_s`(最終受信からの秒数)`, latency_ms`(`ts` があれば)。
 
 ### ドライバ → クライアント: `haptic`
 
@@ -137,7 +140,7 @@
 
 ## タイムアウト
 
-最後の `pose` から `timeout.ms`(既定 500 ms)を過ぎたデバイスは `timeout.policy` に従います(デバイス毎に `timeoutPolicy` で上書き可)。起動直後の未受信状態も同様に扱います(起動時刻から計測)。
+最後の `pose` から `timeout.ms`(既定 500 ms)を過ぎたデバイスは、デバイス毎の `timeoutPolicy`、無ければ **オンデマンドのトラッカーは `disconnect`**、それ以外(HMD・コントローラ)は `timeout.policy`(既定 `hold`)に従います。起動直後の未受信状態も同様に扱います(起動時刻から計測)。
 
 | policy | 挙動 |
 |---|---|

@@ -13,6 +13,11 @@
     "policy": "hold"       // hold | invalid | disconnect
   },
   "applyTrackerRoles": true, // write tracker roles to SteamVR's "trackers" settings unless the user set one
+  // Base setup is 3-point (HMD + both controllers). Trackers are added to SteamVR
+  // the first time a client sends to them ("pose" etc. or config op "add") and
+  // default to timeoutPolicy "disconnect" so they grey out when the sender stops.
+  // false = register every enabled tracker at startup (old behaviour).
+  "trackersOnDemand": true,
   "log": { "errorsPerSecond": 5, "verbose": false },
   "vmt": {
     "enabled": false,      // accept VMT compatible OSC on the same port

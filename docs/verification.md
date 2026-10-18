@@ -23,7 +23,7 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-結果: **警告 0(/W4)、単体テスト 34 件すべて成功**。対象: クォータニオン演算・スムージング・Unity↔SteamVR 座標変換、JSON パーサ(正常系/不正値/NaN/範囲外/バッチ上限)、OSC パーサ(バンドル/切れたパケット/型違い)、設定ファイル(同梱ファイルが警告なしで読めること、重複 id、外部公開の拒否、16 台上限)、タイムアウト 3 ポリシー、ルーター(ロール別名、status 応答、set_role)、UDP ループバック。
+結果: **警告 0(/W4)、単体テスト 36 件すべて成功**(v0.2.0 でオンデマンド追加の 2 件を追加)。対象: クォータニオン演算・スムージング・Unity↔SteamVR 座標変換、JSON パーサ(正常系/不正値/NaN/範囲外/バッチ上限)、OSC パーサ(バンドル/切れたパケット/型違い)、設定ファイル(同梱ファイルが警告なしで読めること、重複 id、外部公開の拒否、16 台上限)、タイムアウト 3 ポリシー、ルーター(ロール別名、status 応答、set_role)、UDP ループバック。
 
 Python クライアントの単体テスト(SteamVR 不要): `python -m pytest tests/python` → **8 件成功**。
 
@@ -40,7 +40,7 @@ python tests/integration/run_integration.py --stop-relaunchers
 ```
 
 SteamVR を起動 → 検証 → 終了まで自動。結果 JSON は `tests/integration/results/`。
-**コールドスタートで 27/27 項目成功を連続で確認**(2026-10-18 21:28, 21:29 の 2 回。それ以前の版でも 22/22 を 3 回連続)。
+**v0.2.0 で 29/29 項目成功**(2026-10-18 22:02)。v0.1.0 ではコールドスタートで 27/27 項目成功を連続で確認(2026-10-18 21:28, 21:29 の 2 回。それ以前の版でも 22/22 を 3 回連続)。
 
 | # | 項目 | 結果 | 実測値 |
 |---|---|---|---|
@@ -48,13 +48,13 @@ SteamVR を起動 → 検証 → 終了まで自動。結果 JSON は `tests/int
 | 2 | vhmd 由来のエラー / リマッピング失敗が無い | ✅ | |
 | 3 | HMD 1 台・アクティブ HMD(index 0) | ✅ | `Active HMD set to vhmd.VHMD-HMD-0` |
 | 4 | コントローラ 2 台(左右ロール) | ✅ | index 1/2 |
-| 5 | ジェネリックトラッカー 8 台 | ✅ | index 3〜10 |
+| 5 | 起動直後は 3 点のみ / トラッカーは最初の pose で追加 (v0.2.0) | ✅ | 起動時 0 台 → 送信後 42 ms で 8 台、送ったポーズで開始 |
 | 6 | 独自コントローラタイプのみ(なりすまし無し) | ✅ | `vhmd_hmd`, `vhmd_controller`, `vhmd_tracker` |
 | 7 | ポーズ往復(全 11 台 × ランダム 5 姿勢、許容 1 mm / 0.5°) | ✅ | 最大誤差 0.000 mm / 0.000° |
 | 8 | 送信→アプリ可視の遅延(中央値 ≤ 11 ms) | ✅ | 中央値 8.2 ms、p95 9.0 ms、最大 9.6 ms |
 | 9 | 11 台を 1 データグラムで一括更新 | ✅ | |
 | 10 | 明示的な無効化と復帰 | ✅ | |
-| 11 | タイムアウト(`hold`、0.5 s 無送信) | ✅ | 有効のまま最後の位置を維持 |
+| 11 | タイムアウト(オンデマンドのトラッカー = `disconnect`、0.5 s 無送信) | ✅ | 無効 + 切断表示 |
 | 12 | 不正パケット 217 個(NaN, 巨大値, 乱数, 切れた OSC, 300 件バッチ, 65 KB 等) | ✅ | クラッシュ無し、rejected カウンタ増加 |
 | 13 | 1000 pps × 5 秒 | ✅ | 5000 パケット、ドライバ側受信レート合計 1000 Hz、応答継続 |
 | 14 | 負荷後もポーズ反映 | ✅ | |
@@ -92,7 +92,16 @@ python tests/integration/stress_restart.py --cycles 30 --stop-relaunchers --rela
 結果: **31 回連続で全サイクル成功**(25 回は通常設定 約 20 s/回、6 回は短縮設定 約 12.7 s/回)。全回で 11 台に index が付き、`Cleanup` と `Graceful exit` を確認、クラッシュ・ドライバエラーの行なし。
 要件の 100 回は、依頼者と相談のうえ 31 回で十分と判断して打ち切りました(100 回は**未実施**)。
 
-### 1-5. アンインストール
+### 1-5. 配布アーカイブ (v0.2.0)
+
+`python tools/package_release.py --version 0.2.0 --win64 build/driver/vhmd --linux64 <Linux ビルドの driver/vhmd>`
+
+| 対象 | 確認内容 | 結果 |
+|---|---|---|
+| win64.zip | 展開 → 同梱 `tools/install_driver.ps1`(引数なし)で展開先の `vhmd` が登録 → SteamVR 起動 → 展開先の DLL がロード、起動時 3 点、足 2 本を送ると 5 点 → 同梱 `uninstall_driver.ps1` で解除 | ✅ |
+| linux64.tar.gz | WSL で展開: `.sh` と `.so` に実行権限、CRLF なし、同梱 `install_driver.sh` が展開先の `vhmd` を選択(偽の SteamVR 環境)、Python クライアントが読み込める | ✅(実 SteamVR では未検証) |
+
+### 1-6. アンインストール
 
 `tools/uninstall_driver.ps1 -CleanSettings` を実行し、前後の `steamvr.vrsettings` を比較: vhmd 由来のトラッカーロール 8 件だけが削除され、**それ以外の内容は完全に一致**。外部ドライバ登録も元の 2 件(PICO, AMD)に戻ることを確認。その後 `install_driver.ps1` で再登録済み。
 

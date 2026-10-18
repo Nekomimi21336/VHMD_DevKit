@@ -18,11 +18,14 @@
 
 namespace vhmd {
 
-inline constexpr const char* kDriverVersion = "0.1.0";
+inline constexpr const char* kDriverVersion = "0.2.0";
 
 struct RouterHooks {
     // Returns the SteamVR device index for a protocol id, or -1 if not added.
     std::function<int(const std::string& id)> device_index;
+    // Asks the provider to register an on-demand device with SteamVR. Called
+    // from the receive thread; must be cheap and idempotent.
+    std::function<void(const std::string& id)> request_add;
     // Applies a tracker role. Returns an error string (empty = success).
     std::function<std::string(const std::string& id, const RoleInfo& role)> set_role;
 };

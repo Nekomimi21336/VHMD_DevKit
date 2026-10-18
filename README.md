@@ -1,10 +1,12 @@
-# VirtualHMD — 開発用 仮想HMD / フルトラッキング SteamVR ドライバ
+# VHMD_DevKit — 開発用 仮想HMD / フルトラッキング SteamVR ドライバ
 
-実機の HMD・コントローラ・トラッカーが無くても、外部プロセス(Python 等)から UDP/JSON で送ったポーズ・入力を SteamVR に「実機があるかのように」見せる**開発・テスト用**ドライバです。
+実機の HMD・コントローラ・トラッカーが無くても、外部プロセス(Python 等)から UDP/JSON で送ったポーズ・入力を SteamVR に「実機があるかのように」見せる**開発・テスト用**ドライバです(Windows / Linux)。
+
+**基本は 3 点 VR**(HMD + 左右コントローラ)。トラッカーは**送った時点で追加**され、そのまま同期します。足首 2 本を送れば 5 点、腰も足せば 6 点(VRChat のフルトラ)、最大 16 台まで。
 
 - 仮想 HMD 1 台(ダミーディスプレイ、視線入力)
 - 仮想コントローラ 2 台(トリガー/グリップ/スティック/A・B・X・Y/システム/メニュー、振動、指スケルトン)
-- 仮想ジェネリックトラッカー 8 台(最大 16、腰・両足・両膝・両肘・胸など、ロール指定可)
+- 仮想ジェネリックトラッカー(オンデマンド追加、既定カタログ 8 台・最大 16、腰・両足・両膝・両肘・胸など、ロール指定可)
 - UDP + JSON の外部入力 API(バッチ更新可)、任意で VMT 互換 OSC
 - Python クライアント(依存なし)とサンプル、SteamVR 上での自動検証スクリプト
 
@@ -25,7 +27,18 @@
 
 検証結果の詳細は [docs/verification.md](docs/verification.md)。
 
-## クイックスタート
+## ビルド済みバイナリで使う(ビルド不要)
+
+[Releases](../../releases) から OS 用のアーカイブを取得して展開し、中の `vhmd` フォルダを登録します。
+
+- Windows: `VHMD_DevKit-<版>-win64.zip` を展開 → そのフォルダで `powershell -ExecutionPolicy Bypass -File tools/install_driver.ps1`
+- Linux: `VHMD_DevKit-<版>-linux64.tar.gz` を展開 → そのフォルダで `tools/install_driver.sh`(glibc 2.38 以上。古い環境はソースからビルド。[docs/linux.md](docs/linux.md))
+
+展開したフォルダがそのまま SteamVR に登録されるので、**展開先は後で動かさない場所**にしてください(動かしたら登録し直し)。
+
+アーカイブには `tools/` と Python クライアント・サンプルも入っています。
+
+## クイックスタート(ソースからビルド)
 
 前提: Visual Studio 2022(C++ デスクトップ開発)、CMake 3.20+、Git、Steam + SteamVR、Python 3.10+。
 
@@ -63,8 +76,10 @@ powershell -ExecutionPolicy Bypass -File tools/install_driver.ps1
 4. SteamVR を起動し、サンプルを実行:
 
 ```bash
-python clients/python/examples/fullbody_sway.py
+python clients/python/examples/fullbody_sway.py --points 6
 ```
+
+(`--points 3` で 3 点、`5` で足首まで、`6` で腰まで、`11` で既定トラッカー全部)
 
 ```bash
 python clients/python/examples/circle_motion.py
@@ -124,9 +139,11 @@ from vhmd_client import VHMDClient, math3d
 
 with VHMDClient() as c:                       # 127.0.0.1:39570
     with c.batch():                           # まとめて 1 データグラム
-        c.pose("hmd", (0, 1.7, 0), math3d.from_euler(yaw=30))
+        c.pose("hmd", (0, 1.7, 0), math3d.from_euler(yaw=30))     # 3 点(常に登録済み)
         c.pose("left_hand", (-0.2, 1.2, -0.3))
-        c.pose("waist", (0, 1.0, 0))          # トラッカーはロール名でも指定可
+        c.pose("right_hand", (0.2, 1.2, -0.3))
+        c.pose("left_foot", (-0.12, 0.08, 0))  # ← 初めて送った時点で SteamVR に追加される
+        c.pose("right_foot", (0.12, 0.08, 0))  #    (ロール名でも tracker_N でも可)
     c.inputs("right_hand", {"trigger": 1.0, "a": True, "joystick_x": 0.5})
     c.skeleton_curl("left_hand", [0, 1, 1, 1, 1])   # 親指以外を握る
     c.gaze(direction=(0.1, 0, -1))
@@ -165,7 +182,7 @@ driver/
     math/ protocol/ config/ state/ net/ util/   OpenVR 非依存コア (vhmd_core)
 clients/python/             vhmd_client パッケージ、examples/
 tools/                      install/uninstall/verify_env (Windows: .ps1 / Linux: .sh)、gen_remapping.py
-tests/unit/                 C++ 単体テスト(34 件)
+tests/unit/                 C++ 単体テスト(36 件)
 tests/python/               Python クライアント単体テスト(pytest, 8 件)
 tests/integration/          SteamVR 統合テスト、入力/スケルトン検証、起動終了ストレス
 docs/                       protocol / architecture / verification / decisions

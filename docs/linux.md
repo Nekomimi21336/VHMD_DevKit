@@ -7,7 +7,7 @@ Linux ネイティブの SteamVR に `driver_vhmd.so` を読み込ませる手�
 | 項目 | 状態 |
 |---|---|
 | Linux ビルド (gcc 13.3, Ubuntu 24.04 / WSL2) | ✅ 警告 0(`-Wall -Wextra -Wpedantic`) |
-| C++ 単体テスト 34 件 | ✅ すべて成功(UDP ループバック含む) |
+| C++ 単体テスト 36 件 | ✅ すべて成功(UDP ループバック含む) |
 | 公開シンボル | ✅ `HmdDriverFactory` のみ(リンカのバージョンスクリプト) |
 | 依存ライブラリ | ✅ `libc`, `libm`, `ld-linux` のみ(libstdc++ / libgcc は静的リンク) |
 | `tools/*.sh` | ✅ 偽の SteamVR 環境で install / uninstall / `--clean-settings` を確認 |

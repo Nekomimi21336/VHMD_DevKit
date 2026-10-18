@@ -89,10 +89,15 @@ std::optional<std::string> MessageRouter::HandleDatagram(std::string_view data, 
             parsed.errors.push_back("unknown or disabled device '" + id.substr(0, 64) + "'");
             continue;
         }
-        if (const auto* p = std::get_if<PoseMessage>(&msg)) dev->SubmitPose(*p, now);
+        // On-demand devices join SteamVR when a client first talks to them.
+        // The value is buffered first, so the device starts in sync.
+        const auto* pose = std::get_if<PoseMessage>(&msg);
+        const bool wants_device = !(pose && !pose->valid);
+        if (pose) dev->SubmitPose(*pose, now);
         else if (const auto* i = std::get_if<InputMessage>(&msg)) dev->SubmitInput(*i, now);
         else if (const auto* s = std::get_if<SkeletonMessage>(&msg)) dev->SubmitSkeleton(*s);
         else if (const auto* g = std::get_if<GazeMessage>(&msg)) dev->SubmitGaze(*g);
+        if (wants_device && dev->Config().on_demand && hooks_.request_add) hooks_.request_add(dev->Config().id);
     }
     ReportErrors(parsed.errors);
     return reply;
@@ -123,6 +128,8 @@ std::string MessageRouter::StatusJson(Clock::time_point now, std::optional<doubl
             {"rate_hz", s.rate_hz},
         };
         if (!c.role.empty()) e["role"] = c.role;
+        e["on_demand"] = c.on_demand;
+        e["timeout_policy"] = ToString(config_.EffectivePolicy(c));
         e["age_s"] = s.seconds_since_update < 0 ? json(nullptr) : json(s.seconds_since_update);
         if (s.sender_latency_ms >= 0) e["latency_ms"] = s.sender_latency_ms;
         devs.push_back(std::move(e));
@@ -154,6 +161,20 @@ std::optional<std::string> MessageRouter::HandleConfig(const ConfigMessage& m, C
         }
         r["ok"] = n > 0;
         r["count"] = n;
+    } else if (m.op == "add") {
+        // Explicitly register on-demand devices (all of them if no id given).
+        // Registration happens on SteamVR's next frame; poll "list" for the index.
+        json added = json::array();
+        for (const auto& d : devices_) {
+            const auto& c = d->Config();
+            const bool match = m.id.empty() ? c.on_demand : (d.get() == Find(m.id));
+            if (!match || !c.enabled) continue;
+            if (c.on_demand && hooks_.request_add) hooks_.request_add(c.id);
+            added.push_back(c.id);
+        }
+        r["ok"] = !added.empty();
+        if (added.empty()) r["error"] = "unknown or disabled device";
+        r["ids"] = std::move(added);
     } else if (m.op == "set_role") {
         DeviceState* dev = Find(m.id);
         auto role = NormalizeRole(m.role);

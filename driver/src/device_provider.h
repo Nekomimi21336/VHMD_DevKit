@@ -5,6 +5,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -39,6 +40,9 @@ private:
     void OnDatagram(std::string_view data, const Endpoint& from);
     int DeviceIndexFor(const std::string& id) const;
     std::string SetRole(const std::string& id, const RoleInfo& role);
+    void RegisterDevice(VirtualDevice& dev);
+    void RequestAdd(const std::string& id);
+    void ProcessPendingAdds();
 
     DriverConfig config_;
     std::string install_path_;
@@ -51,6 +55,11 @@ private:
     UdpReceiver receiver_;
     std::mutex client_mu_;
     Endpoint last_client_;
+
+    // On-demand registration: queued by the receive thread, performed in RunFrame.
+    std::mutex add_mu_;
+    std::set<std::string> pending_adds_;
+    std::set<std::string> registered_;
 
     std::thread update_thread_;
     std::atomic<bool> running_{false};

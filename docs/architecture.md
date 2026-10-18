@@ -44,7 +44,8 @@ OpenVR 非依存部分は静的ライブラリ `vhmd_core` にまとまってお
 | 受信 | `UdpReceiver::Loop`。100 ms 毎に poll がタイムアウトし停止フラグを確認 | `Cleanup` で `Stop()` → join(最大 ~100 ms) |
 | 更新 | `DeviceProvider::UpdateLoop`。固定周期で全デバイスを更新 | `Cleanup` で停止フラグ → join(最大 1 周期) |
 
-- `Init`: 設定読込 → `DeviceState` 生成 → 有効なデバイスを `TrackedDeviceAdded` → 受信・更新スレッド開始。
+- `Init`: 設定読込 → 全デバイスの `DeviceState` とデバイスオブジェクトを生成 → **オンデマンドでない**デバイス(既定では HMD と左右コントローラの 3 点)だけ `TrackedDeviceAdded` → 受信・更新スレッド開始。
+- オンデマンド追加: 受信スレッドが未登録トラッカー宛てのメッセージを受けると、値をバッファに入れてから `RequestAdd(id)`(キューに積むだけ)。`RunFrame`(vrserver メインスレッド)が `ProcessPendingAdds()` でキューを処理し `TrackedDeviceAdded` を呼ぶ。バッファ済みの値が `Activate` 後 100 ms から送られるので、追加直後から同期している。
 - `Activate(index)`: プロパティ・入力コンポーネント作成。デバイス毎の mutex で更新スレッドと排他。
 - 更新スレッドは `Activate` 後 100 ms 経つまでそのデバイスのポーズを送りません(vrserver がデバイス所有権を登録し終える前に送ると `PoseUpdated ... owned by driver (-1)` エラーになるため。実測で確認)。
 - `Deactivate`: インデックスを無効化 → 以後、更新スレッドはそのデバイスに触れません。

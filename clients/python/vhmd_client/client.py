@@ -179,6 +179,12 @@ class VHMDClient:
         except (TimeoutError, OSError):
             return False
 
+    def add(self, device_id: str = "") -> Dict[str, Any]:
+        """Register an on-demand device (a tracker) with SteamVR now, without
+        waiting for its first pose. No id = all on-demand devices. Sending a
+        pose to a tracker adds it automatically, so this is optional."""
+        return self.request("add", id=device_id) if device_id else self.request("add")
+
     def set_role(self, tracker_id: str, role: str) -> Dict[str, Any]:
         return self.request("set_role", id=tracker_id, role=role)
 

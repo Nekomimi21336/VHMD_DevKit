@@ -37,6 +37,48 @@ TEST(config_defaults) {
     CHECK(c.bind_address == "127.0.0.1" && c.port == 39570);
 }
 
+TEST(config_trackers_on_demand_by_default) {
+    auto c = DefaultConfig();
+    const auto* hmd = c.Find("hmd");
+    const auto* trk = c.Find("tracker_1");
+    CHECK(hmd && !hmd->on_demand);
+    CHECK(trk && trk->on_demand);
+    CHECK(c.EffectivePolicy(*trk) == TimeoutPolicy::Disconnect);
+    CHECK(c.EffectivePolicy(*hmd) == TimeoutPolicy::Hold);
+
+    auto off = LoadConfigFromJson(R"({"trackersOnDemand": false, "trackers": [{"role": "waist"}, {"role": "chest", "onDemand": true, "timeoutPolicy": "hold"}]})");
+    CHECK(!off.config.Find("tracker_0")->on_demand);
+    CHECK(off.config.Find("tracker_1")->on_demand);
+    CHECK(off.config.EffectivePolicy(*off.config.Find("tracker_1")) == TimeoutPolicy::Hold);
+}
+
+TEST(router_requests_on_demand_registration) {
+    DriverConfig cfg = DefaultConfig();
+    std::vector<std::shared_ptr<DeviceState>> states;
+    for (const auto& d : cfg.devices) states.push_back(std::make_shared<DeviceState>(d, cfg));
+    std::vector<std::string> requested;
+    RouterHooks hooks;
+    hooks.request_add = [&](const std::string& id) { requested.push_back(id); };
+    MessageRouter router(cfg, states, hooks);
+    const auto now = Clock::now();
+
+    router.HandleDatagram(R"({"type":"pose","id":"hmd","pos":[0,1.7,0],"rot":[1,0,0,0]})", now);
+    CHECK(requested.empty()); // base devices are always registered
+    router.HandleDatagram(R"({"type":"pose","id":"left_foot","pos":[0,0.1,0],"rot":[1,0,0,0]})", now);
+    CHECK(requested.size() == 1 && requested[0] == "tracker_1");
+    CHECK_NEAR(router.Find("tracker_1")->ComputeOutput(now).pos.y, 0.1, 1e-12); // buffered before add
+    router.HandleDatagram(R"({"type":"pose","id":"tracker_2","valid":false})", now);
+    CHECK(requested.size() == 1); // an invalidation does not create a device
+
+    auto reply = router.HandleDatagram(R"({"type":"config","op":"add","id":"waist"})", now);
+    CHECK(reply && reply->find("\"ok\":true") != std::string::npos);
+    CHECK(requested.back() == "tracker_0");
+    auto all = router.HandleDatagram(R"({"type":"config","op":"add"})", now);
+    CHECK(all && all->find("tracker_7") != std::string::npos);
+    auto bad = router.HandleDatagram(R"({"type":"config","op":"add","id":"nope"})", now);
+    CHECK(bad && bad->find("\"ok\":false") != std::string::npos);
+}
+
 TEST(config_shipped_file_parses_cleanly) {
     std::ifstream f(VHMD_SOURCE_DIR "/driver/resources/settings/vhmd_config.json");
     CHECK(f.good());

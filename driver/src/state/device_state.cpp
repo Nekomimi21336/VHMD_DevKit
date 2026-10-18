@@ -16,7 +16,7 @@ double UnixNow() {
 DeviceState::DeviceState(const DeviceConfig& cfg, const DriverConfig& global)
     : cfg_(cfg),
       timeout_s_(global.timeout_ms / 1000.0),
-      policy_(cfg.timeout_policy.value_or(global.timeout_policy)),
+      policy_(global.EffectivePolicy(cfg)),
       smoothing_(global.smoothing),
       created_(Clock::now()) {
     latest_.id = cfg.id;

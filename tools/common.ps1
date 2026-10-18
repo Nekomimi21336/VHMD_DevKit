@@ -78,5 +78,8 @@ function Test-SteamVRRunning {
 }
 
 function Get-DefaultDriverPath {
+    # Release archives ship the driver as <root>\vhmd; source checkouts build it.
+    $packaged = Join-Path $script:RepoRoot 'vhmd'
+    if (Test-Path (Join-Path $packaged 'driver.vrdrivermanifest')) { return $packaged }
     return Join-Path $script:RepoRoot 'build\driver\vhmd'
 }

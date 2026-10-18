@@ -81,6 +81,7 @@ DeviceConfig MakeTracker(size_t index, const std::string& role, const Vec3& pos)
     d.serial = "VHMD-TRK-" + std::to_string(index);
     d.role = role;
     d.default_pos = pos;
+    d.on_demand = true;
     return d;
 }
 
@@ -100,6 +101,12 @@ const char* ToString(TimeoutPolicy p) {
     case TimeoutPolicy::Disconnect: return "disconnect";
     }
     return "?";
+}
+
+TimeoutPolicy DriverConfig::EffectivePolicy(const DeviceConfig& d) const {
+    if (d.timeout_policy) return *d.timeout_policy;
+    if (d.on_demand) return TimeoutPolicy::Disconnect;
+    return timeout_policy;
 }
 
 const DeviceConfig* DriverConfig::Find(std::string_view id) const {
@@ -161,6 +168,10 @@ ConfigLoadResult LoadConfigFromJson(std::string_view text) {
         Get(root, "smoothing", c.smoothing, w, "");
         c.smoothing = std::clamp(c.smoothing, 0.0, 0.99);
         Get(root, "applyTrackerRoles", c.apply_tracker_roles, w, "");
+        Get(root, "trackersOnDemand", c.trackers_on_demand, w, "");
+        for (auto& d : c.devices) {
+            if (d.kind == DeviceKind::Tracker) d.on_demand = c.trackers_on_demand;
+        }
 
         if (auto t = root.find("timeout"); t != root.end() && t->is_object()) {
             Get(*t, "ms", c.timeout_ms, w, "timeout.");
@@ -240,6 +251,8 @@ ConfigLoadResult LoadConfigFromJson(std::string_view text) {
                         continue;
                     }
                     DeviceConfig d = MakeTracker(index, "none", {0.0, 1.0, 0.0});
+                    d.on_demand = c.trackers_on_demand;
+                    Get(t, "onDemand", d.on_demand, w, ctx);
                     if (index < std::size(kDefaultTrackers)) d.default_pos = kDefaultTrackers[index].pos;
                     Get(t, "id", d.id, w, ctx);
                     if (auto role = t.find("role"); role != t.end() && role->is_string()) {

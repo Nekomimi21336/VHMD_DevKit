@@ -1,8 +1,15 @@
-"""Drive HMD, both controllers and 8 trackers with a swaying / stepping body.
+"""Drive a swaying / stepping body: 3-point by default plus as many trackers as asked.
 
-All 11 poses are sent in one JSON array per frame (one UDP datagram).
+    --points 3   HMD + both controllers (always registered by the driver)
+    --points 5   + both feet / ankles (tracker_1, tracker_2)
+    --points 6   + waist (tracker_0)            <- typical VRChat full body
+    --points 11  + knees, elbows, chest (all 8 default trackers)
 
-    python fullbody_sway.py [--height 1.7] [--rate 90] [--no-hmd]
+Trackers join SteamVR the first time a pose is sent to them, and grey out
+(disconnect) shortly after this script stops. All poses of a frame go out in
+one JSON array (one UDP datagram).
+
+    python fullbody_sway.py [--points 6] [--height 1.7] [--rate 90] [--no-hmd]
 """
 
 import argparse
@@ -47,13 +54,23 @@ def body_frame(t: float, height: float):
     return frame
 
 
+POINTS = {
+    3: ("hmd", "left_hand", "right_hand"),
+    5: ("hmd", "left_hand", "right_hand", "tracker_1", "tracker_2"),
+    6: ("hmd", "left_hand", "right_hand", "tracker_1", "tracker_2", "tracker_0"),
+    11: ("hmd", "left_hand", "right_hand") + tuple(f"tracker_{i}" for i in range(8)),
+}
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=39570)
     ap.add_argument("--height", type=float, default=1.7)
     ap.add_argument("--rate", type=float, default=90.0)
     ap.add_argument("--duration", type=float, default=0.0, help="0 = run until Ctrl+C")
+    ap.add_argument("--points", type=int, choices=sorted(POINTS), default=6,
+                    help="how many tracked points to drive (default 6)")
     ap.add_argument("--no-hmd", action="store_true", help="do not send the HMD pose (use with a real headset)")
     args = ap.parse_args()
 
@@ -61,7 +78,8 @@ def main() -> None:
         t0 = time.perf_counter()
         next_t = t0
         prev = None
-        print("sending full body motion (HMD + 2 controllers + 8 trackers), Ctrl+C to stop")
+        devices = POINTS[args.points]
+        print(f"sending {args.points}-point body motion ({', '.join(devices)}), Ctrl+C to stop")
         try:
             while args.duration <= 0 or time.perf_counter() - t0 < args.duration:
                 t = time.perf_counter() - t0
@@ -69,7 +87,7 @@ def main() -> None:
                 dt = 1.0 / args.rate
                 with c.batch():
                     for dev, (pos, rot) in frame.items():
-                        if args.no_hmd and dev == "hmd":
+                        if dev not in devices or (args.no_hmd and dev == "hmd"):
                             continue
                         vel = None
                         if prev:

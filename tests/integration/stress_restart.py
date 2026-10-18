@@ -63,7 +63,8 @@ def main() -> int:
             rec["driver_up_s"] = round(time.monotonic() - t0, 2)
             time.sleep(args.settle)
             st = client.status()
-            enabled = [d for d in st["devices"] if d["enabled"]]
+            # On-demand trackers only get an index once something is sent to them.
+            enabled = [d for d in st["devices"] if d["enabled"] and not d.get("on_demand")]
             rec["devices_indexed"] = sum(d["index"] >= 0 for d in enabled)
             rec["devices_enabled"] = len(enabled)
             for k in range(200):  # some traffic during the session

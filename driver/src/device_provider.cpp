@@ -65,6 +65,7 @@ vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* driver_context) {
     RouterHooks hooks;
     hooks.device_index = [this](const std::string& id) { return DeviceIndexFor(id); };
     hooks.set_role = [this](const std::string& id, const RoleInfo& role) { return SetRole(id, role); };
+    hooks.request_add = [this](const std::string& id) { RequestAdd(id); };
     router_ = std::make_unique<MessageRouter>(config_, states_, hooks);
 
     std::string err;
@@ -111,12 +112,42 @@ void DeviceProvider::CreateDevices() {
             break;
         }
         }
-        if (!vr::VRServerDriverHost()->TrackedDeviceAdded(dc.serial.c_str(), dev->DeviceClass(), dev.get())) {
-            Log(LogLevel::Error, "TrackedDeviceAdded failed for %s (%s)", dc.id.c_str(), dc.serial.c_str());
-        }
+        if (!dc.on_demand) RegisterDevice(*dev);
         devices_.push_back(std::move(dev));
     }
-    Log(LogLevel::Info, "registered %zu devices", devices_.size());
+    size_t on_demand = 0;
+    for (const auto& d : config_.devices) on_demand += d.enabled && d.on_demand;
+    Log(LogLevel::Info, "registered %zu devices, %zu more on demand", registered_.size(), on_demand);
+}
+
+void DeviceProvider::RegisterDevice(VirtualDevice& dev) {
+    if (!registered_.insert(dev.Id()).second) return;
+    if (!vr::VRServerDriverHost()->TrackedDeviceAdded(dev.Serial().c_str(), dev.DeviceClass(), &dev)) {
+        Log(LogLevel::Error, "TrackedDeviceAdded failed for %s (%s)", dev.Id().c_str(), dev.Serial().c_str());
+    }
+}
+
+void DeviceProvider::RequestAdd(const std::string& id) {
+    std::lock_guard<std::mutex> lock(add_mu_);
+    if (!registered_.count(id)) pending_adds_.insert(id);
+}
+
+void DeviceProvider::ProcessPendingAdds() {
+    std::set<std::string> ids;
+    {
+        std::lock_guard<std::mutex> lock(add_mu_);
+        ids.swap(pending_adds_);
+    }
+    for (const auto& id : ids) {
+        for (auto& d : devices_) {
+            if (d->Id() != id) continue;
+            std::lock_guard<std::mutex> lock(add_mu_); // guards registered_
+            if (registered_.count(id)) break;
+            Log(LogLevel::Info, "adding on-demand device %s (%s)", id.c_str(), d->Serial().c_str());
+            RegisterDevice(*d);
+            break;
+        }
+    }
 }
 
 void DeviceProvider::UpdateLoop() {
@@ -176,6 +207,7 @@ std::string DeviceProvider::SetRole(const std::string& id, const RoleInfo& role)
 }
 
 void DeviceProvider::RunFrame() {
+    ProcessPendingAdds();
     vr::VREvent_t event{};
     while (vr::VRServerDriverHost()->PollNextEvent(&event, sizeof(event))) {
         for (auto* c : controllers_) {
@@ -206,6 +238,8 @@ void DeviceProvider::Cleanup() {
     controllers_.clear();
     trackers_.clear();
     devices_.clear();
+    pending_adds_.clear();
+    registered_.clear();
     states_.clear();
     SetLogSink(nullptr);
     VR_CLEANUP_SERVER_DRIVER_CONTEXT();

@@ -34,6 +34,9 @@ struct DeviceConfig {
     Vec3 default_pos{};
     Quat default_rot{};
     std::optional<TimeoutPolicy> timeout_policy; // per-device override
+    // Not registered with SteamVR at startup; added the first time a client
+    // sends a message for it (or config op "add"). Default for trackers.
+    bool on_demand = false;
     bool skeleton = true;                         // controllers only
     bool skeleton_full = true;                    // controllers: VRSkeletalTracking_Full (else Partial)
     bool eye_tracking = true;                     // hmd only
@@ -54,6 +57,7 @@ struct DriverConfig {
     VmtMapping vmt_mapping;
 
     bool apply_tracker_roles = true; // write roles to SteamVR "trackers" settings if unset
+    bool trackers_on_demand = true;  // default for trackers without "onDemand"
     int log_errors_per_second = 5;
     bool verbose = false;
 
@@ -61,6 +65,10 @@ struct DriverConfig {
     std::vector<DeviceConfig> devices;
 
     const DeviceConfig* Find(std::string_view id) const;
+    // Timeout policy a device actually uses: its own override, else
+    // "disconnect" for on-demand trackers (they grey out when the sender
+    // stops), else the global policy.
+    TimeoutPolicy EffectivePolicy(const DeviceConfig& d) const;
 };
 
 struct ConfigLoadResult {

@@ -197,7 +197,31 @@ def main() -> int:
         roles = sorted(d["role"] for d in ctl)
         rep.check("2 controllers with left/right roles", roles == [openvr.TrackedControllerRole_LeftHand, openvr.TrackedControllerRole_RightHand],
                   str([(d["serial"], d["role"], d["controller_type"]) for d in ctl]))
-        rep.check(f"{args.trackers} generic trackers", len(trk) == args.trackers, str(sorted(d["serial"] for d in trk)))
+        on_demand = [d for d in status["devices"] if d["enabled"] and d.get("on_demand")]
+        rep.check("3-point base: only HMD + controllers registered before use",
+                  len(trk) == args.trackers - len(on_demand), f"{len(trk)} trackers at startup, {len(on_demand)} on demand")
+
+        # Trackers join when a client first sends to them, already in sync.
+        sent = {}
+        with client.batch():
+            for i, d in enumerate(on_demand):
+                sent[d["id"]] = ((-0.4 + 0.1 * i, 0.3 + 0.1 * i, 0.2), math3d.from_euler(yaw=15 * i))
+                client.pose(d["id"], *sent[d["id"]])
+        t0 = time.perf_counter()
+        while time.perf_counter() - t0 < 5.0:
+            trk = [d for d in find_devices(system).values()
+                   if d["tracking_system"] == "vhmd" and d["class"] == openvr.TrackedDeviceClass_GenericTracker]
+            if len(trk) >= args.trackers:
+                break
+            time.sleep(0.02)
+        add_ms = (time.perf_counter() - t0) * 1000
+        rep.check(f"{args.trackers} generic trackers after first pose (on-demand add)", len(trk) == args.trackers,
+                  f"{len(trk)} after {add_ms:.0f} ms: {sorted(d['serial'] for d in trk)}")
+        status = client.status()
+        idx_now = {d["id"]: d["index"] for d in status["devices"] if d["index"] >= 0}
+        synced = all(d in idx_now and wait_pose(system, idx_now[d], p, r)[0] for d, (p, r) in sent.items())
+        rep.check("added trackers start at the pose that triggered them", synced)
+        vh = {s: d for s, d in find_devices(system).items() if d["tracking_system"] == "vhmd"}
         rep.check("all vhmd devices connected", all(d["connected"] for d in vh.values()))
         rep.check("own controller types (no impersonation)",
                   all(d["controller_type"].startswith("vhmd_") for d in vh.values()),
@@ -252,10 +276,11 @@ def main() -> int:
                   f"invalid={not p.bPoseIsValid}, recovered={p2.bPoseIsValid}")
 
         # --- 4b. timeout policy ------------------------------------------------
-        policy = status.get("timeout_policy")
+        policy = next(d["timeout_policy"] for d in status["devices"] if d["id"] == t_id)
         timeout_s = status.get("timeout_ms", 500) / 1000
         client.pose(t_id, (0.2, 1.2, 0.0))
         time.sleep(timeout_s + 0.4)
+        # (the tracker under test gets no traffic during this sleep)
         p, gp, _ = get_pose(system, idx_by_id[t_id])
         connected = system.isTrackedDeviceConnected(idx_by_id[t_id])
         expected = {"hold": (True, True), "invalid": (False, True), "disconnect": (False, False)}[policy]

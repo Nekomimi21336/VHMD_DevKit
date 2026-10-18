@@ -46,7 +46,8 @@ steamvr_running() {
 }
 
 default_driver_path() {
-    echo "$REPO_ROOT/build/driver/vhmd"
+    # Release archives ship the driver as <root>/vhmd; source checkouts build it.
+    if [ -f "$REPO_ROOT/vhmd/driver.vrdrivermanifest" ]; then echo "$REPO_ROOT/vhmd"; else echo "$REPO_ROOT/build/driver/vhmd"; fi
 }
 
 # True if the folder's manifest names the driver "vhmd".
