@@ -102,7 +102,7 @@
 - `bones`：OpenVR 手部骨骼(31 根骨骼，按 `HandSkeletonBone` 顺序)在**父骨骼空间**中的旋转。可以用 `[w,x,y,z,px,py,pz]` 同时指定位置，也可以单独传入 `positions`(省略时使用张开手的参考位置)。
 - 自最后一条 `skeleton` 起 500 ms 以上没有收到任何内容期间，会根据 `trigger`/`grip`/按键的触摸状态自动生成手指弯曲。
 - 向 SteamVR 的 `WithController` / `WithoutController` 两种运动范围发送相同的值。
-- 控制器与手部追踪可以**在不停止 SteamVR 的情况下切换**(`config` 的 `hand_mode`)。`controllers`(默认)与硬件控制器的处理方式相同，骨骼为 Partial(由 SteamVR 整理手指骨骼)。`hands` 时每只手换成另一个设备(`VHMD-HAND-L/R`，骨骼为 Full，发送的骨骼原样反映)，VRChat 等会将其视为手部追踪(此时按键菜单操作无效，改为手势操作)。两种模式下 ID 都保持 `left_hand` / `right_hand`，发送内容无需修改。手部设备在首次切换到 `hands` 时添加。**在 VRChat 中，控制器模式下无法点击菜单按钮(VRChat 将自定义控制器类型视为通用控制器，Windows / Linux 相同)，因此菜单操作和全身校准请切换到 `hands`，用手掌激光 + 扳机进行。**
+- 控制器与手部追踪可以**在不停止 SteamVR 的情况下切换**(`config` 的 `hand_mode`)。`controllers`(默认)与硬件控制器的处理方式相同，骨骼为 Partial(由 SteamVR 整理手指骨骼)。`hands` 时每只手换成另一个设备(`VHMD-HAND-L/R`，骨骼为 Full，发送的骨骼原样反映)，VRChat 等会将其视为手部追踪(此时按键菜单操作无效，改为手势操作)。两种模式下 ID 都保持 `left_hand` / `right_hand`，发送内容无需修改。手部设备在首次切换到 `hands` 时添加。两种模式下都可以用激光 + 扳机操作 VRChat 菜单。自动操作瞄准时，请以接近正面的角度照射菜单表面(角度过浅不会命中)。
 
 ### `gaze`(HMD 的视线)
 
