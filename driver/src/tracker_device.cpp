@@ -24,6 +24,7 @@ std::string TrackerDevice::ApplyRole(const RoleInfo& role, bool overwrite) {
     vr::VRSettings()->SetString(vr::k_pch_Trackers_Section, key.c_str(), role.steamvr_role.c_str(), &err);
     if (err != vr::VRSettingsError_None) return "VRSettings SetString failed (" + std::to_string(err) + ")";
     Log(LogLevel::Info, "%s: role set to %s (%s)", Id().c_str(), role.steamvr_role.c_str(), key.c_str());
+    RefreshLabel();
     return {};
 }
 
@@ -31,6 +32,7 @@ void TrackerDevice::OnActivate(vr::PropertyContainerHandle_t c) {
     auto* p = vr::VRProperties();
     SetCommonProperties(c, "VHMD Virtual Tracker", "generic_tracker");
     SetIcons(c, "tracker");
+    container_ = c;
     p->SetStringProperty(c, vr::Prop_ControllerType_String, "vhmd_tracker");
     p->SetStringProperty(c, vr::Prop_InputProfilePath_String, "{vhmd}/input/vhmd_tracker_profile.json");
     p->SetInt32Property(c, vr::Prop_ControllerRoleHint_Int32, vr::TrackedControllerRole_OptOut);
@@ -41,6 +43,36 @@ void TrackerDevice::OnActivate(vr::PropertyContainerHandle_t c) {
             if (!err.empty()) Log(LogLevel::Warning, "%s: %s", Id().c_str(), err.c_str());
         }
     }
+    RefreshLabel();
+}
+
+std::string TrackerDevice::CurrentRole() {
+    // The role SteamVR uses (the user may have changed it in "Manage Trackers").
+    char current[128] = {};
+    vr::EVRSettingsError err = vr::VRSettingsError_None;
+    vr::VRSettings()->GetString(vr::k_pch_Trackers_Section, RoleSettingsKey().c_str(), current, sizeof(current), &err);
+    if (err == vr::VRSettingsError_None && current[0] != 0) {
+        if (auto role = NormalizeRole(current)) return role->short_name;
+    }
+    auto role = NormalizeRole(State().Config().role);
+    return role ? role->short_name : "none";
+}
+
+void TrackerDevice::RefreshLabel() {
+    std::lock_guard<std::mutex> lock(label_mu_);
+    const std::string role = CurrentRole();
+    if (role == shown_role_ || container_ == vr::k_ulInvalidPropertyContainer) return;
+    shown_role_ = role;
+    SetLabel(container_, ModelShape::Tracker, TrackerLabel(role, Id()));
+    const std::string model = "VHMD Tracker " + TrackerLabel(role, Id()).title + " (" + Id() + ")";
+    vr::VRProperties()->SetStringProperty(container_, vr::Prop_ModelNumber_String, model.c_str());
+}
+
+bool TrackerDevice::HandleEvent(const vr::VREvent_t& event) {
+    if (event.eventType == vr::VREvent_TrackersSectionSettingChanged && container_ != vr::k_ulInvalidPropertyContainer) {
+        RefreshLabel();
+    }
+    return false;
 }
 
 } // namespace vhmd

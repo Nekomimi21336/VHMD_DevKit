@@ -34,6 +34,7 @@ No hardware needed: poses and inputs sent from an external process over UDP/JSON
 - **Simple external API**: UDP + JSON (`127.0.0.1:39570`). A single datagram can update all devices at once. Optional VMT-compatible OSC
 - **Full controller input set**: trigger / grip / stick / A, B, X, Y / system / menu, haptics sent back to the client, finger skeleton (curl values or direct bone specification)
 - **Switch between controllers and hand tracking**: `hand_mode` changes it while SteamVR runs (in VRChat: button controls ⇄ hand-tracking controls). Ids and messages stay the same
+- **Easy to tell apart in SteamVR**: tracker models and status icons show the body part (`L FOOT`, `WAIST`, ...) and the id (`TRACKER_1`); controllers show `L` / `R` and their id. The labels follow role changes
 - **Eye gaze input** (SteamVR's eye tracking component)
 - **Windows / Linux** support. On Linux the driver runs in direct mode (the driver receives the frames SteamVR renders), and the output can be viewed with a viewer via shared memory (v0.3.0; awaiting confirmation on SteamVR for Linux)
 - **Python client** (no dependencies) with samples, plus automated verification scripts that run against SteamVR

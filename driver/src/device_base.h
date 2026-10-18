@@ -13,6 +13,7 @@
 #include <openvr_driver.h>
 
 #include "state/device_state.h"
+#include "visuals/device_visuals.h"
 
 namespace vhmd {
 
@@ -69,7 +70,15 @@ protected:
 
     void SetCommonProperties(vr::PropertyContainerHandle_t container, const char* model, const char* render_model);
     void SetIcons(vr::PropertyContainerHandle_t container, const std::string& prefix);
+    // Labelled render model + status icons generated for this device (under the
+    // driver's resources folder). Keeps the given fallbacks if writing fails.
+    void SetLabel(vr::PropertyContainerHandle_t container, ModelShape shape, const DeviceLabel& label);
 
+public:
+    // Driver install folder (set once by the provider before devices activate).
+    static void SetInstallPath(const std::string& path);
+
+protected:
     DeviceState& State() { return *state_; }
 
 private:

@@ -150,6 +150,7 @@ void ControllerDevice::OnActivate(vr::PropertyContainerHandle_t c) {
                                    : (left_ ? "VHMD Virtual Controller (Left)" : "VHMD Virtual Controller (Right)");
     SetCommonProperties(c, model, "{vhmd}vhmd_controller"); // has "tip"/"handgrip" components (tools/gen_rendermodel.py)
     SetIcons(c, "controller");
+    SetLabel(c, ModelShape::Controller, ControllerLabel(left_, Id()));
     p->SetInt32Property(c, vr::Prop_ControllerRoleHint_Int32,
                         left_ ? vr::TrackedControllerRole_LeftHand : vr::TrackedControllerRole_RightHand);
     // Only one of a controller / hand twin is connected at a time; if both

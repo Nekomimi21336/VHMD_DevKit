@@ -58,6 +58,7 @@ vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* driver_context) {
         vr::k_nSteamVRVersionMinor, vr::k_nSteamVRVersionBuild);
 
     install_path_ = vr::VRProperties()->GetStringProperty(vr::VRDriverHandle(), vr::Prop_InstallPath_String);
+    VirtualDevice::SetInstallPath(install_path_);
     LoadConfig();
     SetVerbose(config_.verbose);
     CreateDevices();

@@ -11,6 +11,7 @@ add_library(vhmd_core STATIC
   src/net/udp_receiver.cpp
   src/util/log.cpp
   src/util/precise_sleep.cpp
+  src/visuals/device_visuals.cpp
 )
 target_include_directories(vhmd_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src)
