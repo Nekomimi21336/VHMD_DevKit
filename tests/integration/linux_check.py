@@ -136,6 +136,8 @@ def main() -> int:
     ap.add_argument("--keep-running", action="store_true", help="leave SteamVR running at the end")
     ap.add_argument("--preview-path", default=DEFAULT_PATH)
     ap.add_argument("--ping-timeout", type=float, default=120.0, help="seconds to wait for SteamVR to load the driver")
+    ap.add_argument("--hold", type=float, default=60.0,
+                    help="seconds to keep SteamVR running before the final present check (catches late compositor failures)")
     args = ap.parse_args()
 
     out = HERE / "results" / f"linux_check_{datetime.now():%Y%m%d_%H%M%S}"
@@ -239,6 +241,24 @@ def main() -> int:
         fails = [l for l in proc.stdout.splitlines() if l.startswith("[FAIL]")]
         rep.check("integration test (run_integration.py)", proc.returncode == 0,
                   (summary[0] if summary else "no summary") + ("; " + " | ".join(f[:120] for f in fails[:5]) if fails else ""))
+
+    # The compositor must still be presenting at the end: some GPUs fail a while after start-up.
+    if up:
+        t_end = time.monotonic() + args.hold
+        while time.monotonic() < t_end:
+            time.sleep(1.0)
+        try:
+            q1 = client.status().get("display", {}).get("presents", 0)
+            time.sleep(2.0)
+            q2 = client.status().get("display", {}).get("presents", 0)
+        except (TimeoutError, OSError):
+            q1 = q2 = 0
+        late_rate = (q2 - q1) / 2.0
+        comp_now = svr.latest_session(svr.read_log_since(comp_log, 0)) if comp_log.exists() else ""
+        lost = svr.log_lines(comp_now, r"vkerror=-4|VK_ERROR_DEVICE_LOST|Watchdog timeout")
+        rep.check("compositor still presenting at the end", late_rate > 30 and not lost,
+                  f"{late_rate:.0f} presents/s after {time.time() - t0:.0f} s"
+                  + (f"; {lost[0].strip()[:160]}" if lost else ""))
 
     client.close()
     if started_here and not args.keep_running:

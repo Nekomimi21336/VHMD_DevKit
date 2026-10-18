@@ -3,6 +3,7 @@
 #include <chrono>
 #include <vector>
 
+#include <fcntl.h>
 #include <unistd.h>
 
 #include "linux/vk_loader.h" // Vulkan enums for the shared image parameters
@@ -96,6 +97,7 @@ void DirectModeComponent::CreateSwapTextureSet(uint32_t pid, const SwapTextureSe
             stats_.last_error = "CreateSwapTextureSet failed";
             return;
         }
+        fcntl(fd, F_SETFD, FD_CLOEXEC); // kept for the preview; never hand it to child processes
         set->handles[i] = handle;
         out->rSharedTextureHandles[i] = handle;
         fds.push_back(fd);

@@ -31,8 +31,8 @@ Linux 版 SteamVR 的合成器无法像 Windows 那样“绘制到桌面上的�
 | 在 Linux 版 SteamVR 2.17.10(Arch、KDE Wayland)上运行 v0.2.0 | ✅ 驱动加载、HMD 识别、控制器重映射 / ❌ 合成器因 `CannotDRMLeaseDisplay` 无法启动(null 驱动也一样)→ 由 v0.3.0 的直接模式解决 |
 | 在 WSL2 上的 Linux 版 SteamVR 2.17.10(软件 Vulkan)上运行 v0.3.0 | ✅ 驱动加载、直接模式、集成测试 21/23,合成器运行到 `Headset is using driver direct mode` / ❌ 由于 llvmpipe 不支持导入时间线信号量,渲染器初始化失败([verification.md](../verification.md),日文) |
 | 在使用真实 GPU 的 Linux 版 SteamVR 2.17.10 上运行 v0.3.0(云 GPU：NVIDIA RTX 4000 Ada、驱动 595、Ubuntu 26.04、用 gcc 15.2 构建、无显示器 + Xvfb) | ✅ `linux_check.py` 全部通过：合成器创建交换纹理(单眼 2160×2400)并以 **90 fps present**，无 `CannotDRMLeaseDisplay`，预览中有 SteamVR 的画面，集成测试 28/28(含骨骼与输入)。连续两次通过 |
-| 有真实显示器的 Linux 桌面(KDE / GNOME，带 Steam 客户端) | 未验证(应为相同路径，请用 `linux_check.py` 确认) |
-| 通过 Proton 运行的 VRChat 等 Windows 游戏 | 未验证 |
+| 相当于桌面的环境(NVIDIA 真实 X 服务器 + Steam 客户端 + 启用 SteamVR Home) | ✅ `linux_check.py` 14/14 通过。vrmonitor 运行，确认 SteamVR 正常退出及驱动的结束处理(`vhmd: shutting down`，约 2 秒)。已在云 GPU(RTX 4000 Ada)上确认。Proxmox 虚拟机中的 GTX 1050(2 GB，Pascal，驱动 580)也得到 14/14，但**启动后 5〜60 秒 vrcompositor 因 GPU 异常(`Xid 13: 3D WIDTH ZT Violation` → `VK_ERROR_DEVICE_LOST`)停止渲染**。在没有客户端、预览和 SteamVR Home 的情况下也会重现，未发现驱动侧的原因(GTX 1050 低于 SteamVR 最低要求 GTX 970 / 1060) |
+| 通过 Proton 运行 VRChat(Proton Experimental) | ✅ 可启动，并向虚拟 HMD 的双眼渲染 VR 画面(登录界面)。VRChat 的 Oculus Touch 绑定应用于虚拟控制器，游戏内的手跟随发送的姿态。登录后的操作(虚拟形象、全身校准)未确认。**在虚拟机内 VRChat 的 Easy Anti-Cheat 会以 `Cannot run under Virtual Machine` 拒绝启动**(在云端 KVM 上可以启动；隐藏虚拟机检测属于规避反作弊，因此未进行) |
 
 ## 前提
 
@@ -117,6 +117,7 @@ python3 tests/integration/linux_check.py
 | 7 | 预览中有持续更新的帧，并保存 `eyes.png` | ✅ |
 | 8 | 常规集成测试(`run_integration.py`：枚举、姿态、输入、骨骼、负载) | ✅ |
 | 9 | 退出 SteamVR 时执行驱动的退出处理 | ✅ |
+| 10 | 退出前(默认等待 60 秒后)合成器仍在 present(可用 `--hold` 修改秒数) | ✅ |
 
 使用 `--skip-integration` 可以跳过第 8 项(只想确认显示路径时)。
 
@@ -130,6 +131,9 @@ python3 tests/integration/linux_check.py
 | 想与真实 HMD 一起使用 | `"hmd": {"enabled": false}`(只添加控制器 / 追踪器) |
 | 在没有显示器的机器(云 GPU 等)上 SteamVR Home 反复启动失败，Scene 应用得到 `AnotherAppLaunching` | 在 `steamvr.vrsettings` 的 `steamvr` 中设置 `"enableHomeApp": false` |
 | 在没有显示器的机器上“SteamVR shutdown”为 SKIP | vrserver 只会在 vrmonitor(SteamVR 窗口)指示时退出，并忽略 SIGTERM。在 Xvfb 下 vrmonitor 本身启动即崩溃，因此测试会强制结束 SteamVR(驱动的结束处理不会执行)。在桌面环境中会正常退出 |
+| 从 Steam 客户端首次启动 SteamVR 时要求输入管理员密码并停住 | SteamVR 的设置(`vrsetup.sh`)要给合成器添加 `CAP_SYS_NICE`。请输入密码，或执行 `sudo setcap CAP_SYS_NICE=eip <SteamVR>/bin/linux64/vrcompositor-launcher` |
+| 在虚拟机内 VRChat 显示 `Cannot run under Virtual Machine` | 这是 VRChat 的 Easy Anti-Cheat 的规定。请在实体机的 Linux 上运行 |
+| 起初全部通过，但 “compositor still presenting at the end” 失败，`dmesg` 中有 `NVRM: Xid 13` | 合成器因 GPU 异常停止。在 GTX 1050(Pascal，驱动 580)上重现。请使用达到 SteamVR 最低要求(GTX 970 / 1060)的 GPU |
 | 虚拟机、WSL 等没有 GPU 的环境 | 使用软件 Vulkan(llvmpipe)时,合成器会在渲染器初始化阶段以 `does not support timeline import` 停止。需要真实 GPU |
 
 ## 在没有显示器的机器(云 GPU 等)上运行

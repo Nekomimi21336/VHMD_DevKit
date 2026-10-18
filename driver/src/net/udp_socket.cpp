@@ -21,6 +21,7 @@ static const intptr_t kInvalidHandle = static_cast<intptr_t>(INVALID_SOCKET);
 static int CloseSocket(socket_t s) { return closesocket(s); }
 #else
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -89,7 +90,15 @@ bool UdpSocket::Open(const std::string& bind_address, uint16_t port, std::string
         error = "invalid bind address '" + bind_address + "'";
         return false;
     }
-    socket_t s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    // Not inheritable: vrserver starts other processes (compositor, home app
+    // launchers). An inherited copy outlives a crashed vrserver and keeps the
+    // port, so the next SteamVR session could not bind it.
+#if defined(VHMD_PLATFORM_WINDOWS)
+    socket_t s = WSASocketW(AF_INET, SOCK_DGRAM, IPPROTO_UDP, nullptr, 0,
+                            WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
+#else
+    socket_t s = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_UDP);
+#endif
     if (static_cast<intptr_t>(s) == kInvalidHandle) {
         error = "socket() failed";
         return false;
@@ -134,6 +143,17 @@ uint16_t UdpSocket::LocalPort() const {
     socklen_t len = sizeof(addr);
     if (getsockname(S(handle_), reinterpret_cast<sockaddr*>(&addr), &len) != 0) return 0;
     return ntohs(addr.sin_port);
+}
+
+bool UdpSocket::IsInheritable() const {
+    if (!IsOpen()) return false;
+#if defined(VHMD_PLATFORM_WINDOWS)
+    DWORD flags = 0;
+    return GetHandleInformation(reinterpret_cast<HANDLE>(S(handle_)), &flags) && (flags & HANDLE_FLAG_INHERIT);
+#else
+    const int flags = fcntl(S(handle_), F_GETFD);
+    return flags >= 0 && !(flags & FD_CLOEXEC);
+#endif
 }
 
 int UdpSocket::Receive(char* buffer, size_t size, Endpoint& from, int timeout_ms) {

@@ -171,7 +171,62 @@ Linode の GPU インスタンス(NVIDIA RTX 4000 Ada 20 GB、4 コア、Ubuntu 
 - スケルトン確認で `InputError_NoData` が出た回が 1 回あり、詳細表示の読み出しで例外になってスクリプトごと止まっていた。読み出しを例外安全にした(その後の 2 回は全項目合格)。
 - vrserver は SIGTERM / SIGINT を無視し、vrmonitor からの指示でしか終了しない。Xvfb 上では vrmonitor が起動直後に SIGFPE で落ちるため、正常終了させる手段が無かった。ドライバから `VREvent_DriverRequestedQuit` を送る方法も試したが vrserver は終了しなかった(この変更は取り込んでいない)。`stop_steamvr` は vrmonitor が居ない Linux では SteamVR を強制終了し、`ForcedShutdown` を返すようにした。
 
-→ Linux のダイレクトモードで実 GPU のコンポジタから映像が流れることを確認しました。画面のあるデスクトップ(vrmonitor が動く環境)での終了処理と、Proton 経由のゲームは未確認です。
+→ Linux のダイレクトモードで実 GPU のコンポジタから映像が流れることを確認しました。続けて同じ環境で下記を確認しました。
+
+### デスクトップ相当の環境(v0.3.0、2026-10-19、同じクラウド GPU)
+
+Xvfb をやめ、NVIDIA の実 X サーバー(仮想モニター、60 Hz)を立てて確認しました。
+
+| 項目 | 結果 |
+|---|---|
+| vrmonitor の起動 | ✅(Xvfb では起動直後に SIGFPE で落ちていた) |
+| SteamVR の正常終了とドライバの終了処理 | ✅ `vhmd: shutting down`、2.3 秒 |
+| `linux_check.py`(Home 無効) | ✅ 14/14 |
+| Steam クライアントあり + SteamVR Home 有効 | ✅ 14/14、統合テスト 28/28、正常終了。Home(`steamtours`)も起動 |
+
+Steam クライアントを入れると、SteamVR の初回セットアップ(`vrsetup.sh`)が `vrcompositor-launcher` に `CAP_SYS_NICE` を付けるため管理者パスワードを求めて止まった。画面の無い環境では入力できないため `setcap` で同じ設定をした。
+
+### Proton 経由の VRChat(v0.3.0、2026-10-19、同じクラウド GPU)
+
+Steam クライアントで VRChat(438100)を入れると、Proton Experimental が自動で選ばれた。
+
+| 項目 | 結果 |
+|---|---|
+| VRChat が Proton で起動し、SteamVR に Scene アプリとして接続 | ✅ |
+| 仮想コントローラーへのバインディング | ✅ VRChat 同梱の `bindings_oculus_touch.json` が `vhmd_controller` に適用 |
+| 仮想 HMD への描画 | ✅ プレビューに VRChat のログイン画面(左右の目) |
+| 手の追従 | ✅ 右コントローラーの向きを ±15° 振ると、VRChat 内の手の向きと位置が変わる |
+| ログイン後の操作(アバターの追従、フルボディ較正、指の曲がり) | 未確認(VRChat アカウントでのログインが必要なため実施していない) |
+
+### Proxmox VM の GTX 1050(v0.3.0、2026-10-19)
+
+Proxmox VE 9.0 上に VM(q35 / OVMF、6 コア、8 GB)を作り、GTX 1050(2 GB、Pascal)をパススルー。Ubuntu 26.04、NVIDIA ドライバ 580.178(Pascal に対応する最後の系列)、実 X サーバー + Steam クライアント。
+
+| 項目 | 結果 |
+|---|---|
+| ビルド、単体テスト | ✅ 警告 0、ctest 合格 |
+| `linux_check.py`(Steam クライアント、Home 有効) | ⚠️ 14/14 になったが、下記のとおり判定後に描画が止まっていた |
+| 長時間の描画 | ❌ 起動から 5〜60 秒後に vrcompositor が `NVRM: Xid 13: 3D WIDTH ZT Violation` → `VK_ERROR_DEVICE_LOST` で停止(present 0、Scene アプリは 10 fps に低下)。SteamVR 自体は落ちない |
+| 切り分け | プレビュー無効でも、SteamVR Home 無効でも、テストのクライアントを一切つながなくても、VM を再起動した直後でも再現。例外は vrcompositor 自身の GPU チャネルで発生。共有イメージの作成パラメータは ALVR と同じ。RTX 4000 Ada では起きない |
+| VRChat | ❌ Easy Anti-Cheat が `Cannot run under Virtual Machine` で起動を拒否(VM の検出を隠す設定はアンチチート回避になるため行っていない) |
+
+→ GTX 1050 / ドライバ 580 と SteamVR 2.17.10 の組み合わせで起きる問題と判断(GTX 1050 は SteamVR の最小要件 GTX 970 / 1060 未満)。ドライバ側の原因は見つかっていない。これを受けて `linux_check.py` に、終了前にもう一度 present を数える「compositor still presenting at the end」を追加し、この現象を FAIL として検出できることを確認した。
+
+この VM の検証中に、ドライバの不具合を 1 件見つけて修正した:
+- SteamVR が異常終了したあと、次の SteamVR でドライバが `bind(127.0.0.1:39570) failed` になった。ドライバの UDP ソケットが close-on-exec 無しで作られていたため、vrserver が起動した子プロセス(`steam-runtime-launch-client`)に引き継がれ、vrserver が終わってもポートを持ち続けていた。Linux は `SOCK_CLOEXEC`、Windows は `WSA_FLAG_NO_HANDLE_INHERIT` で作るよう修正し、共有イメージの fd も close-on-exec にした。単体テストに「ソケットが継承されない」確認を追加。
+
+### 30 分の連続稼働(`tests/integration/soak_test.py`、v0.3.0、2026-10-19)
+
+HMD・両手・トラッカー 3 台に 90 Hz でゆっくりした揺れを送りながら、Scene アプリとして毎フレーム `waitGetPoses` し、30 秒ごとに記録。
+
+| 環境 | 結果 |
+|---|---|
+| Windows 11(RX 7900 XTX、200 Hz モニター、ウィンドウモード) | 30 分・60 サンプル。SteamVR 稼働継続、拒否パケット 0、デバイスの更新間隔 最大 12 ms、右手の姿勢誤差 最大 1.48 cm、vrserver のメモリ 323 MB で増加なし、vhmd の警告 0。Scene アプリのフレームレートは 平均 64 fps(下記) |
+| Linux、RTX 4000 Ada(クラウド) | 1.5 分の試運転で全項目合格(90 fps、present 90/s、誤差 0.14 cm、メモリ 249 MB で一定)。30 分の本番はインスタンス停止のため途中で終了 |
+| Linux、GTX 1050(Proxmox VM) | ❌ 上記のコンポジタ停止により不合格 |
+
+Windows のウィンドウモードのフレームレート: Scene アプリは HMD の設定(90 Hz)より低い約 64〜67 fps で回る。テクスチャを毎フレーム送る D3D11 のテストアプリでも 66.4 fps(送らない場合 66.7 fps)、HMD の周波数を 100 / 200 Hz にしても変わらず、コンポジタの描画時間は 1 ms 未満。原因は特定できていない。姿勢・入力・遅延には影響しない。`soak_test.py` の基準は、この結果を見たうえでウィンドウモードのみ 60 fps とした(ダイレクトモードは 80 fps)。
+
 
 ## 2. 手動検証手順(要件 10.2)
 

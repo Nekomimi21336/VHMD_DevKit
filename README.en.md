@@ -225,7 +225,7 @@ third_party/            OpenVR SDK (submodule v2.15.6), nlohmann/json 3.11.3
 | Linux compiler | gcc 13.3 (Ubuntu 24.04 / WSL2), gcc 15.2 (Ubuntu 26.04), CMake 3.28 / 4.2 |
 | Python | 3.12 (3.10 or later), pyopenvr 2.12 for verification |
 
-Detailed results: [docs/verification.md](docs/verification.md) (Japanese). On SteamVR for Linux, with v0.3.0's direct mode on a real GPU (cloud, no display) the compositor renders at 90 fps and the integration test passes 28/28 ([docs/en/linux.md](docs/en/linux.md)). Operation in VRChat (GUI interaction), Linux desktops with a display, and games through Proton have not been verified.
+Detailed results: [docs/verification.md](docs/verification.md) (Japanese). On SteamVR for Linux, v0.3.0's direct mode was verified on a real GPU (NVIDIA RTX 4000 Ada): the compositor renders at 90 fps, the integration test passes 28/28, SteamVR shuts down cleanly with the Steam client and SteamVR Home, and VRChat through Proton renders and follows the controllers. On a GTX 1050 the SteamVR compositor stops on a GPU exception shortly after start ([docs/en/linux.md](docs/en/linux.md)). Using VRChat while logged in (avatars, full-body calibration) and use alongside a real HMD have not been verified.
 
 ## License
 

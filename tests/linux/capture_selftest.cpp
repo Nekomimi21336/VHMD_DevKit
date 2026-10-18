@@ -52,8 +52,9 @@ struct Exporter {
     PFN_vkGetMemoryFdKHR GetMemoryFd = nullptr;
     PFN_vkCmdClearColorImage CmdClearColorImage = nullptr;
     VkPhysicalDeviceMemoryProperties mp{};
+    uint32_t device_count = 0;
 
-    bool Init(std::string& err) {
+    bool Init(std::string& err, uint32_t index = 0) {
         if (!vk.LoadLibrary(err)) return false;
         VkApplicationInfo app{};
         app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -68,7 +69,9 @@ struct Exporter {
         if (!n) return err = "no device", false;
         std::vector<VkPhysicalDevice> d(n);
         vk.EnumeratePhysicalDevices(inst, &n, d.data());
-        phys = d[0];
+        device_count = n;
+        if (index >= n) return err = "no such device", false;
+        phys = d[index];
         uint32_t qn = 0;
         vk.GetPhysicalDeviceQueueFamilyProperties(phys, &qn, nullptr);
         std::vector<VkQueueFamilyProperties> qp(qn);
@@ -234,11 +237,53 @@ bool ReadPreview(const std::string& path, Frame& out) {
 
 } // namespace
 
-int main() {
-    SetLogSink([](LogLevel, const std::string& line) { std::printf("  log: %s\n", line.c_str()); });
+// True if FrameCapture can import images exported on device `index`. Some
+// Vulkan implementations cannot (e.g. Mesa's dzn on WSL); the driver then
+// just disables the preview, so the test moves on to the next device.
+static bool DeviceCanImport(uint32_t index) {
     Exporter ex;
     std::string err;
-    if (!ex.Init(err)) return Skip(err.c_str());
+    if (!ex.Init(err, index)) return false;
+    const float grey[4] = {0.5f, 0.5f, 0.5f, 1.0f};
+    const int fd_l = ex.MakeImage(16, 16, VK_FORMAT_R8G8B8A8_UNORM, grey);
+    const int fd_r = ex.MakeImage(16, 16, VK_FORMAT_R8G8B8A8_UNORM, grey);
+    if (fd_l < 0 || fd_r < 0) return false;
+    CaptureSettings cs;
+    cs.path = "/tmp/vhmd_capture_probe";
+    cs.fps = 60;
+    cs.vulkan_device = static_cast<int>(index);
+    FrameCapture cap(cs);
+    cap.RegisterImage(1, fd_l, 16, 16, VK_FORMAT_R8G8B8A8_UNORM);
+    cap.RegisterImage(2, fd_r, 16, 16, VK_FORMAT_R8G8B8A8_UNORM);
+    CaptureEye l, r;
+    l.handle = 1;
+    r.handle = 2;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline) {
+        cap.Submit(l, r);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const CaptureStats st = cap.Stats();
+        if (st.written >= 1) return true;
+        if (st.state.rfind("error", 0) == 0) break;
+    }
+    return false;
+}
+
+int main() {
+    SetLogSink([](LogLevel, const std::string& line) { std::printf("  log: %s\n", line.c_str()); });
+    Exporter probe;
+    std::string err;
+    if (!probe.Init(err)) return Skip(err.c_str());
+    uint32_t device = 0;
+    while (device < probe.device_count && !DeviceCanImport(device)) {
+        std::printf("device %u cannot import exported images, trying the next one\n", device);
+        ++device;
+    }
+    if (device == probe.device_count) return Skip("no Vulkan device can import its own exported images");
+    std::printf("using Vulkan device %u\n", device);
+
+    Exporter ex;
+    if (!ex.Init(err, device)) return Skip(err.c_str());
 
     const uint32_t W = 64, H = 48;
     const float red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
@@ -254,6 +299,7 @@ int main() {
         cs.path = path;
         cs.fps = 60;
         cs.max_eye_width = 32; // forces a 2x downscale
+        cs.vulkan_device = static_cast<int>(device);
         FrameCapture cap(cs);
         cap.RegisterImage(1001, fd_left, W, H, VK_FORMAT_R8G8B8A8_UNORM);
         cap.RegisterImage(1002, fd_right, W, H, VK_FORMAT_R8G8B8A8_UNORM);

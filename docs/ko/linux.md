@@ -31,8 +31,8 @@ Linux판 SteamVR의 컴포지터는 Windows처럼 "데스크톱 위의 창에 �
 | v0.2.0을 Linux판 SteamVR 2.17.10(Arch, KDE Wayland)에서 실행 | ✅ 드라이버 로드, HMD 인식, 컨트롤러 리맵 / ❌ 컴포지터가 `CannotDRMLeaseDisplay`로 시작되지 않음(null 드라이버도 마찬가지) → v0.3.0의 다이렉트 모드로 대응 |
 | v0.3.0을 WSL2 위의 Linux판 SteamVR 2.17.10(소프트웨어 Vulkan)에서 실행 | ✅ 드라이버 로드, 다이렉트 모드, 통합 테스트 21/23, 컴포지터가 `Headset is using driver direct mode`까지 도달 / ❌ llvmpipe가 타임라인 세마포어 외부 가져오기를 지원하지 않아 렌더러 초기화 실패([verification.md](../verification.md), 일본어) |
 | v0.3.0을 실제 GPU의 Linux판 SteamVR 2.17.10에서 실행(클라우드 GPU: NVIDIA RTX 4000 Ada, 드라이버 595, Ubuntu 26.04, gcc 15.2로 빌드, 디스플레이 없음 + Xvfb) | ✅ `linux_check.py` 전 항목 합격: 컴포지터가 스왑 텍스처(한쪽 눈 2160×2400)를 만들고 **90 fps로 present**, `CannotDRMLeaseDisplay` 없음, 프리뷰에 SteamVR 영상, 통합 테스트 28/28(스켈레톤·입력 포함). 2회 연속 합격 |
-| 실제 디스플레이가 있는 Linux 데스크톱(KDE / GNOME, Steam 클라이언트 있음) | 미검증(같은 경로일 것이나 `linux_check.py`로 확인 부탁드립니다) |
-| Proton을 통한 VRChat 등 Windows 게임 | 미검증 |
+| 데스크톱에 상당하는 환경(NVIDIA 실제 X 서버 + Steam 클라이언트 + SteamVR Home 활성) | ✅ `linux_check.py` 14/14 합격. vrmonitor가 동작하며 SteamVR의 정상 종료와 드라이버 종료 처리(`vhmd: shutting down`, 약 2초)까지 확인. 클라우드 GPU(RTX 4000 Ada)에서 확인. Proxmox VM의 GTX 1050(2 GB, Pascal, 드라이버 580)에서도 14/14였으나 **시작 후 5~60초 뒤 vrcompositor가 GPU 예외(`Xid 13: 3D WIDTH ZT Violation` → `VK_ERROR_DEVICE_LOST`)로 렌더링을 멈춤**. 클라이언트·프리뷰·SteamVR Home이 모두 없어도 재현되며 드라이버 측 원인은 발견되지 않음(GTX 1050은 SteamVR 최소 요구 사양 GTX 970 / 1060 미만) |
+| Proton을 통한 VRChat(Proton Experimental) | ✅ 실행되어 가상 HMD의 양쪽 눈에 VR 영상(로그인 화면)을 렌더링. VRChat의 Oculus Touch 바인딩이 가상 컨트롤러에 적용되고 게임 내 손이 보낸 자세를 따라감. 로그인 후의 조작(아바타, 풀바디 보정)은 미확인. **가상 머신 안에서는 VRChat의 Easy Anti-Cheat가 `Cannot run under Virtual Machine`으로 실행을 거부합니다**(클라우드 KVM에서는 실행됨. VM 감지를 숨기는 설정은 안티치트 회피에 해당하므로 하지 않았습니다) |
 
 ## 전제 조건
 
@@ -117,6 +117,7 @@ SteamVR의 시작부터 종료까지를 자동으로 수행하고, `tests/integr
 | 7 | 프리뷰에 진행되는 프레임이 있고 `eyes.png`를 저장 | ✅ |
 | 8 | 일반 통합 테스트(`run_integration.py`: 열거, 포즈, 입력, 스켈레톤, 부하) | ✅ |
 | 9 | SteamVR 종료 시 드라이버의 종료 처리가 실행됨 | ✅ |
+| 10 | 종료 전(기본 60초 대기 후)에도 컴포지터가 계속 present하고 있음(`--hold`로 초 변경) | ✅ |
 
 `--skip-integration`으로 8을 생략할 수 있습니다(표시 경로만 확인하고 싶을 때).
 
@@ -130,6 +131,9 @@ SteamVR의 시작부터 종료까지를 자동으로 수행하고, `tests/integr
 | 실제 HMD와 함께 사용하고 싶음 | `"hmd": {"enabled": false}`(컨트롤러 / 트래커만 추가) |
 | 디스플레이가 없는 머신(클라우드 GPU 등)에서 SteamVR Home이 시작과 실패를 반복하고 Scene 앱이 `AnotherAppLaunching`이 됨 | `steamvr.vrsettings`의 `steamvr`에 `"enableHomeApp": false` |
 | 디스플레이가 없는 머신에서 "SteamVR shutdown"이 SKIP | vrserver는 vrmonitor(SteamVR 창)의 지시로만 종료되며 SIGTERM도 무시합니다. Xvfb에서는 vrmonitor 자체가 시작 시 충돌하므로 테스트가 SteamVR을 강제 종료합니다(드라이버 종료 처리는 실행되지 않음). 데스크톱에서는 정상적으로 종료됩니다 |
+| Steam 클라이언트에서 처음 SteamVR을 실행하면 관리자 비밀번호를 요구하며 멈춤 | SteamVR 설정(`vrsetup.sh`)이 컴포지터에 `CAP_SYS_NICE`를 부여하려는 것입니다. 비밀번호를 입력하거나 `sudo setcap CAP_SYS_NICE=eip <SteamVR>/bin/linux64/vrcompositor-launcher` |
+| VM 안에서 VRChat이 `Cannot run under Virtual Machine` | VRChat의 Easy Anti-Cheat 사양입니다. 실제 하드웨어의 Linux에서 실행해 주십시오 |
+| 처음에는 합격하지만 "compositor still presenting at the end"가 FAIL이고 `dmesg`에 `NVRM: Xid 13` | GPU 예외로 컴포지터가 멈춘 것입니다. GTX 1050(Pascal, 드라이버 580)에서 재현. SteamVR 최소 요구 사양(GTX 970 / 1060) 이상의 GPU로 시도해 주십시오 |
 | VM, WSL 등 GPU가 없는 환경 | 소프트웨어 Vulkan(llvmpipe)에서는 컴포지터가 렌더러 초기화 단계에서 `does not support timeline import`로 멈춥니다. 실제 GPU가 필요합니다 |
 
 ## 디스플레이가 없는 머신(클라우드 GPU 등)에서 실행하기

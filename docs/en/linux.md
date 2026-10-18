@@ -31,8 +31,8 @@ app ──▶ vrcompositor ──(shared Vulkan image / dma-buf)──▶ driver
 | v0.2.0 run on SteamVR for Linux 2.17.10 (Arch, KDE Wayland) | ✅ Driver loads, HMD recognized, controller remapping / ❌ Compositor fails to start with `CannotDRMLeaseDisplay` (same with the null driver) → addressed by direct mode in v0.3.0 |
 | v0.3.0 run on SteamVR for Linux 2.17.10 under WSL2 (software Vulkan) | ✅ Driver loads, direct mode, integration test 21/23, the compositor reaches `Headset is using driver direct mode` / ❌ Renderer init fails because llvmpipe cannot import timeline semaphores ([verification.md](../verification.md), Japanese) |
 | v0.3.0 run on SteamVR for Linux 2.17.10 with a real GPU (cloud GPU: NVIDIA RTX 4000 Ada, driver 595, Ubuntu 26.04, built with gcc 15.2, no display + Xvfb) | ✅ All `linux_check.py` checks pass: the compositor creates swap textures (2160×2400 per eye) and **presents at 90 fps**, no `CannotDRMLeaseDisplay`, SteamVR's image in the preview, integration test 28/28 (including skeleton and input). Passed twice in a row |
-| Linux desktop with a real display (KDE / GNOME, with the Steam client) | Unverified (should be the same path; please check with `linux_check.py`) |
-| Windows games through Proton, such as VRChat | Unverified |
+| Desktop-equivalent setup (real NVIDIA X server + Steam client + SteamVR Home enabled) | ✅ `linux_check.py` 14/14. vrmonitor runs, and SteamVR shuts down normally with the driver's shutdown path (`vhmd: shutting down`, about 2 s). Verified on a cloud GPU (RTX 4000 Ada). A GTX 1050 (2 GB, Pascal, driver 580) in a Proxmox VM also scored 14/14, but **5–60 s after start vrcompositor stops rendering with a GPU exception (`Xid 13: 3D WIDTH ZT Violation` → `VK_ERROR_DEVICE_LOST`)**. It reproduces with no clients, no preview and no SteamVR Home; no cause on the driver side was found (the GTX 1050 is below SteamVR's minimum GTX 970 / 1060) |
+| VRChat through Proton (Proton Experimental) | ✅ Starts and renders its VR view (login screen) to both eyes of the virtual HMD. VRChat's Oculus Touch bindings apply to the virtual controllers and the in-game hands follow the poses sent. Anything after logging in (avatars, full-body calibration) is unverified. **Inside a virtual machine VRChat's Easy Anti-Cheat refuses to start with `Cannot run under Virtual Machine`** (it did start on a cloud KVM instance; hiding the VM from detection would be anti-cheat evasion, so it was not done) |
 
 ## Prerequisites
 
@@ -117,6 +117,7 @@ This automates everything from starting SteamVR to shutting it down, and writes 
 | 7 | The preview has advancing frames, and `eyes.png` is saved | ✅ |
 | 8 | The regular integration tests (`run_integration.py`: enumeration, poses, input, skeleton, load) | ✅ |
 | 9 | The driver's shutdown runs when SteamVR quits | ✅ |
+| 10 | The compositor is still presenting before shutdown (after waiting 60 s by default; change with `--hold`) | ✅ |
 
 `--skip-integration` skips 8 (when you only want to check the display path).
 
@@ -130,6 +131,9 @@ This automates everything from starting SteamVR to shutting it down, and writes 
 | You want to use it alongside a real HMD | `"hmd": {"enabled": false}` (adds only controllers / trackers) |
 | On a machine without a display (cloud GPU etc.) SteamVR Home keeps failing and restarting, and Scene apps get `AnotherAppLaunching` | Set `"enableHomeApp": false` under `steamvr` in `steamvr.vrsettings` |
 | "SteamVR shutdown" is SKIP on a machine without a display | vrserver only exits when vrmonitor (the SteamVR window) tells it to, and ignores SIGTERM. Under Xvfb vrmonitor itself crashes at startup, so the test kills SteamVR (the driver's shutdown path does not run). On a desktop it shuts down normally |
+| The first SteamVR start from the Steam client asks for an administrator password and stops | SteamVR setup (`vrsetup.sh`) wants to give the compositor `CAP_SYS_NICE`. Enter the password, or run `sudo setcap CAP_SYS_NICE=eip <SteamVR>/bin/linux64/vrcompositor-launcher` |
+| VRChat says `Cannot run under Virtual Machine` inside a VM | That is VRChat's Easy Anti-Cheat. Run it on Linux on real hardware |
+| Everything passes at first but "compositor still presenting at the end" fails, and `dmesg` shows `NVRM: Xid 13` | The compositor stopped on a GPU exception. Seen on a GTX 1050 (Pascal, driver 580). Try a GPU at or above SteamVR's minimum (GTX 970 / 1060) |
 | VMs, WSL and other setups without a GPU | With software Vulkan (llvmpipe) the compositor stops at renderer init with `does not support timeline import`. A real GPU is required |
 
 ## Running on a machine without a display (cloud GPU etc.)

@@ -276,6 +276,8 @@ TEST(udp_loopback_roundtrip) {
     std::string err;
     CHECK(server.Open("127.0.0.1", 0, err));
     CHECK(client.Open("127.0.0.1", 0, err));
+    // Processes vrserver starts must not inherit the port (it would outlive a crashed vrserver).
+    CHECK(!server.IsInheritable());
     Endpoint to{0x7f000001u, server.LocalPort()};
     CHECK(client.SendTo("hello", to));
     char buf[64];

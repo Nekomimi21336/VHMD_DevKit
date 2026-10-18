@@ -674,7 +674,8 @@ void FrameCapture::Worker() {
                     auto it = images_.find(h);
                     if (it == images_.end() || it->second.fd < 0) continue;
                     if (impl_ && impl_->imported.count(h)) continue;
-                    to_import.push_back({h, dup(it->second.fd), dup(it->second.fd), it->second});
+                    to_import.push_back({h, fcntl(it->second.fd, F_DUPFD_CLOEXEC, 0),
+                                         fcntl(it->second.fd, F_DUPFD_CLOEXEC, 0), it->second});
                 }
             }
         }

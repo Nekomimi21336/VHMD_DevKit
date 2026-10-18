@@ -31,8 +31,8 @@ Linux 版 SteamVR のコンポジタは、Windows のように「デスクトッ
 | v0.2.0 を Linux 版 SteamVR 2.17.10(Arch、KDE Wayland)で実行 | ✅ ドライバのロード、HMD 認識、コントローラのリマップ / ❌ コンポジタが `CannotDRMLeaseDisplay` で起動せず(null ドライバも同様)→ v0.3.0 のダイレクトモードで対応 |
 | v0.3.0 を WSL2 上の Linux 版 SteamVR 2.17.10(ソフトウェア Vulkan)で実行 | ✅ ドライバのロード、ダイレクトモード、統合テスト 21/23、コンポジタが `Headset is using driver direct mode` まで到達 / ❌ llvmpipe がタイムラインセマフォの外部取り込みに非対応でレンダラ初期化が失敗([verification.md](verification.md)) |
 | v0.3.0 を実 GPU の Linux 版 SteamVR 2.17.10 で実行(クラウド GPU: NVIDIA RTX 4000 Ada、ドライバ 595、Ubuntu 26.04、gcc 15.2 でビルド、画面なし + Xvfb) | ✅ `linux_check.py` 全項目合格: コンポジタがスワップテクスチャ(片目 2160×2400)を作り **90 fps で present**、`CannotDRMLeaseDisplay` なし、プレビューに SteamVR の映像、統合テスト 28/28(スケルトン・入力を含む)。2 回連続で合格 |
-| 実ディスプレイのある Linux デスクトップ(KDE / GNOME、Steam クライアントあり) | 未検証(上と同じ経路のはずですが、`linux_check.py` での確認をお願いします) |
-| Proton 経由の VRChat など Windows ゲーム | 未検証 |
+| デスクトップ相当の環境(NVIDIA の実 X サーバー + Steam クライアント + SteamVR Home 有効) | ✅ `linux_check.py` 14/14 合格。vrmonitor が動き、SteamVR の正常終了とドライバの終了処理(`vhmd: shutting down`、約 2 秒)まで確認。クラウド GPU(RTX 4000 Ada)で確認。Proxmox VM の GTX 1050(2 GB、Pascal、ドライバ 580)でも 14/14 になったが、**起動から 5〜60 秒後に vrcompositor が GPU 例外(`Xid 13: 3D WIDTH ZT Violation` → `VK_ERROR_DEVICE_LOST`)で描画を止める**。クライアント・プレビュー・SteamVR Home をすべて無しにしても再現し、ドライバ側の原因は見つかっていない(GTX 1050 は SteamVR の最小要件 GTX 970 / 1060 未満) |
+| Proton 経由の VRChat(Proton Experimental) | ✅ 起動し、仮想 HMD に VR 映像(ログイン画面)を左右とも描画。仮想コントローラーに VRChat の Oculus Touch 用バインディングが適用され、VRChat 内の手が送った姿勢に追従。ログイン後の操作(アバター、フルボディ較正)は未確認。**仮想マシン内では VRChat の Easy Anti-Cheat が `Cannot run under Virtual Machine` で起動を拒否します**(クラウドの KVM では起動した。VM の検出を隠す設定はアンチチート回避になるため行っていません) |
 
 ## 前提
 
@@ -117,6 +117,7 @@ SteamVR の起動から終了までを自動で行い、`tests/integration/resul
 | 7 | プレビューに進んでいくフレームがあり、`eyes.png` を保存 | ✅ |
 | 8 | 通常の統合テスト(`run_integration.py`: 列挙、ポーズ、入力、スケルトン、負荷) | ✅ |
 | 9 | SteamVR 終了時にドライバの終了処理が走る | ✅ |
+| 10 | 終了前(既定で 60 秒待ってから)もコンポジタが present し続けている(`--hold` で秒数を変更) | ✅ |
 
 `--skip-integration` で 8 を省略できます(表示経路だけ確認したいとき)。
 
@@ -130,6 +131,9 @@ SteamVR の起動から終了までを自動で行い、`tests/integration/resul
 | 実 HMD と併用したい | `"hmd": {"enabled": false}`(コントローラ / トラッカーだけ追加) |
 | 画面の無いマシン(クラウド GPU など)で SteamVR Home が起動と失敗を繰り返し、Scene アプリが `AnotherAppLaunching` になる | `steamvr.vrsettings` の `steamvr` に `"enableHomeApp": false` |
 | 画面の無いマシンで「SteamVR shutdown」が SKIP | vrserver は vrmonitor(SteamVR のウィンドウ)からの指示でしか終了せず、SIGTERM も無視します。Xvfb では vrmonitor 自体が起動時に落ちるため、テストは SteamVR を強制終了します(ドライバの終了処理は通りません)。デスクトップでは通常どおり終了します |
+| Steam クライアントで初めて SteamVR を起動すると管理者パスワードを求められ、止まる | SteamVR のセットアップ(`vrsetup.sh`)がコンポジタに `CAP_SYS_NICE` を付けようとしています。パスワードを入力するか、`sudo setcap CAP_SYS_NICE=eip <SteamVR>/bin/linux64/vrcompositor-launcher` |
+| VM 内で VRChat が `Cannot run under Virtual Machine` | VRChat の Easy Anti-Cheat の仕様です。実機の Linux で実行してください |
+| 最初は合格するが「compositor still presenting at the end」が FAIL、`dmesg` に `NVRM: Xid 13` | GPU の例外でコンポジタが止まっています。GTX 1050(Pascal、ドライバ 580)で再現。SteamVR の最小要件(GTX 970 / 1060)以上の GPU で試してください |
 | VM / WSL など GPU の無い環境 | ソフトウェア Vulkan(llvmpipe)ではコンポジタのレンダラ初期化が `does not support timeline import` で止まります。実 GPU が必要です |
 
 ## 画面の無いマシン(クラウド GPU など)で動かす

@@ -29,6 +29,8 @@ public:
     void Close();
     bool IsOpen() const;
     uint16_t LocalPort() const;
+    // True if child processes would inherit the socket (must be false).
+    bool IsInheritable() const;
 
     // Waits up to timeout_ms. Returns bytes received, 0 on timeout, -1 on error.
     int Receive(char* buffer, size_t size, Endpoint& from, int timeout_ms);

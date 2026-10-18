@@ -225,7 +225,7 @@ third_party/            OpenVR SDK(サブモジュール v2.15.6)、nlohmann/jso
 | Linux コンパイラ | gcc 13.3(Ubuntu 24.04 / WSL2)、gcc 15.2(Ubuntu 26.04)、CMake 3.28 / 4.2 |
 | Python | 3.12(3.10 以上)、検証用に pyopenvr 2.12 |
 
-結果の詳細: [docs/verification.md](docs/verification.md)。Linux 版 SteamVR では v0.3.0 のダイレクトモードで、実 GPU(クラウド、画面なし)上でコンポジタが 90 fps で描画し、統合テスト 28/28 に合格しました([docs/linux.md](docs/linux.md))。VRChat 上での動作確認(GUI 操作)、画面のある Linux デスクトップ、Proton 経由のゲームは未検証です。
+結果の詳細: [docs/verification.md](docs/verification.md)。Linux 版 SteamVR では v0.3.0 のダイレクトモードで、実 GPU(NVIDIA RTX 4000 Ada)上でコンポジタが 90 fps で描画し、統合テスト 28/28、Steam クライアントあり・SteamVR Home 有効での正常終了、Proton 経由の VRChat での描画とコントローラ追従まで確認しました。GTX 1050 では SteamVR のコンポジタが起動後しばらくして GPU 例外で停止します([docs/linux.md](docs/linux.md))。VRChat にログインした状態での操作(アバター、フルボディ較正)と、実 HMD との併用は未検証です。
 
 ## ライセンス
 
