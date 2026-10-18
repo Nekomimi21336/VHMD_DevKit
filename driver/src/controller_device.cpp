@@ -148,7 +148,7 @@ void ControllerDevice::OnActivate(vr::PropertyContainerHandle_t c) {
     auto* in = vr::VRDriverInput();
     const char* model = hand_twin_ ? (left_ ? "VHMD Virtual Hand (Left)" : "VHMD Virtual Hand (Right)")
                                    : (left_ ? "VHMD Virtual Controller (Left)" : "VHMD Virtual Controller (Right)");
-    SetCommonProperties(c, model, "generic_controller");
+    SetCommonProperties(c, model, "{vhmd}vhmd_controller"); // has "tip"/"handgrip" components (tools/gen_rendermodel.py)
     SetIcons(c, "controller");
     p->SetInt32Property(c, vr::Prop_ControllerRoleHint_Int32,
                         left_ ? vr::TrackedControllerRole_LeftHand : vr::TrackedControllerRole_RightHand);

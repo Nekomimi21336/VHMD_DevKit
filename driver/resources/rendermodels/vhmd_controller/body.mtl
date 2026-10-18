@@ -1,0 +1,4 @@
+newmtl body
+Ka 1 1 1
+Kd 1 1 1
+map_Kd body.png

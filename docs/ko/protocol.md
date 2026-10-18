@@ -102,7 +102,7 @@
 - `bones`: OpenVR 핸드 스켈레톤(31개 본, `HandSkeletonBone` 순서)의 **부모 본 공간** 회전. `[w,x,y,z,px,py,pz]`로 위치를 함께 지정하거나, `positions`를 별도로 전달할 수 있습니다(생략 시 펼친 손의 참조 위치).
 - 마지막 `skeleton` 이후 500 ms 이상 아무것도 오지 않는 동안에는 `trigger`/`grip`/버튼의 터치 상태로부터 손가락 굽힘을 자동 생성합니다.
 - SteamVR에는 `WithController` / `WithoutController` 두 모션 레인지 모두에 같은 값을 보냅니다.
-- 컨트롤러와 핸드 트래킹을 **SteamVR을 멈추지 않고 전환**할 수 있습니다(`config`의 `hand_mode`). `controllers`(기본)는 실제 컨트롤러와 같은 취급이며 스켈레톤은 Partial(SteamVR이 손가락 본을 정리)입니다. `hands`에서는 손마다 별도의 디바이스(`VHMD-HAND-L/R`, 스켈레톤은 Full로 보낸 본을 그대로 반영)로 교체되며, VRChat 등은 핸드 트래킹으로 취급합니다(버튼으로 메뉴 조작은 비활성화되고 제스처 조작이 됩니다). 두 모드 모두 ID는 `left_hand` / `right_hand` 그대로이므로 보내는 내용을 바꿀 필요가 없습니다. 핸드 디바이스는 처음 `hands`로 전환할 때 추가됩니다.
+- 컨트롤러와 핸드 트래킹을 **SteamVR을 멈추지 않고 전환**할 수 있습니다(`config`의 `hand_mode`). `controllers`(기본)는 실제 컨트롤러와 같은 취급이며 스켈레톤은 Partial(SteamVR이 손가락 본을 정리)입니다. `hands`에서는 손마다 별도의 디바이스(`VHMD-HAND-L/R`, 스켈레톤은 Full로 보낸 본을 그대로 반영)로 교체되며, VRChat 등은 핸드 트래킹으로 취급합니다(버튼으로 메뉴 조작은 비활성화되고 제스처 조작이 됩니다). 두 모드 모두 ID는 `left_hand` / `right_hand` 그대로이므로 보내는 내용을 바꿀 필요가 없습니다. 핸드 디바이스는 처음 `hands`로 전환할 때 추가됩니다. **VRChat에서는 컨트롤러 모드에서 메뉴 버튼을 클릭할 수 없으므로(VRChat이 독자적인 컨트롤러 타입을 범용으로 취급. Windows / Linux 공통) 메뉴 조작과 풀바디 보정은 `hands`로 전환해 손바닥 레이저 + 트리거로 해 주십시오.**
 
 ### `gaze`(HMD의 시선)
 
