@@ -35,6 +35,10 @@ struct RouterHooks {
     std::function<std::string(const std::string& mode)> set_hand_mode;
     // Current hand mode ("controllers" / "hands"), for status.
     std::function<std::string()> hand_mode;
+    // Starts / pauses the direct-mode preview. Returns an error string (empty = success).
+    std::function<std::string(bool on)> set_preview;
+    // JSON object with the driver's own CPU use ("perf" in status).
+    std::function<std::string()> perf_status;
 };
 
 class MessageRouter {

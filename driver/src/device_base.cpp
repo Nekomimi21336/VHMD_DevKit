@@ -10,6 +10,19 @@ namespace vhmd {
 
 namespace {
 constexpr auto kPublishDelayAfterActivate = std::chrono::milliseconds(100);
+// A pose that has not changed (and has no velocity) is re-sent at this rate
+// instead of every tick; an inactive device reports itself at the slower one.
+constexpr auto kUnchangedPoseRefresh = std::chrono::milliseconds(250);
+constexpr auto kInactiveRefresh = std::chrono::seconds(1);
+
+bool SamePose(const vr::DriverPose_t& a, const vr::DriverPose_t& b) {
+    for (int i = 0; i < 3; ++i) {
+        if (a.vecPosition[i] != b.vecPosition[i] || a.vecVelocity[i] != 0.0 || a.vecAngularVelocity[i] != 0.0) return false;
+    }
+    return a.qRotation.w == b.qRotation.w && a.qRotation.x == b.qRotation.x && a.qRotation.y == b.qRotation.y &&
+           a.qRotation.z == b.qRotation.z && a.poseIsValid == b.poseIsValid && a.deviceIsConnected == b.deviceIsConnected &&
+           a.result == b.result;
+}
 } // namespace
 
 vr::DriverPose_t MakeDriverPose(const OutputPose& out, bool head_model) {
@@ -104,14 +117,26 @@ void VirtualDevice::Publish(Clock::time_point now, const Frame& f) {
     // returns; pose updates sent in that window are rejected with
     // "PoseUpdated ... owned by driver (-1)". Give it a moment.
     if (now - activated_at_ < kPublishDelayAfterActivate) return;
+    const bool active = active_;
+    const bool switched = active != published_active_;
+    published_active_ = active;
     OutputPose out = f.out;
-    if (!active_) {
+    if (!active) {
         out.connected = false;
         out.pose_valid = false;
     }
-    last_pose_ = MakeDriverPose(out, ApplyHeadModel());
-    vr::VRServerDriverHost()->TrackedDevicePoseUpdated(index_, last_pose_, sizeof(vr::DriverPose_t));
+    const vr::DriverPose_t pose = MakeDriverPose(out, ApplyHeadModel());
+    const auto refresh = active ? kUnchangedPoseRefresh : kInactiveRefresh;
+    if (switched || now - last_publish_ >= refresh || !SamePose(pose, last_pose_)) {
+        last_pose_ = pose;
+        last_publish_ = now;
+        vr::VRServerDriverHost()->TrackedDevicePoseUpdated(index_, last_pose_, sizeof(vr::DriverPose_t));
+    }
+    // Inputs are applied even while inactive so the device is current when it
+    // becomes active; skeleton and per-tick work are skipped until then.
     for (const auto& [name, value] : f.inputs) OnInput(name, value);
+    if (!active) return;
+    if (switched) OnBecameActive();
     if (f.skeleton) OnSkeleton(*f.skeleton);
     if (f.gaze) OnGaze(*f.gaze);
     OnTick(now);

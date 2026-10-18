@@ -29,7 +29,8 @@
     "path": "/dev/shm/vhmd_preview",
     "fps": 15,
     "maxEyeWidth": 960,
-    "vulkanDevice": -1      // Vulkan physical device index; -1 = first (must be the GPU SteamVR uses)
+    "vulkanDevice": -1,     // Vulkan physical device index; -1 = first (must be the GPU SteamVR uses)
+    "autoStart": false      // false = capture only while a tool asks ({"op":"preview","mode":"on"}; preview_viewer.py does)
   },
   "vmt": {
     "enabled": false,      // accept VMT compatible OSC on the same port

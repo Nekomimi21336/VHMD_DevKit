@@ -25,6 +25,8 @@ public:
 
     // Safe to call from any thread while running.
     bool SendTo(std::string_view data, const Endpoint& to) { return socket_.SendTo(data, to); }
+    // CPU seconds used by the receive thread so far (sampled after each packet / timeout).
+    double CpuSeconds() const { return cpu_seconds_; }
 
 private:
     void Loop();
@@ -33,6 +35,7 @@ private:
     Handler handler_;
     std::thread thread_;
     std::atomic<bool> running_{false};
+    std::atomic<double> cpu_seconds_{0.0};
 };
 
 } // namespace vhmd

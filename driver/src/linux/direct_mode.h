@@ -59,6 +59,7 @@ public:
     void GetFrameTiming(vr::DriverDirectMode_FrameTiming* timing) override;
 
     DirectModeStats Stats() const;
+    void SetPreviewActive(bool active) { capture_->SetActive(active); }
 
 private:
     struct SwapSet {

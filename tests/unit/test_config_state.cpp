@@ -134,6 +134,26 @@ TEST(router_hand_mode_op) {
     CHECK(status["hand_mode"] == "hands");
 }
 
+TEST(config_preview_auto_start_and_op) {
+    CHECK(!DefaultConfig().preview.auto_start);
+    CHECK(LoadConfigFromJson(R"({"preview":{"autoStart":true}})").config.preview.auto_start);
+    DriverConfig cfg = DefaultConfig();
+    std::vector<std::shared_ptr<DeviceState>> states;
+    for (const auto& d : cfg.devices) states.push_back(std::make_shared<DeviceState>(d, cfg));
+    bool on = false;
+    RouterHooks hooks;
+    hooks.set_preview = [&](bool v) -> std::string { on = v; return ""; };
+    MessageRouter router(cfg, states, hooks);
+    const auto now = Clock::now();
+    auto r = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"preview","mode":"on"})", now));
+    CHECK(r["ok"] == true && on);
+    auto bad = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"preview","mode":"maybe"})", now));
+    CHECK(bad["ok"] == false && on);
+    MessageRouter none(cfg, states);
+    auto na = nlohmann::json::parse(*none.HandleDatagram(R"({"type":"config","op":"preview","mode":"on"})", now));
+    CHECK(na["ok"] == false);
+}
+
 TEST(config_shipped_file_parses_cleanly) {
     std::ifstream f(VHMD_SOURCE_DIR "/driver/resources/settings/vhmd_config.json");
     CHECK(f.good());

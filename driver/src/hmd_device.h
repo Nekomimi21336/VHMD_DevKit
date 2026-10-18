@@ -57,6 +57,8 @@ public:
     bool DirectMode() const;
     // JSON object describing the display path (for config op "list").
     std::string DisplayStatusJson() const;
+    // Starts / pauses the shared-memory preview (direct mode only). Returns false if unavailable.
+    bool SetPreviewActive(bool active);
 
 protected:
     void OnActivate(vr::PropertyContainerHandle_t container) override;

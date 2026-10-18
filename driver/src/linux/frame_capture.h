@@ -24,6 +24,7 @@ struct CaptureSettings {
     double fps = 15.0;            // capture rate cap
     uint32_t max_eye_width = 960; // downscale each eye to at most this width
     int vulkan_device = -1;       // physical device index, -1 = first
+    bool start_active = false;    // capture right away (else only after SetActive(true))
 };
 
 struct CaptureEye {
@@ -52,6 +53,9 @@ public:
     void Submit(const CaptureEye& left, const CaptureEye& right);
 
     CaptureStats Stats() const;
+    // Starts / pauses capturing. While paused nothing is copied (no GPU work,
+    // no shared-memory writes); Vulkan is only initialised on first use.
+    void SetActive(bool active);
 
 private:
     struct Impl;
@@ -62,6 +66,7 @@ private:
 
     mutable std::mutex mu_;
     std::condition_variable cv_;
+    bool requested_ = false; // guarded by mu_
     struct ImageInfo {
         int fd = -1;
         uint32_t width = 0, height = 0, format = 0;

@@ -43,6 +43,7 @@ protected:
     void OnInput(const std::string& name, float value) override;
     void OnSkeleton(const SkeletonMessage& m) override;
     void OnTick(Clock::time_point now) override;
+    void OnBecameActive() override { derived_pushed_at_.reset(); }
 
 private:
     struct Component {
@@ -66,6 +67,9 @@ private:
     vr::VRInputComponentHandle_t haptic_ = vr::k_ulInvalidInputComponentHandle;
     vr::VRInputComponentHandle_t skeleton_ = vr::k_ulInvalidInputComponentHandle;
     std::optional<Clock::time_point> last_explicit_skeleton_;
+    // Hand pose derived from buttons: recomputed only when the curls change.
+    std::array<float, 5> derived_curl_{};
+    std::optional<Clock::time_point> derived_pushed_at_;
     std::array<vr::VRBoneTransform_t, 31> reference_bones_{}; // open hand
 };
 

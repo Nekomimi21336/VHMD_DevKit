@@ -49,6 +49,8 @@ struct PreviewConfig {
     double fps = 15.0;
     uint32_t max_eye_width = 960;
     int vulkan_device = -1;
+    // Capture only while a tool asks for it (config op "preview"), unless set.
+    bool auto_start = false;
 };
 
 struct DriverConfig {

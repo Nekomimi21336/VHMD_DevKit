@@ -251,6 +251,7 @@ static bool DeviceCanImport(uint32_t index) {
     CaptureSettings cs;
     cs.path = "/tmp/vhmd_capture_probe";
     cs.fps = 60;
+    cs.start_active = true;
     cs.vulkan_device = static_cast<int>(index);
     FrameCapture cap(cs);
     cap.RegisterImage(1, fd_l, 16, 16, VK_FORMAT_R8G8B8A8_UNORM);
@@ -298,6 +299,7 @@ int main() {
         CaptureSettings cs;
         cs.path = path;
         cs.fps = 60;
+        cs.start_active = true;
         cs.max_eye_width = 32; // forces a 2x downscale
         cs.vulkan_device = static_cast<int>(device);
         FrameCapture cap(cs);
@@ -344,6 +346,17 @@ int main() {
         cap.Submit(l, r);
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         EXPECT(cap.Stats().state == "running");
+
+        // Paused: submits are ignored, nothing more is written.
+        cap.SetActive(false);
+        const uint64_t written = cap.Stats().written;
+        for (int i = 0; i < 5; ++i) {
+            cap.Submit(l, r);
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        EXPECT(cap.Stats().state == "paused");
+        EXPECT(cap.Stats().written == written);
+        cap.SetActive(true);
 
         cap.ForgetImage(1001); // compositor destroyed the set
         cap.Submit(l, r);      // unknown handle now: must be ignored, not crash

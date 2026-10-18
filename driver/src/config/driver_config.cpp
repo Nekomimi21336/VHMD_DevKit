@@ -189,6 +189,7 @@ ConfigLoadResult LoadConfigFromJson(std::string_view text) {
             Get(*p, "maxEyeWidth", max_w, w, "preview.");
             c.preview.max_eye_width = static_cast<uint32_t>(std::clamp(max_w, 16, 8192));
             Get(*p, "vulkanDevice", c.preview.vulkan_device, w, "preview.");
+            Get(*p, "autoStart", c.preview.auto_start, w, "preview.");
         }
         if (auto t = root.find("timeout"); t != root.end() && t->is_object()) {
             Get(*t, "ms", c.timeout_ms, w, "timeout.");

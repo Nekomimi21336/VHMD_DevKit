@@ -588,7 +588,8 @@ struct FrameCapture::Impl {
 };
 
 FrameCapture::FrameCapture(const CaptureSettings& settings) : settings_(settings) {
-    stats_.state = settings_.enabled ? "waiting for first frame" : "disabled";
+    requested_ = settings_.start_active;
+    stats_.state = !settings_.enabled ? "disabled" : requested_ ? "waiting for first frame" : "paused";
     if (settings_.enabled) thread_ = std::thread(&FrameCapture::Worker, this);
 }
 
@@ -625,10 +626,24 @@ void FrameCapture::ForgetImage(vr::SharedTextureHandle_t handle) {
     forgotten_[handle] = true;
 }
 
+void FrameCapture::SetActive(bool active) {
+    if (!settings_.enabled) return;
+    std::lock_guard<std::mutex> lock(mu_);
+    requested_ = active;
+    if (!active) {
+        pending_ = false;
+        stats_.active = false;
+        if (stats_.state.rfind("error", 0) != 0) stats_.state = "paused";
+    } else if (stats_.state == "paused") {
+        stats_.state = "waiting for first frame";
+    }
+}
+
 void FrameCapture::Submit(const CaptureEye& left, const CaptureEye& right) {
     if (!settings_.enabled) return;
     {
         std::lock_guard<std::mutex> lock(mu_);
+        if (!requested_) return;
         job_left_ = left;
         job_right_ = right;
         pending_ = true;
@@ -709,7 +724,7 @@ void FrameCapture::Worker() {
             if (failed) {
                 stats_.active = false;
                 stats_.state = "error: " + err;
-            } else if (impl_ && impl_->frame_index > 0) {
+            } else if (impl_ && impl_->frame_index > 0 && requested_) {
                 stats_.active = true;
                 stats_.written = impl_->frame_index;
                 stats_.state = "running";

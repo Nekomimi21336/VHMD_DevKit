@@ -188,6 +188,13 @@ class VHMDClient:
     def set_role(self, tracker_id: str, role: str) -> Dict[str, Any]:
         return self.request("set_role", id=tracker_id, role=role)
 
+    def preview(self, on: bool = True) -> None:
+        """Start (or pause) the Linux direct-mode preview in shared memory. The
+        driver only captures frames while a tool has asked for them."""
+        r = self.request("preview", mode="on" if on else "off")
+        if not r.get("ok"):
+            raise ValueError(r.get("error", "preview failed"))
+
     def hand_mode(self, mode: str = "") -> str:
         """Switch both hands between "controllers" and "hands" (hand tracking)
         while SteamVR runs, or return the current mode when called without

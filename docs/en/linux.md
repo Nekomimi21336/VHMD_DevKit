@@ -92,6 +92,7 @@ To read it from your own tools, use `vhmd_client.preview.PreviewReader` (format:
 | `fps` | `15` | Maximum write rate (independent of the compositor's rendering rate) |
 | `maxEyeWidth` | `960` | Maximum width per eye (frames are downscaled before writing) |
 | `vulkanDevice` | `-1` | Index of the GPU to use. `-1` means the first GPU. **It must be the same GPU SteamVR uses** (change it if no frames arrive on a multi-GPU PC) |
+| `autoStart` | `false` | Write from start-up. With `false` frames are written only after a tool sends `{"type":"config","op":"preview","mode":"on"}` (`preview_viewer.py` does this itself) |
 
 If preview processing fails, the preview is simply disabled; rendering to SteamVR is not affected.
 

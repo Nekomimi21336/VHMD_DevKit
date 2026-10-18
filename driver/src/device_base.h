@@ -66,6 +66,8 @@ protected:
     virtual void OnGaze(const GazeMessage& /*m*/) {}
     // Called every tick after inputs were applied (e.g. skeleton refresh).
     virtual void OnTick(Clock::time_point /*now*/) {}
+    // Called when SetActive() switched this device on (refresh derived state).
+    virtual void OnBecameActive() {}
     virtual bool ApplyHeadModel() const { return false; }
 
     void SetCommonProperties(vr::PropertyContainerHandle_t container, const char* model, const char* render_model);
@@ -100,6 +102,8 @@ private:
     uint32_t index_ = vr::k_unTrackedDeviceIndexInvalid;
     Clock::time_point activated_at_{};
     vr::DriverPose_t last_pose_{};
+    Clock::time_point last_publish_{};
+    bool published_active_ = true;
 };
 
 // Helpers shared by device implementations.

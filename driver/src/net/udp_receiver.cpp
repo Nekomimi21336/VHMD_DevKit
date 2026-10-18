@@ -1,5 +1,7 @@
 #include "net/udp_receiver.h"
 
+#include "util/thread_cpu.h"
+
 #include <vector>
 
 namespace vhmd {
@@ -26,6 +28,7 @@ void UdpReceiver::Loop() {
     while (running_) {
         Endpoint from;
         const int n = socket_.Receive(buffer.data(), buffer.size(), from, 100);
+        cpu_seconds_ = CurrentThreadCpuSeconds();
         if (n <= 0) continue; // timeout or transient error
         try {
             handler_(std::string_view(buffer.data(), static_cast<size_t>(n)), from);

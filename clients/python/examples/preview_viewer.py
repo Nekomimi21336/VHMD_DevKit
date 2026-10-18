@@ -14,6 +14,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from vhmd_client import VHMDClient  # noqa: E402
 from vhmd_client.preview import DEFAULT_PATH, PreviewReader  # noqa: E402
 
 
@@ -81,11 +82,24 @@ def main() -> int:
     ap.add_argument("--max-width", type=int, default=1600, help="downscale the window to at most this width")
     ap.add_argument("--snapshot", metavar="PNG", help="save one frame to PNG and exit")
     ap.add_argument("--wait", type=float, default=10.0, help="seconds to wait for a frame with --snapshot")
+    ap.add_argument("--port", type=int, default=39570, help="driver UDP port (to start / pause the capture)")
     args = ap.parse_args()
-    with PreviewReader(args.path) as reader:
-        if args.snapshot:
-            return snapshot(reader, args.snapshot, args.eye, args.wait)
-        return live(reader, args.eye, args.max_width)
+    # The driver only captures while asked to; pause it again when done.
+    client = VHMDClient(port=args.port, timeout=1.0)
+    try:
+        client.preview(True)
+    except (TimeoutError, OSError, ValueError) as e:
+        print(f"could not start the preview capture ({e}); showing whatever is in {args.path}")
+    try:
+        with PreviewReader(args.path) as reader:
+            if args.snapshot:
+                return snapshot(reader, args.snapshot, args.eye, args.wait)
+            return live(reader, args.eye, args.max_width)
+    finally:
+        try:
+            client.preview(False)
+        except (TimeoutError, OSError, ValueError):
+            pass
 
 
 if __name__ == "__main__":

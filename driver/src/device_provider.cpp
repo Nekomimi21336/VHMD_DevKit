@@ -11,6 +11,7 @@
 #include "tracker_device.h"
 #include "util/log.h"
 #include "util/precise_sleep.h"
+#include "util/thread_cpu.h"
 
 namespace vhmd {
 namespace {
@@ -67,6 +68,18 @@ vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* driver_context) {
     hooks.device_index = [this](const std::string& id) { return DeviceIndexFor(id); };
     hooks.set_role = [this](const std::string& id, const RoleInfo& role) { return SetRole(id, role); };
     hooks.request_add = [this](const std::string& id) { RequestAdd(id); };
+    hooks.set_preview = [this](bool on) -> std::string {
+        if (!hmd_ || !hmd_->SetPreviewActive(on)) return "preview is only available in direct mode (Linux)";
+        Log(LogLevel::Info, "preview %s", on ? "started" : "paused");
+        return "";
+    };
+    hooks.perf_status = [this]() {
+        nlohmann::json j = {{"update_thread_cpu_pct", perf_.update_cpu_pct.load()},
+                            {"receive_thread_cpu_pct", perf_.receive_cpu_pct.load()},
+                            {"update_tick_us_avg", perf_.tick_avg_us.load()},
+                            {"update_tick_us_max", perf_.tick_max_us.load()}};
+        return j.dump();
+    };
     hooks.set_hand_mode = [this](const std::string& mode) { return SetHandMode(mode); };
     hooks.hand_mode = [this]() {
         std::lock_guard<std::mutex> lock(hand_mode_mu_);
@@ -200,6 +213,11 @@ void DeviceProvider::UpdateLoop() {
     RateLimiter jitter_limiter(1.0 / 30.0, 1.0); // at most one warning per 30 s
     double worst_late_ms = 0.0;
     uint64_t late_ticks = 0;
+    // Load accounting (reported in status as "perf").
+    auto perf_since = Clock::now();
+    double perf_cpu0 = CurrentThreadCpuSeconds(), perf_recv0 = receiver_.CpuSeconds();
+    double work_sum_us = 0.0, work_max_us = 0.0;
+    uint64_t work_ticks = 0;
 
     while (running_) {
         const auto now = Clock::now();
@@ -215,8 +233,25 @@ void DeviceProvider::UpdateLoop() {
                 worst_late_ms = 0.0;
             }
         }
+        const auto work0 = Clock::now();
         for (auto& d : devices_) {
             if (!d->IsFollower()) d->Update(now); // followers are updated by their leader
+        }
+        const double work_us = duration<double, std::micro>(Clock::now() - work0).count();
+        work_sum_us += work_us;
+        work_max_us = std::max(work_max_us, work_us);
+        ++work_ticks;
+        if (const double wall = duration<double>(Clock::now() - perf_since).count(); wall >= 1.0) {
+            const double cpu = CurrentThreadCpuSeconds(), recv = receiver_.CpuSeconds();
+            perf_.update_cpu_pct = 100.0 * (cpu - perf_cpu0) / wall;
+            perf_.receive_cpu_pct = 100.0 * (recv - perf_recv0) / wall;
+            perf_.tick_avg_us = work_sum_us / static_cast<double>(work_ticks);
+            perf_.tick_max_us = work_max_us;
+            perf_since = Clock::now();
+            perf_cpu0 = cpu;
+            perf_recv0 = recv;
+            work_sum_us = work_max_us = 0.0;
+            work_ticks = 0;
         }
 
         next += period;

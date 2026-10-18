@@ -102,6 +102,7 @@ HmdDevice::HmdDevice(std::shared_ptr<DeviceState> state, const DisplayConfig& di
         cs.fps = preview.fps;
         cs.max_eye_width = preview.max_eye_width;
         cs.vulkan_device = preview.vulkan_device;
+        cs.start_active = preview.auto_start;
         direct_ = std::make_unique<DirectModeComponent>(display.display_frequency, cs);
     }
 #else
@@ -113,6 +114,17 @@ HmdDevice::HmdDevice(std::shared_ptr<DeviceState> state, const DisplayConfig& di
 HmdDevice::~HmdDevice() = default;
 
 bool HmdDevice::DirectMode() const { return direct_ != nullptr; }
+
+bool HmdDevice::SetPreviewActive(bool active) {
+#if defined(__linux__)
+    if (direct_) {
+        direct_->SetPreviewActive(active);
+        return true;
+    }
+#endif
+    (void)active;
+    return false;
+}
 
 std::string HmdDevice::DisplayStatusJson() const {
     nlohmann::json j;

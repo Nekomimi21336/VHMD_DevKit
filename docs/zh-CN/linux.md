@@ -92,6 +92,7 @@ python3 clients/python/examples/preview_viewer.py --snapshot eyes.png
 | `fps` | `15` | 写入的速率上限(与合成器的渲染速率无关) |
 | `maxEyeWidth` | `960` | 单眼的最大宽度(缩小后写入) |
 | `vulkanDevice` | `-1` | 所用 GPU 的编号。`-1` 表示第一个 GPU。**必须选择与 SteamVR 相同的 GPU**(在多 GPU 的 PC 上收不到画面时修改) |
+| `autoStart` | `false` | 是否在启动后立即写出。为 `false` 时，仅在工具发送 `{"type":"config","op":"preview","mode":"on"}` 后写出(`preview_viewer.py` 会自动发送) |
 
 预览处理即使失败也只会被禁用，不会影响 SteamVR 的渲染。
 

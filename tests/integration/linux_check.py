@@ -206,7 +206,13 @@ def main() -> int:
     rep.add("vhmd warnings/errors in vrserver.txt", "INFO" if not errors else "WARN",
             f"{len(errors)} lines" + (f", first: {errors[0][:160]}" if errors else ""))
 
-    # Preview
+    # Preview (the driver captures only while asked to)
+    try:
+        client.preview(True)
+        time.sleep(1.0)
+        disp = client.status().get("display", {})
+    except (TimeoutError, OSError, ValueError) as e:
+        rep.add("preview start", "WARN", str(e))
     pv = disp.get("preview", {})
     rep.add("preview state (driver)", "INFO", f"{pv}")
     frame = None
@@ -230,6 +236,13 @@ def main() -> int:
                   f"mean RGB ({r:.0f},{g:.0f},{b:.0f}) -> {png.name}")
     else:
         rep.check("preview frames in shared memory", False, f"no advancing frames at {args.preview_path}")
+    try:
+        client.preview(False)
+        time.sleep(1.0)
+        paused = client.status().get("display", {}).get("preview", {}).get("state") == "paused"
+        rep.check("preview pauses when asked (no capture work while nobody watches)", paused)
+    except (TimeoutError, OSError, ValueError) as e:
+        rep.add("preview pause", "WARN", str(e))
 
     # Regular integration test (enumeration, poses, inputs, skeleton, load)
     if args.skip_integration or not up:

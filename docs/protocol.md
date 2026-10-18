@@ -131,6 +131,8 @@
 | `reset` | `id`(省略時全台) | 設定ファイルの既定ポーズに戻す |
 | `add` | `id`(省略時はオンデマンド全台) | オンデマンドのデバイスを今すぐ SteamVR に追加(次のフレームで反映)。`{"ok":true,"ids":[...]}` |
 | `hand_mode` | `mode`(`controllers` / `hands`、省略時は現在のモードを返すだけ) | 左右の手をコントローラー / ハンドトラッキングで切り替え(SteamVR は止まりません)。`{"ok":true,"mode":"hands"}`。`status` にも `hand_mode` が入ります |
+| `preview` | `mode`(`on` / `off`) | Linux のダイレクトモードで、プレビュー(共有メモリへの映像書き出し)を開始 / 停止。既定では止まっていて、見る人がいないときは GPU のコピーも書き込みもしません(`preview_viewer.py` と `linux_check.py` は自動で開始・停止) |
+| (`status` の `perf`) | | ドライバ自身の負荷: `update_thread_cpu_pct`、`receive_thread_cpu_pct`(1 コア比の %、1 秒ごとに更新)、`update_tick_us_avg` / `update_tick_us_max`(更新 1 回の処理時間) |
 
 `status` の `display`: `mode`(`window` / `direct`)、`width`、`height`、`refresh_hz`。ダイレクトモード(Linux)では加えて `swap_sets_created`、`swap_sets_alive`、`layers_submitted`、`presents`、`vsyncs`、`eye_texture`(`width`、`height`、`vk_format`)、`preview`(`state`、`submitted`、`written`、`active`)。
 

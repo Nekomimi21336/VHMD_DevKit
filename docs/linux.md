@@ -92,6 +92,7 @@ python3 clients/python/examples/preview_viewer.py --snapshot eyes.png
 | `fps` | `15` | 書き出しの上限レート(コンポジタの描画レートとは無関係) |
 | `maxEyeWidth` | `960` | 片目あたりの最大幅(縮小して書き出す) |
 | `vulkanDevice` | `-1` | 使う GPU の番号。`-1` は最初の GPU。**SteamVR と同じ GPU を選ぶ必要があります**(複数 GPU の PC で映像が来ない場合に変更) |
+| `autoStart` | `false` | 起動直後から書き出すか。`false` では、ツールが `{"type":"config","op":"preview","mode":"on"}` を送ったときだけ書き出します(`preview_viewer.py` は自動で送ります) |
 
 プレビューの処理で失敗しても無効になるだけで、SteamVR への描画には影響しません。
 

@@ -92,6 +92,7 @@ python3 clients/python/examples/preview_viewer.py --snapshot eyes.png
 | `fps` | `15` | 내보내기의 상한 레이트(컴포지터의 렌더링 레이트와는 무관) |
 | `maxEyeWidth` | `960` | 한쪽 눈당 최대 폭(축소해서 내보냄) |
 | `vulkanDevice` | `-1` | 사용할 GPU 번호. `-1`은 첫 번째 GPU. **SteamVR과 같은 GPU를 선택해야 합니다**(GPU가 여러 개인 PC에서 영상이 오지 않을 때 변경) |
+| `autoStart` | `false` | 시작 직후부터 출력할지 여부. `false`이면 도구가 `{"type":"config","op":"preview","mode":"on"}`를 보냈을 때만 출력(`preview_viewer.py`는 자동으로 보냄) |
 
 프리뷰 처리에서 실패해도 프리뷰가 비활성화될 뿐이며, SteamVR의 렌더링에는 영향을 주지 않습니다.
 

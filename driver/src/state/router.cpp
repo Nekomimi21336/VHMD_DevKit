@@ -113,6 +113,10 @@ std::string MessageRouter::StatusJson(Clock::time_point now, std::optional<doubl
     j["timeout_policy"] = ToString(config_.timeout_policy);
     j["vmt_enabled"] = config_.vmt_enabled;
     j["hand_mode"] = hooks_.hand_mode ? hooks_.hand_mode() : config_.hand_mode;
+    if (hooks_.perf_status) {
+        auto perf = json::parse(hooks_.perf_status(), nullptr, false);
+        if (!perf.is_discarded()) j["perf"] = std::move(perf);
+    }
     j["packets"] = {{"total", total_packets_.load()}, {"rejected", rejected_.load()}};
     json devs = json::array();
     for (const auto& d : devices_) {
@@ -197,6 +201,15 @@ std::optional<std::string> MessageRouter::HandleConfig(const ConfigMessage& m, C
             r["ok"] = err.empty();
             if (!err.empty()) r["error"] = err;
             r["role"] = role->steamvr_role;
+        }
+    } else if (m.op == "preview") {
+        if (m.mode != "on" && m.mode != "off") {
+            r["ok"] = false;
+            r["error"] = "mode must be \"on\" or \"off\"";
+        } else {
+            const std::string err = hooks_.set_preview ? hooks_.set_preview(m.mode == "on") : "preview not available";
+            r["ok"] = err.empty();
+            if (!err.empty()) r["error"] = err;
         }
     } else if (m.op == "hand_mode") {
         if (!hooks_.set_hand_mode) {

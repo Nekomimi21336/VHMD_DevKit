@@ -267,6 +267,7 @@ void ControllerDevice::UpdateSkeletonFromCurls(const std::array<float, 5>& curl,
 void ControllerDevice::OnSkeleton(const SkeletonMessage& m) {
     if (skeleton_ == vr::k_ulInvalidInputComponentHandle) return;
     last_explicit_skeleton_ = Clock::now();
+    derived_pushed_at_.reset(); // re-derive as soon as explicit data stops
     if (m.rotations.size() == 31) {
         std::array<vr::VRBoneTransform_t, 31> bones = reference_bones_;
         for (size_t i = 0; i < 31; ++i) {
@@ -298,7 +299,12 @@ void ControllerDevice::OnTick(Clock::time_point now) {
                             0.0f;
     const float index = std::max(v("trigger"), v("trigger_touch") * 0.25f);
     const float grip = v("grip");
-    UpdateSkeletonFromCurls({thumb_down ? 0.7f : 0.0f, index, grip, grip, grip}, {});
+    const std::array<float, 5> curl{thumb_down ? 0.7f : 0.0f, index, grip, grip, grip};
+    // Unchanged: SteamVR keeps the last skeleton; re-send only once a second.
+    if (derived_pushed_at_ && curl == derived_curl_ && now - *derived_pushed_at_ < std::chrono::seconds(1)) return;
+    derived_curl_ = curl;
+    derived_pushed_at_ = now;
+    UpdateSkeletonFromCurls(curl, {});
 }
 
 std::optional<HapticEvent> ControllerDevice::MatchHaptic(const vr::VREvent_t& event) const {

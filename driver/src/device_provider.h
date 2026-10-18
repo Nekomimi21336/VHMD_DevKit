@@ -67,6 +67,11 @@ private:
     std::set<std::string> pending_adds_;
     std::set<std::string> registered_;
 
+    // Self-measured load, refreshed once per second by the update thread.
+    struct Perf {
+        std::atomic<double> update_cpu_pct{0}, receive_cpu_pct{0}, tick_avg_us{0}, tick_max_us{0};
+    } perf_;
+
     std::thread update_thread_;
     std::atomic<bool> running_{false};
 };
