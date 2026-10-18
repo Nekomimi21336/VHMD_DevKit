@@ -1,3 +1,5 @@
+**日本語** | [English](en/linux.md) | [简体中文](zh-CN/linux.md) | [한국어](ko/linux.md) — [README に戻る](../README.md)
+
 # Linux 版 SteamVR での使い方
 
 Linux ネイティブの SteamVR に `driver_vhmd.so` を読み込ませる手順です。Proton で動く Windows ゲーム(VRChat 等)も Linux 版 SteamVR に接続するので、このドライバが必要になります。送信側のプロトコル・Python クライアントは Windows と共通です。
@@ -75,7 +77,7 @@ HMD は `IVRDisplayComponent` で「デスクトップ上のウィンドウ」�
 | L1 | `tools/verify_env.sh` | SteamVR のパス、glibc ≥ `driver_needs_glibc` | 未検証 |
 | L2 | `tools/install_driver.sh` → SteamVR 起動 | `vrserver.txt` に `Loaded server driver vhmd` と `vhmd: listening on udp://127.0.0.1:39570` | 未検証 |
 | L3 | 同ログ | `Active HMD set to vhmd.VHMD-HMD-0`(実 HMD 未接続時)。コンポジタが起動するか(上記リスク) | 未検証 |
-| L4 | `pip install openvr` → `python3 tests/integration/run_integration.py` | Windows と同じ 27 項目。`--stop-relaunchers` は自動起動オーバーレイを終了させるので必要時のみ | 未検証 |
+| L4 | `pip install openvr` → `python3 tests/integration/run_integration.py` | Windows と同じ 29 項目。`--stop-relaunchers` は自動起動オーバーレイを終了させるので必要時のみ | 未検証 |
 | L5 | `python3 clients/python/examples/fullbody_sway.py` + SteamVR の「ヘッドセットのビュー」 | 視点とデバイスが動く | 未検証 |
 | L6 | Proton で VRChat を VR モード起動 | HMD・手・トラッカーが反映される | 未検証 |
 | L7 | `hmd.enabled: false` + 実 HMD | 実 HMD と並んでコントローラ/トラッカーが追加される | 未検証 |

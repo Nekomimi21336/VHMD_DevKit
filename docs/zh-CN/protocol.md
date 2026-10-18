@@ -1,0 +1,197 @@
+[日本語](../protocol.md) | [English](../en/protocol.md) | **简体中文** | [한국어](../ko/protocol.md) — [返回 README](../../README.zh-CN.md)
+
+# 外部输入协议 (UDP / JSON, VMT 兼容 OSC)
+
+驱动 `vhmd` 将通过 UDP 接收到的消息写入各虚拟设备的“最新值缓冲区”，由更新线程(默认 120 Hz)将其反映到 SteamVR。
+
+| 项目 | 值 |
+|---|---|
+| 传输层 | UDP (IPv4) |
+| 默认地址 | `127.0.0.1:39570` (`vhmd_config.json` 的 `network.bind` / `network.port`) |
+| 对外开放 | 仅当 `network.allowRemote: true` 时才可绑定到 `127.0.0.1` 以外的地址(默认不可) |
+| 格式 | 1 个数据报 = 1 个 JSON 对象，或 JSON 数组(批量，最多 256 条) |
+| 最大大小 | 65507 字节(UDP 上限) |
+| 字符编码 | UTF-8 |
+| VMT 兼容 OSC | 当 `vmt.enabled: true` 时在同一端口接收(首字节为 `/` 或 `#` 时判定为 OSC) |
+
+## 坐标系与单位
+
+- **遵循 SteamVR**：右手系、**+Y 向上**、**-Z 向前**、+X 向右，单位为米。
+- 旋转统一使用**四元数 `[w, x, y, z]`**(即使未归一化，也会在接收时归一化)。
+- 速度 `vel` 单位为 m/s，角速度 `angvel` 单位为 rad/s(均为世界坐标系)。
+- `pos` 是“头部(HMD)的位置”。如果希望将其视为颈部位置并应用 SteamVR 的颈部模型，请设置 `hmd.headModel: true`。
+- 姿态直接写入 `TrackingUniverseRawAndUncalibrated`(房间设置的偏移由 SteamVR 侧应用)。
+
+## 设备 ID
+
+| id | 类型 | SteamVR 类 / 角色 | 默认序列号 |
+|---|---|---|---|
+| `hmd` | HMD | `TrackedDeviceClass_HMD` | `VHMD-HMD-0` |
+| `left_hand` | 控制器 | `Controller` / `TrackedControllerRole_LeftHand` | `VHMD-CTL-L` |
+| `right_hand` | 控制器 | `Controller` / `TrackedControllerRole_RightHand` | `VHMD-CTL-R` |
+| `tracker_0` | 追踪器 | `GenericTracker` / `TrackerRole_Waist` | `VHMD-TRK-0` |
+| `tracker_1` | 同上 | `TrackerRole_LeftFoot` | `VHMD-TRK-1` |
+| `tracker_2` | 同上 | `TrackerRole_RightFoot` | `VHMD-TRK-2` |
+| `tracker_3` | 同上 | `TrackerRole_LeftKnee` | `VHMD-TRK-3` |
+| `tracker_4` | 同上 | `TrackerRole_RightKnee` | `VHMD-TRK-4` |
+| `tracker_5` | 同上 | `TrackerRole_LeftElbow` | `VHMD-TRK-5` |
+| `tracker_6` | 同上 | `TrackerRole_RightElbow` | `VHMD-TRK-6` |
+| `tracker_7` | 同上 | `TrackerRole_Chest` | `VHMD-TRK-7` |
+
+- **基础为 3 点**(`hmd`, `left_hand`, `right_hand`)。只有这 3 个设备会在 SteamVR 启动时注册。
+- **追踪器按需添加**：发往该追踪器的消息(`pose` 等)首次到达时才添加到 SteamVR，并从收到的姿态开始同步(实测约 40 ms)。发送双脚即为 5 点，再加上腰部即为 6 点。也可以通过 `config` 的 `op: "add"` 预先添加。添加的设备会一直保留到 SteamVR 退出(因为 OpenVR 没有删除设备的 API)，停止发送后变为 `disconnect`(灰色显示)。如果希望启动时就注册全部设备，请设置 `"trackersOnDemand": false`。
+- 追踪器通过配置最多 16 个。`id` 和角色可以在 `vhmd_config.json` 的 `trackers` 数组中修改。
+- **也可以用角色名指定**：如果同一角色的追踪器只有 1 个，可以像 `"id": "waist"` 这样用简短的角色名发送(等同于 `tracker_0`)。
+- 角色名接受 3 种形式：`waist` / `vive_tracker_waist` / `TrackerRole_Waist`。
+  列表：`handed, left_foot, right_foot, left_shoulder, right_shoulder, left_elbow, right_elbow, left_knee, right_knee, left_wrist, right_wrist, left_ankle, right_ankle, waist, chest, camera, keyboard`(SteamVR 2.17.10 自带配置文件中存在的角色)。
+
+## 消息
+
+### `pose`
+
+```json
+{ "type": "pose", "id": "hmd",
+  "pos": [0.0, 1.7, 0.0], "rot": [1.0, 0.0, 0.0, 0.0],
+  "vel": [0, 0, 0], "angvel": [0, 0, 0], "ts": 1760000000.123 }
+```
+
+| 字段 | 必需 | 说明 |
+|---|---|---|
+| `pos` | ○ | [x, y, z] m。各分量的绝对值 ≤ 1000 |
+| `rot` | ○ | [w, x, y, z]。范数为 0 / NaN 视为非法 |
+| `vel`, `angvel` | | [x, y, z]。绝对值 ≤ 100。用于 SteamVR 的预测(缺省为 0) |
+| `ts` | | 发送端 UNIX 时间(秒)。用于诊断(`status` 的 `latency_ms`) |
+| `valid` | | 设为 `false` 可显式表示“追踪丢失”。可省略 `pos`/`rot`。收到下一个有效的 `pose` 时恢复 |
+
+### `input`(控制器 / HMD)
+
+```json
+{ "type": "input", "id": "right_hand", "name": "trigger", "value": 0.8 }
+{ "type": "input", "id": "right_hand", "values": { "trigger": 0.8, "a": true, "joystick_x": -0.3 } }
+```
+
+值为数值(-1〜1)或布尔值。按键在 0.5 及以上时视为按下。
+
+| 名称 | SteamVR 输入路径 | 类型 / 范围 |
+|---|---|---|
+| `trigger` | `/input/trigger/value` | 0〜1 |
+| `trigger_click` / `trigger_touch` | `/input/trigger/click` / `touch` | bool |
+| `grip` | `/input/grip/value` | 0〜1 |
+| `grip_click` / `grip_touch` | `/input/grip/click` / `touch` | bool |
+| `joystick_x`, `joystick_y` | `/input/joystick/x`, `y` | -1〜1(向上为 +y) |
+| `joystick_click` / `joystick_touch` | `/input/joystick/click` / `touch` | bool |
+| `a`, `b` (右手) / `x`, `y` (左手) | `/input/a/click` 等 | bool |
+| `a_touch`, `b_touch`, `x_touch`, `y_touch` | `/input/a/touch` 等 | bool |
+| `system`, `system_touch` | `/input/system/click` / `touch` | bool |
+| `menu` | `/input/menu/click` | bool |
+
+- 别名：`primary` = 右手 `a` / 左手 `x`，`secondary` = 右手 `b` / 左手 `y`。向左手发送 `a`/`b` 时按 `x`/`y` 处理，向右手发送 `x`/`y` 时按 `a`/`b` 处理。`thumbstick_*`, `stick_*` = `joystick_*`，`squeeze` = `grip`，`application_menu` = `menu`。
+- 也可以直接使用原始路径(例如 `"/input/y/click"`)。
+- 只发送 `trigger` / `grip` 时，会自动生成 `*_click`(0.75 时 ON / 0.65 时 OFF)和 `*_touch`(0.05 / 0.02)。只要显式发送过一次 `*_click` / `*_touch`，该项的自动生成即停止。
+- HMD 仅支持 `system`。
+- 在同一更新周期内到达的值会按名称合并为最新值。
+
+### `skeleton`(左右控制器的手指)
+
+```json
+{ "type": "skeleton", "id": "left_hand", "curl": [0.0, 1.0, 1.0, 1.0, 1.0], "splay": [0, 0, 0, 0, 0] }
+{ "type": "skeleton", "id": "left_hand", "bones": [[w,x,y,z], ... 31 个], "positions": [[x,y,z], ... 31 个] }
+```
+
+- `curl`：拇指、食指、中指、无名指、小指的弯曲程度，0(张开)〜1(握紧)。`splay`：-1〜1(省略时为 0)。使用 OpenVR 示例 `handskeletonsimulation` 的手部模型生成骨骼。
+- `bones`：OpenVR 手部骨骼(31 根骨骼，按 `HandSkeletonBone` 顺序)在**父骨骼空间**中的旋转。可以用 `[w,x,y,z,px,py,pz]` 同时指定位置，也可以单独传入 `positions`(省略时使用张开手的参考位置)。
+- 自最后一条 `skeleton` 起 500 ms 以上没有收到任何内容期间，会根据 `trigger`/`grip`/按键的触摸状态自动生成手指弯曲。
+- 向 SteamVR 的 `WithController` / `WithoutController` 两种运动范围发送相同的值。
+
+### `gaze`(HMD 的视线)
+
+```json
+{ "type": "gaze", "id": "hmd", "origin": [0, 0, 0], "dir": [0, 0, -1] }
+{ "type": "gaze", "id": "hmd", "origin": [0, 0, 0], "target": [0.1, 0.0, -1.0] }
+{ "type": "gaze", "id": "hmd", "valid": false }
+```
+
+以 `VREyeTrackingData_t`(origin, target)的形式传给 `IVRDriverInput::CreateEyeTrackingComponent("/eyetracking")`。SteamVR 头文件中未明确坐标空间，**假定为 HMD 局部空间(未验证)**。参见 `docs/decisions.md`。
+
+### `config`(请求、响应)
+
+```json
+{ "type": "config", "op": "list", "seq": 1 }
+```
+
+`seq` 会原样返回到响应中。响应通过 UDP 发回发送方的地址/端口。
+
+| op | 参数 | 响应 |
+|---|---|---|
+| `list` (`status`) | | `{"type":"status", "devices":[...], "packets":{"total","rejected"}, ...}` |
+| `ping` | | `{"type":"result","op":"ping","ok":true,"version":"0.1.0"}` |
+| `roles` | | 可用角色列表 |
+| `set_role` | `id`, `role` | 将角色写入 SteamVR 设置的 `trackers` 部分(覆盖用户设置) |
+| `reset` | `id`(省略时为全部设备) | 恢复为配置文件中的默认姿态 |
+| `add` | `id`(省略时为全部按需设备) | 立即将按需设备添加到 SteamVR(下一帧生效)。`{"ok":true,"ids":[...]}` |
+
+`status` 中每个设备包含：`id, serial, kind, role, enabled, on_demand, timeout_policy, index`(SteamVR 设备编号，未注册为 -1)`, pose_packets, input_packets, rate_hz`(接收速率)`, age_s`(距最后接收的秒数)`, latency_ms`(有 `ts` 时)。
+
+### 驱动 → 客户端：`haptic`
+
+当应用请求振动时，会发送到**最后一个发来数据包的地址**。
+
+```json
+{ "type": "haptic", "id": "right_hand", "duration": 0.005, "frequency": 100.0, "amplitude": 0.75 }
+```
+
+## 超时
+
+距最后一个 `pose` 超过 `timeout.ms`(默认 500 ms)的设备，按各设备的 `timeoutPolicy` 处理；若未设置，则**按需追踪器使用 `disconnect`**，其他设备(HMD、控制器)使用 `timeout.policy`(默认 `hold`)。启动后尚未收到数据的状态也同样处理(从启动时刻开始计时)。
+
+| policy | 行为 |
+|---|---|
+| `hold`(默认) | 保持最后的姿态为有效。速度置为 0，以免因预测而漂移 |
+| `invalid` | `poseIsValid=false`, `TrackingResult_Running_OutOfRange` |
+| `disconnect` | 上述 + `deviceIsConnected=false` |
+
+## 非法数据包
+
+以下数据包会被丢弃，并在 `vrserver.txt` 中输出警告(默认限速为每秒 5 条，附带被抑制的条数)。驱动不会停止。
+
+- JSON 非法 / 类型错误 / 缺少必需字段 / 未知的 `type`
+- NaN、Inf、超出范围的值(位置 ±1000 m、速度 ±100、输入 ±1)、范数为 0 的四元数
+- 未知或已禁用的设备 id、骨骼数不为 31 的 skeleton
+- 批量超过 256 条、`vmt.enabled=false` 时的 OSC、不支持的 OSC 地址
+
+即使批量中有其他元素非法，其中的正常消息仍会被应用。
+
+## VMT 兼容 OSC(可选)
+
+这是为了直接使用 [Virtual Motion Tracker](https://gpsnmeajp.github.io/VirtualMotionTrackerDocument/) 的发送端工具而实现的子集。通过 `vmt.enabled: true` 启用。
+
+| 地址 | 支持情况 |
+|---|---|
+| `/VMT/Room/Unity`, `/VMT/Raw/Unity` | ○ Unity 坐标(左手系)→ 反转 Z 后转换 |
+| `/VMT/Room/UEuler`, `/VMT/Raw/UEuler` | ○ Unity 欧拉角(度) |
+| `/VMT/Room/Driver`, `/VMT/Raw/Driver` | ○ 直接使用驱动坐标 |
+| `/VMT/Input/Button[/Touch]` | ○ buttonIndex 0=system,1=a(左手 x),2=b(左手 y),3=menu,4=joystick_click,5=trigger_click,6=grip_click |
+| `/VMT/Input/Trigger[/Touch|/Click]` | ○ triggerIndex 0=trigger, 1=grip |
+| `/VMT/Input/Joystick[/Touch|/Click]` | ○ 仅 joystickIndex 0 |
+| `/VMT/Joint/*`, `/VMT/Follow/*`, `/VMT/Skeleton/*`, `/VMT/SetRoomMatrix` 等 | × 不支持(丢弃并记录日志) |
+
+- `index` → 设备：`vmt.indexMap`(例 `{"0": "tracker_0", "1": "left_hand"}`)，未指定时为 `tracker_<index>`。
+- `enable` 2/5 → `left_hand`，3/6 → `right_hand`，0 → 使该设备的姿态无效。
+- 不区分 Room 和 Raw(房间矩阵未实现)。
+- 由于与 VMT 本体使用相同的端口 39570，请勿与 VMT 驱动同时启用。
+
+## 客户端实现示例
+
+Python：`clients/python/vhmd_client`(无依赖)。
+
+```python
+from vhmd_client import VHMDClient, math3d
+with VHMDClient() as c:
+    with c.batch():                      # 合并为 1 个数据报
+        c.pose("hmd", (0, 1.7, 0), math3d.from_euler(yaw=30))
+        c.pose("waist", (0, 1.0, 0))
+    c.inputs("right_hand", {"trigger": 1.0, "a": True})
+    print(c.status()["devices"][0])
+```
+
+其他语言只需“将 JSON 通过 UDP 发送到 `127.0.0.1:39570`”即可实现。

@@ -1,3 +1,5 @@
+**日本語** | [English](en/architecture.md) | [简体中文](zh-CN/architecture.md) | [한국어](ko/architecture.md) — [README に戻る](../README.md)
+
 # アーキテクチャ
 
 ## 全体像

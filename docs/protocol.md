@@ -1,3 +1,5 @@
+**日本語** | [English](en/protocol.md) | [简体中文](zh-CN/protocol.md) | [한국어](ko/protocol.md) — [README に戻る](../README.md)
+
 # 外部入力プロトコル (UDP / JSON, VMT互換OSC)
 
 ドライバ `vhmd` は UDP で受信したメッセージを各仮想デバイスの「最新値バッファ」に書き込み、更新スレッド(既定 120 Hz)がそれを SteamVR に反映します。

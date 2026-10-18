@@ -26,7 +26,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 COMMON = [
-    "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md",
+    "README.md", "README.en.md", "README.zh-CN.md", "README.ko.md",
+    "LICENSE", "THIRD_PARTY_NOTICES.md",
     "docs", "clients/python",
 ]
 TOOLS = {
