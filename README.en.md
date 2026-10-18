@@ -219,13 +219,13 @@ third_party/            OpenVR SDK (submodule v2.15.6), nlohmann/json 3.11.3
 
 | Item | Version |
 |---|---|
-| SteamVR | 2.17.10 (Windows 11) |
+| SteamVR | 2.17.10 (Windows 11; Linux: Ubuntu 26.04 + NVIDIA RTX 4000 Ada) |
 | OpenVR SDK | v2.15.6 |
 | Windows compiler | MSVC 14.44 (Visual Studio 2022 Build Tools 17.14), CMake 4.3 |
-| Linux compiler | gcc 13.3 (Ubuntu 24.04 / WSL2), CMake 3.28, Vulkan self-tested with Mesa llvmpipe |
+| Linux compiler | gcc 13.3 (Ubuntu 24.04 / WSL2), gcc 15.2 (Ubuntu 26.04), CMake 3.28 / 4.2 |
 | Python | 3.12 (3.10 or later), pyopenvr 2.12 for verification |
 
-Detailed results: [docs/verification.md](docs/verification.md) (Japanese). Operation in VRChat (GUI interaction) and direct mode (v0.3.0) on SteamVR for Linux have not been verified. With v0.2.0, loading the driver was confirmed on SteamVR for Linux 2.17.10, and an issue where the compositor fails to start was found ([docs/en/linux.md](docs/en/linux.md)).
+Detailed results: [docs/verification.md](docs/verification.md) (Japanese). On SteamVR for Linux, with v0.3.0's direct mode on a real GPU (cloud, no display) the compositor renders at 90 fps and the integration test passes 28/28 ([docs/en/linux.md](docs/en/linux.md)). Operation in VRChat (GUI interaction), Linux desktops with a display, and games through Proton have not been verified.
 
 ## License
 

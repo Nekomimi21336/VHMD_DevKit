@@ -20,7 +20,7 @@ app ──▶ vrcompositor ──(shared Vulkan image / dma-buf)──▶ driver
 - This is the same approach as ALVR's Linux driver (master as of 2026-10). No code was copied; it was implemented following the OpenVR headers.
 - Windows keeps using the desktop window approach as before (`display.mode`: `auto` / `window` / `direct`).
 
-## Status (as of 2026-10-18)
+## Status (as of 2026-10-19)
 
 | Item | Status |
 |---|---|
@@ -30,7 +30,9 @@ app ──▶ vrcompositor ──(shared Vulkan image / dma-buf)──▶ driver
 | Exported symbols / library dependencies | ✅ `HmdDriverFactory` only / `libc`, `libm`, `ld-linux` only (libvulkan is loaded at runtime with `dlopen`) |
 | v0.2.0 run on SteamVR for Linux 2.17.10 (Arch, KDE Wayland) | ✅ Driver loads, HMD recognized, controller remapping / ❌ Compositor fails to start with `CannotDRMLeaseDisplay` (same with the null driver) → addressed by direct mode in v0.3.0 |
 | v0.3.0 run on SteamVR for Linux 2.17.10 under WSL2 (software Vulkan) | ✅ Driver loads, direct mode, integration test 21/23, the compositor reaches `Headset is using driver direct mode` / ❌ Renderer init fails because llvmpipe cannot import timeline semaphores ([verification.md](../verification.md), Japanese) |
-| **v0.3.0 run on SteamVR for Linux with a real GPU** | ❌ **Unverified**. Please check with `linux_check.py` below |
+| v0.3.0 run on SteamVR for Linux 2.17.10 with a real GPU (cloud GPU: NVIDIA RTX 4000 Ada, driver 595, Ubuntu 26.04, built with gcc 15.2, no display + Xvfb) | ✅ All `linux_check.py` checks pass: the compositor creates swap textures (2160×2400 per eye) and **presents at 90 fps**, no `CannotDRMLeaseDisplay`, SteamVR's image in the preview, integration test 28/28 (including skeleton and input). Passed twice in a row |
+| Linux desktop with a real display (KDE / GNOME, with the Steam client) | Unverified (should be the same path; please check with `linux_check.py`) |
+| Windows games through Proton, such as VRChat | Unverified |
 
 ## Prerequisites
 
@@ -126,7 +128,21 @@ This automates everything from starting SteamVR to shutting it down, and writes 
 | Presents arrive but the preview is black / missing | `display.preview.state` in `report.json`. On multi-GPU systems, `preview.vulkanDevice` |
 | VRChat does not start | Try it only after 1–7 are all ✅. Proton's log (`PROTON_LOG=1`) |
 | You want to use it alongside a real HMD | `"hmd": {"enabled": false}` (adds only controllers / trackers) |
+| On a machine without a display (cloud GPU etc.) SteamVR Home keeps failing and restarting, and Scene apps get `AnotherAppLaunching` | Set `"enableHomeApp": false` under `steamvr` in `steamvr.vrsettings` |
+| "SteamVR shutdown" is SKIP on a machine without a display | vrserver only exits when vrmonitor (the SteamVR window) tells it to, and ignores SIGTERM. Under Xvfb vrmonitor itself crashes at startup, so the test kills SteamVR (the driver's shutdown path does not run). On a desktop it shuts down normally |
 | VMs, WSL and other setups without a GPU | With software Vulkan (llvmpipe) the compositor stops at renderer init with `does not support timeline import`. A real GPU is required |
+
+## Running on a machine without a display (cloud GPU etc.)
+
+These are the steps used for verification on Linux without the Steam client or a display. A normal desktop does not need them.
+
+1. Install the GPU driver (`nvidia-driver-5xx` for NVIDIA) and check that `vulkaninfo --summary` lists the GPU
+2. Install SteamVR (250820, login required) and Steam Linux Runtime 3.0 sniper (1628350) with `steamcmd`. Symlink `~/.steam/steam` → the Steam folder and `~/.steam/sdk64/steamclient.so` → `steamcmd/linux64/steamclient.so`
+3. Extra packages SteamVR needs when running on host libraries (Ubuntu): `libsdl2-2.0-0 libpulse0 libpipewire-0.3-0t64`
+4. Ubuntu 24.04 and later restrict unprivileged user namespaces: `sysctl kernel.apparmor_restrict_unprivileged_userns=0` (used by pressure-vessel)
+5. Start `Xvfb :1` and set `DISPLAY=:1`. Point `DBUS_SESSION_BUS_ADDRESS` at the user session bus (`/run/user/<uid>/bus`, via `loginctl enable-linger <user>`)
+6. Run the launch service in place of the Steam client: `VALVE_SKIP_RUNTIME_SAFETY=1 SteamLinuxRuntime_sniper/pressure-vessel/bin/steam-runtime-launcher-service --alongside-steam --session &`
+7. `"enableHomeApp": false` in `steamvr.vrsettings`, `tools/install_driver.sh`, `python3 tests/integration/linux_check.py`
 
 ## Changes made for Linux support
 

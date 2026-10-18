@@ -20,7 +20,7 @@ Linux 版 SteamVR 的合成器无法像 Windows 那样“绘制到桌面上的�
 - 与 ALVR 的 Linux 驱动(2026-10 的 master)方式相同。没有复用其代码，而是依照 OpenVR 头文件自行实现。
 - Windows 仍沿用以往的桌面窗口方式(`display.mode`：`auto` / `window` / `direct`)。
 
-## 状态(截至 2026-10-18)
+## 状态(截至 2026-10-19)
 
 | 项目 | 状态 |
 |---|---|
@@ -30,7 +30,9 @@ Linux 版 SteamVR 的合成器无法像 Windows 那样“绘制到桌面上的�
 | 公开符号 / 依赖库 | ✅ 仅 `HmdDriverFactory` / 仅 `libc`、`libm`、`ld-linux`(libvulkan 在运行时 `dlopen`) |
 | 在 Linux 版 SteamVR 2.17.10(Arch、KDE Wayland)上运行 v0.2.0 | ✅ 驱动加载、HMD 识别、控制器重映射 / ❌ 合成器因 `CannotDRMLeaseDisplay` 无法启动(null 驱动也一样)→ 由 v0.3.0 的直接模式解决 |
 | 在 WSL2 上的 Linux 版 SteamVR 2.17.10(软件 Vulkan)上运行 v0.3.0 | ✅ 驱动加载、直接模式、集成测试 21/23,合成器运行到 `Headset is using driver direct mode` / ❌ 由于 llvmpipe 不支持导入时间线信号量,渲染器初始化失败([verification.md](../verification.md),日文) |
-| **在使用真实 GPU 的 Linux 版 SteamVR 上运行 v0.3.0** | ❌ **未验证**。请用下文的 `linux_check.py` 确认 |
+| 在使用真实 GPU 的 Linux 版 SteamVR 2.17.10 上运行 v0.3.0(云 GPU：NVIDIA RTX 4000 Ada、驱动 595、Ubuntu 26.04、用 gcc 15.2 构建、无显示器 + Xvfb) | ✅ `linux_check.py` 全部通过：合成器创建交换纹理(单眼 2160×2400)并以 **90 fps present**，无 `CannotDRMLeaseDisplay`，预览中有 SteamVR 的画面，集成测试 28/28(含骨骼与输入)。连续两次通过 |
+| 有真实显示器的 Linux 桌面(KDE / GNOME，带 Steam 客户端) | 未验证(应为相同路径，请用 `linux_check.py` 确认) |
+| 通过 Proton 运行的 VRChat 等 Windows 游戏 | 未验证 |
 
 ## 前提
 
@@ -126,7 +128,21 @@ python3 tests/integration/linux_check.py
 | 有 present 但预览全黑 / 没有画面 | `report.json` 的 `display.preview.state`。多 GPU 时检查 `preview.vulkanDevice` |
 | VRChat 无法启动 | 请在第 1~7 项全部为 ✅ 之后再尝试。查看 Proton 侧的日志(`PROTON_LOG=1`) |
 | 想与真实 HMD 一起使用 | `"hmd": {"enabled": false}`(只添加控制器 / 追踪器) |
+| 在没有显示器的机器(云 GPU 等)上 SteamVR Home 反复启动失败，Scene 应用得到 `AnotherAppLaunching` | 在 `steamvr.vrsettings` 的 `steamvr` 中设置 `"enableHomeApp": false` |
+| 在没有显示器的机器上“SteamVR shutdown”为 SKIP | vrserver 只会在 vrmonitor(SteamVR 窗口)指示时退出，并忽略 SIGTERM。在 Xvfb 下 vrmonitor 本身启动即崩溃，因此测试会强制结束 SteamVR(驱动的结束处理不会执行)。在桌面环境中会正常退出 |
 | 虚拟机、WSL 等没有 GPU 的环境 | 使用软件 Vulkan(llvmpipe)时,合成器会在渲染器初始化阶段以 `does not support timeline import` 停止。需要真实 GPU |
+
+## 在没有显示器的机器(云 GPU 等)上运行
+
+以下是在既没有 Steam 客户端也没有显示器的 Linux 上验证时的步骤。普通桌面不需要。
+
+1. 安装 GPU 驱动(NVIDIA 为 `nvidia-driver-5xx`)，确认 `vulkaninfo --summary` 中出现 GPU
+2. 用 `steamcmd` 安装 SteamVR(250820，需要登录)和 Steam Linux Runtime 3.0 sniper(1628350)。创建符号链接 `~/.steam/steam` → Steam 文件夹、`~/.steam/sdk64/steamclient.so` → `steamcmd/linux64/steamclient.so`
+3. SteamVR 使用主机库运行时所需的额外软件包(Ubuntu)：`libsdl2-2.0-0 libpulse0 libpipewire-0.3-0t64`
+4. Ubuntu 24.04 及以后限制了非特权用户命名空间：`sysctl kernel.apparmor_restrict_unprivileged_userns=0`(pressure-vessel 需要)
+5. 启动 `Xvfb :1` 并设置 `DISPLAY=:1`。将 `DBUS_SESSION_BUS_ADDRESS` 指向用户会话总线(通过 `loginctl enable-linger <user>` 得到 `/run/user/<uid>/bus`)
+6. 代替 Steam 客户端启动服务：`VALVE_SKIP_RUNTIME_SAFETY=1 SteamLinuxRuntime_sniper/pressure-vessel/bin/steam-runtime-launcher-service --alongside-steam --session &`
+7. 在 `steamvr.vrsettings` 中设置 `"enableHomeApp": false`，执行 `tools/install_driver.sh`、`python3 tests/integration/linux_check.py`
 
 ## 为支持 Linux 所做的修改
 

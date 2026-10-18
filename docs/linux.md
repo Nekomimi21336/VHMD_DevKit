@@ -20,7 +20,7 @@ Linux 版 SteamVR のコンポジタは、Windows のように「デスクトッ
 - ALVR の Linux ドライバ(2026-10 の master)と同じ方式です。コードは流用せず、OpenVR ヘッダに沿って実装しました。
 - Windows は従来どおりデスクトップのウィンドウ方式です(`display.mode`: `auto` / `window` / `direct`)。
 
-## 状態(2026-10-18 時点)
+## 状態(2026-10-19 時点)
 
 | 項目 | 状態 |
 |---|---|
@@ -30,7 +30,9 @@ Linux 版 SteamVR のコンポジタは、Windows のように「デスクトッ
 | 公開シンボル / 依存ライブラリ | ✅ `HmdDriverFactory` のみ / `libc`、`libm`、`ld-linux` のみ(libvulkan は実行時に `dlopen`) |
 | v0.2.0 を Linux 版 SteamVR 2.17.10(Arch、KDE Wayland)で実行 | ✅ ドライバのロード、HMD 認識、コントローラのリマップ / ❌ コンポジタが `CannotDRMLeaseDisplay` で起動せず(null ドライバも同様)→ v0.3.0 のダイレクトモードで対応 |
 | v0.3.0 を WSL2 上の Linux 版 SteamVR 2.17.10(ソフトウェア Vulkan)で実行 | ✅ ドライバのロード、ダイレクトモード、統合テスト 21/23、コンポジタが `Headset is using driver direct mode` まで到達 / ❌ llvmpipe がタイムラインセマフォの外部取り込みに非対応でレンダラ初期化が失敗([verification.md](verification.md)) |
-| **v0.3.0 を実 GPU の Linux 版 SteamVR で実行** | ❌ **未検証**。下の `linux_check.py` で確認してください |
+| v0.3.0 を実 GPU の Linux 版 SteamVR 2.17.10 で実行(クラウド GPU: NVIDIA RTX 4000 Ada、ドライバ 595、Ubuntu 26.04、gcc 15.2 でビルド、画面なし + Xvfb) | ✅ `linux_check.py` 全項目合格: コンポジタがスワップテクスチャ(片目 2160×2400)を作り **90 fps で present**、`CannotDRMLeaseDisplay` なし、プレビューに SteamVR の映像、統合テスト 28/28(スケルトン・入力を含む)。2 回連続で合格 |
+| 実ディスプレイのある Linux デスクトップ(KDE / GNOME、Steam クライアントあり) | 未検証(上と同じ経路のはずですが、`linux_check.py` での確認をお願いします) |
+| Proton 経由の VRChat など Windows ゲーム | 未検証 |
 
 ## 前提
 
@@ -126,7 +128,21 @@ SteamVR の起動から終了までを自動で行い、`tests/integration/resul
 | present は来るがプレビューが真っ黒 / 来ない | `report.json` の `display.preview.state`。複数 GPU の場合は `preview.vulkanDevice` |
 | VRChat が起動しない | 1〜7 がすべて ✅ になってから試してください。Proton 側のログ(`PROTON_LOG=1`) |
 | 実 HMD と併用したい | `"hmd": {"enabled": false}`(コントローラ / トラッカーだけ追加) |
+| 画面の無いマシン(クラウド GPU など)で SteamVR Home が起動と失敗を繰り返し、Scene アプリが `AnotherAppLaunching` になる | `steamvr.vrsettings` の `steamvr` に `"enableHomeApp": false` |
+| 画面の無いマシンで「SteamVR shutdown」が SKIP | vrserver は vrmonitor(SteamVR のウィンドウ)からの指示でしか終了せず、SIGTERM も無視します。Xvfb では vrmonitor 自体が起動時に落ちるため、テストは SteamVR を強制終了します(ドライバの終了処理は通りません)。デスクトップでは通常どおり終了します |
 | VM / WSL など GPU の無い環境 | ソフトウェア Vulkan(llvmpipe)ではコンポジタのレンダラ初期化が `does not support timeline import` で止まります。実 GPU が必要です |
+
+## 画面の無いマシン(クラウド GPU など)で動かす
+
+Steam クライアントもディスプレイも無い Linux で検証したときの手順です。普通のデスクトップでは不要です。
+
+1. GPU ドライバ(NVIDIA なら `nvidia-driver-5xx`)を入れ、`vulkaninfo --summary` に GPU が出ることを確認
+2. `steamcmd` で SteamVR(250820、要ログイン)と Steam Linux Runtime 3.0 sniper(1628350)を入れる。`~/.steam/steam` → Steam フォルダのシンボリックリンク、`~/.steam/sdk64/steamclient.so` → `steamcmd/linux64/steamclient.so`
+3. SteamVR がホストのライブラリで動くための追加パッケージ(Ubuntu): `libsdl2-2.0-0 libpulse0 libpipewire-0.3-0t64`
+4. Ubuntu 24.04 以降は非特権ユーザー名前空間が制限されているため `sysctl kernel.apparmor_restrict_unprivileged_userns=0`(pressure-vessel が使用)
+5. `Xvfb :1` を起動し `DISPLAY=:1`。ユーザーのセッションバス(`loginctl enable-linger <user>` で `/run/user/<uid>/bus`)を `DBUS_SESSION_BUS_ADDRESS` に設定
+6. Steam クライアントの代わりに起動サービスを立てる: `VALVE_SKIP_RUNTIME_SAFETY=1 SteamLinuxRuntime_sniper/pressure-vessel/bin/steam-runtime-launcher-service --alongside-steam --session &`
+7. `steamvr.vrsettings` で `"enableHomeApp": false`、`tools/install_driver.sh`、`python3 tests/integration/linux_check.py`
 
 ## Linux 対応で入れた変更
 

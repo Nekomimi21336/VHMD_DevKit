@@ -247,6 +247,8 @@ def main() -> int:
             vrs = svr.latest_session(svr.read_log_since(svr.vrserver_log(), 0))
             rep.check("SteamVR shutdown: driver Cleanup ran", bool(svr.log_lines(vrs, r"vhmd: shutting down")),
                       f"{took:.1f} s")
+        except svr.ForcedShutdown as e:
+            rep.add("SteamVR shutdown", "SKIP", str(e))
         except (TimeoutError, RuntimeError) as e:
             rep.add("SteamVR shutdown", "WARN", str(e))
 

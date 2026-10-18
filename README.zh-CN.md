@@ -219,13 +219,13 @@ third_party/            OpenVR SDK(子模块 v2.15.6)、nlohmann/json 3.11.3
 
 | 项目 | 版本 |
 |---|---|
-| SteamVR | 2.17.10(Windows 11) |
+| SteamVR | 2.17.10(Windows 11、Linux：Ubuntu 26.04 + NVIDIA RTX 4000 Ada) |
 | OpenVR SDK | v2.15.6 |
 | Windows 编译器 | MSVC 14.44(Visual Studio 2022 Build Tools 17.14)、CMake 4.3 |
-| Linux 编译器 | gcc 13.3(Ubuntu 24.04 / WSL2)、CMake 3.28、Vulkan 使用 Mesa llvmpipe 进行自测 |
+| Linux 编译器 | gcc 13.3(Ubuntu 24.04 / WSL2)、gcc 15.2(Ubuntu 26.04)、CMake 3.28 / 4.2 |
 | Python | 3.12(3.10 及以上)、验证用 pyopenvr 2.12 |
 
-详细结果：[docs/verification.md](docs/verification.md)(日文)。在 VRChat 上的运行确认(GUI 操作)以及直接模式(v0.3.0)在 Linux 版 SteamVR 上的运行均尚未验证。v0.2.0 已在 Linux 版 SteamVR 2.17.10 上确认到驱动加载为止，并发现了合成器无法启动的问题([docs/zh-CN/linux.md](docs/zh-CN/linux.md))。
+详细结果：[docs/verification.md](docs/verification.md)(日文)。在 Linux 版 SteamVR 上，v0.3.0 的直接模式已在真实 GPU(云端，无显示器)上确认合成器以 90 fps 渲染，集成测试 28/28 通过([docs/zh-CN/linux.md](docs/zh-CN/linux.md))。在 VRChat 上的运行确认(GUI 操作)、有显示器的 Linux 桌面以及通过 Proton 运行的游戏尚未验证。
 
 ## 许可证
 

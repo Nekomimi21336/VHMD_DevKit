@@ -167,23 +167,27 @@ def openvr_client_processes() -> List[tuple]:
     return rows
 
 
-def _kill_pid(pid: int) -> None:
+def _kill_pid(pid: int, sig: int = signal.SIGTERM) -> None:
     if IS_WINDOWS:
         subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
     else:
         try:
-            os.kill(pid, signal.SIGTERM)
+            os.kill(pid, sig)
         except OSError:
             pass
 
 
-def _kill_name(name: str) -> None:
+def _kill_name(name: str, sig: int = signal.SIGTERM) -> None:
     if IS_WINDOWS:
         subprocess.run(["taskkill", "/F", "/IM", f"{name}.exe"], capture_output=True)
     else:
         for pid, n in _process_table():
             if n == name:
-                _kill_pid(pid)
+                _kill_pid(pid, sig)
+
+
+class ForcedShutdown(RuntimeError):
+    """SteamVR had to be killed; drivers did not get Cleanup()."""
 
 
 def stop_steamvr(timeout: float = 60.0, stop_relaunchers: bool = False, relaunch_watch: float = 8.0) -> float:
@@ -202,6 +206,17 @@ def stop_steamvr(timeout: float = 60.0, stop_relaunchers: bool = False, relaunch
     stopped again.
     """
     t0 = time.monotonic()
+    if not IS_WINDOWS and running(("vrserver",)) and not running(("vrmonitor",)):
+        # vrserver only shuts down when its master (vrmonitor) asks it to, and it
+        # ignores SIGTERM / SIGINT. Without a vrmonitor (headless machines: under
+        # Xvfb it crashes at startup) there is no clean way out, so kill it.
+        for name in ("vrstartup", "vrdashboard", "vrwebhelper", "vrcompositor", "vrserver"):
+            _kill_name(name, signal.SIGKILL)
+        while running(("vrserver", "vrcompositor")):
+            if time.monotonic() - t0 > timeout:
+                raise TimeoutError("vrserver did not exit after SIGKILL")
+            time.sleep(0.25)
+        raise ForcedShutdown("no vrmonitor running (headless?); SteamVR was killed, driver Cleanup not exercised")
     for _ in range(3):
         clients = openvr_client_processes()
         if stop_relaunchers:

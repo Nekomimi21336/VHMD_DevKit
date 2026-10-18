@@ -95,17 +95,28 @@ def main() -> int:
         def curl_of(side):
             return vrinput.getSkeletalSummaryData(sk[side], openvr.VRSummaryType_FromDevice).flFingerCurl[1]
 
+        def curl_or_nan(side):  # for report details: NoData must not abort the run
+            try:
+                return curl_of(side)
+            except openvr.OpenVRError:
+                return float("nan")
+
         open_ok = wait_for(lambda: curl_of("right") < 0.2,
                            resend=lambda: client.skeleton_curl("right_hand", [0, 0, 0, 0, 0]))
-        open_curl = curl_of("right")
+        open_curl = curl_or_nan("right")
         fist_ok = wait_for(lambda: curl_of("right") > 0.6,
                            resend=lambda: client.skeleton_curl("right_hand", [1, 1, 1, 1, 1]))
         results.append({"name": "skeleton curl message changes finger curl seen by apps",
                         "ok": open_ok and fist_ok,
-                        "detail": f"index curl open={open_curl:.2f} fist={curl_of('right'):.2f}"})
+                        "detail": f"index curl open={open_curl:.2f} fist={curl_or_nan('right'):.2f}"})
 
         # Explicit bones: a rotation sent for the index proximal bone must come back.
-        ref = bones("left")
+        try:
+            ref = bones("left")
+        except openvr.OpenVRError:
+            ref = (openvr.VRBoneTransform_t * 31)()
+            for b in ref:
+                b.orientation.w = 1.0
         rots = [(b.orientation.w, b.orientation.x, b.orientation.y, b.orientation.z) for b in ref]
         target = math3d.normalize(math3d.multiply(rots[INDEX_PROXIMAL], math3d.from_euler(roll=40)))
         rots[INDEX_PROXIMAL] = target
@@ -115,10 +126,13 @@ def main() -> int:
             return math.degrees(math3d.angle_between((o.w, o.x, o.y, o.z), target)) < 1.0
 
         bones_ok = wait_for(matches, resend=lambda: client.skeleton_bones("left_hand", rots))
-        o = bones("left")[INDEX_PROXIMAL].orientation
-        err = math.degrees(math3d.angle_between((o.w, o.x, o.y, o.z), target))
+        try:
+            o = bones("left")[INDEX_PROXIMAL].orientation
+            detail = f"error {math.degrees(math3d.angle_between((o.w, o.x, o.y, o.z), target)):.3f} deg"
+        except openvr.OpenVRError as e:
+            detail = f"no bone data ({type(e).__name__})"
         results.append({"name": "explicit bone rotations reach apps (index proximal, < 1 deg)",
-                        "ok": bones_ok, "detail": f"error {err:.3f} deg"})
+                        "ok": bones_ok, "detail": detail})
 
         # Inputs through SteamVR Input (profile + binding, not legacy).
         trig_ok = wait_for(lambda: abs(vrinput.getAnalogActionData(trig, openvr.k_ulInvalidInputValueHandle).x - 0.6) < 1e-3,
@@ -132,7 +146,7 @@ def main() -> int:
                               resend=lambda: client.inputs("right_hand", {"grip": 1.0, "trigger": 1.0}))
         client.inputs("right_hand", {"grip": 0.0, "trigger": 0.0})
         results.append({"name": "finger curl derived from trigger/grip when no skeleton is streamed",
-                        "ok": derived_ok, "detail": f"index curl {curl_of('right'):.2f}"})
+                        "ok": derived_ok, "detail": f"index curl {curl_or_nan('right'):.2f}"})
     finally:
         client.close()
         openvr.shutdown()

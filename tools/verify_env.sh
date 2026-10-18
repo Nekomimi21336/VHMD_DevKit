@@ -26,7 +26,9 @@ registered_drivers | sed 's/^/    /'
 row steamvr_running "$(steamvr_running && echo yes || echo no)"
 row distro "$(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-unknown}")"
 row glibc "$(ldd --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+$')"
-row gpu "$(lspci 2>/dev/null | grep -iE 'vga|3d' | head -1 | cut -d: -f3- | sed 's/^ //')"
+# Prefer a real GPU over a VM's emulated display adapter.
+gpus=$(lspci 2>/dev/null | grep -iE 'vga|3d|display')
+row gpu "$( { echo "$gpus" | grep -iE 'nvidia|amd|ati |intel'; echo "$gpus"; } | head -1 | cut -d: -f3- | sed 's/^ //')"
 row session_type "${XDG_SESSION_TYPE:-unknown}"
 for t in g++ clang++ cmake ninja git python3; do
     row "$t" "$(command -v "$t" >/dev/null && "$t" --version 2>&1 | head -1 || echo MISSING)"

@@ -150,6 +150,29 @@ Windows の WSL2(Ubuntu 24.04)に、steamcmd で Linux 版 SteamVR 2.17.10(ビ�
 
 → ドライバ側とダイレクトモードの受け入れまではソフトウェア Vulkan で確認できました。描画が流れることの確認には実 GPU が必要です(`tests/integration/linux_check.py` を実機で実行)。
 
+### 実 GPU の Linux 版 SteamVR での実行(v0.3.0、2026-10-19、クラウド GPU)
+
+Linode の GPU インスタンス(NVIDIA RTX 4000 Ada 20 GB、4 コア、Ubuntu 26.04.1、カーネル 7.0)に NVIDIA ドライバ 595.99(Vulkan 1.4)を入れ、GitHub の main(d81d6d3)を gcc 15.2 / CMake 4.2 でビルド(警告 0、ctest 合格)。steamcmd で SteamVR 2.17.10(ビルド 1789498647)と sniper を入れ、Steam クライアントもディスプレイも無い状態で Xvfb を使って `tests/integration/linux_check.py` を実行しました。
+
+| 項目 | 結果 |
+|---|---|
+| ドライバのロード、UDP 応答、ダイレクトモード、vsync | ✅ |
+| コンポジタがスワップテクスチャを作成 | ✅ 2 セット、片目 2160×2400、`VK_FORMAT_R8G8B8A8_SRGB`(43) |
+| present レート | ✅ 90 回/秒(vsync と一致) |
+| `vrcompositor.txt` に DRM リース等のエラー | ✅ なし |
+| プレビュー(共有メモリ) | ✅ 1920×1067、SteamVR の既定の空間(地平線とグリッド)が左右の目に描画されている |
+| 統合テスト `run_integration.py` | ✅ 28/28(列挙、オンデマンド追加、ポーズ、遅延、入力、スケルトン、1000 pps)。全体を 2 回連続で実行し、どちらも合格 |
+| SteamVR の終了とドライバの終了処理 | ⚠️ 確認できず(下記)。テストは SKIP として扱う |
+
+途中で見つかり対処したこと:
+- コンポジタが起動しない: Steam クライアントが提供するライブラリが無かった(`libSDL2-2.0.so.0`、`libpulse.so.0`、`libpipewire-0.3.so.0`)。パッケージを追加して解消。`~/.steam/sdk64/steamclient.so` も steamcmd のものへリンク。
+- 起動サービスを `dbus-run-session` 内で立てると vrserver から見えない。ユーザーのセッションバス(`loginctl enable-linger`)を使う。
+- SteamVR Home(`steamvr_environments`)が画面の無い環境で起動・失敗を繰り返し、Scene アプリの接続が `AnotherAppLaunching` で失敗した(1 回)。`enableHomeApp: false` で解消。
+- スケルトン確認で `InputError_NoData` が出た回が 1 回あり、詳細表示の読み出しで例外になってスクリプトごと止まっていた。読み出しを例外安全にした(その後の 2 回は全項目合格)。
+- vrserver は SIGTERM / SIGINT を無視し、vrmonitor からの指示でしか終了しない。Xvfb 上では vrmonitor が起動直後に SIGFPE で落ちるため、正常終了させる手段が無かった。ドライバから `VREvent_DriverRequestedQuit` を送る方法も試したが vrserver は終了しなかった(この変更は取り込んでいない)。`stop_steamvr` は vrmonitor が居ない Linux では SteamVR を強制終了し、`ForcedShutdown` を返すようにした。
+
+→ Linux のダイレクトモードで実 GPU のコンポジタから映像が流れることを確認しました。画面のあるデスクトップ(vrmonitor が動く環境)での終了処理と、Proton 経由のゲームは未確認です。
+
 ## 2. 手動検証手順(要件 10.2)
 
 GUI 操作が必要なため未実施の項目です。結果欄に記入してください。

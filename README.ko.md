@@ -219,13 +219,13 @@ third_party/            OpenVR SDK(서브모듈 v2.15.6), nlohmann/json 3.11.3
 
 | 항목 | 버전 |
 |---|---|
-| SteamVR | 2.17.10(Windows 11) |
+| SteamVR | 2.17.10(Windows 11, Linux: Ubuntu 26.04 + NVIDIA RTX 4000 Ada) |
 | OpenVR SDK | v2.15.6 |
 | Windows 컴파일러 | MSVC 14.44(Visual Studio 2022 Build Tools 17.14), CMake 4.3 |
-| Linux 컴파일러 | gcc 13.3(Ubuntu 24.04 / WSL2), CMake 3.28, Vulkan은 Mesa llvmpipe로 셀프 테스트 |
+| Linux 컴파일러 | gcc 13.3(Ubuntu 24.04 / WSL2), gcc 15.2(Ubuntu 26.04), CMake 3.28 / 4.2 |
 | Python | 3.12(3.10 이상), 검증용으로 pyopenvr 2.12 |
 
-결과 상세: [docs/verification.md](docs/verification.md) (일본어). VRChat에서의 동작 확인(GUI 조작)과, Linux판 SteamVR에서의 다이렉트 모드(v0.3.0) 동작은 미검증입니다. v0.2.0에서는 Linux판 SteamVR 2.17.10에서 드라이버 로드까지 확인했으며, 컴포지터가 시작되지 않는 문제가 발견되었습니다([docs/ko/linux.md](docs/ko/linux.md)).
+결과 상세: [docs/verification.md](docs/verification.md) (일본어). Linux판 SteamVR에서는 v0.3.0의 다이렉트 모드로 실제 GPU(클라우드, 디스플레이 없음)에서 컴포지터가 90 fps로 렌더링하고 통합 테스트 28/28에 합격했습니다([docs/ko/linux.md](docs/ko/linux.md)). VRChat에서의 동작 확인(GUI 조작), 디스플레이가 있는 Linux 데스크톱, Proton을 통한 게임은 미검증입니다.
 
 ## 라이선스
 
