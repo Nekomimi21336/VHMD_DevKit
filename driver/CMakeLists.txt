@@ -51,6 +51,17 @@ set_target_properties(driver_vhmd PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY "$<1:${VHMD_STAGE_DIR}/bin/${VHMD_PLATFORM_DIR}>"
   PDB_OUTPUT_DIRECTORY "$<1:${CMAKE_BINARY_DIR}/pdb>")
 
+if(UNIX AND NOT APPLE)
+  # vrserver loads many drivers into one process: export nothing but the
+  # entry point, and link libstdc++/libgcc statically so the driver does not
+  # depend on the (possibly older) libstdc++ of the SteamVR runtime.
+  target_link_options(driver_vhmd PRIVATE
+    -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/driver_exports.map
+    -Wl,--no-undefined
+    -static-libstdc++ -static-libgcc)
+  set_property(TARGET driver_vhmd APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/driver_exports.map)
+endif()
+
 # Stage manifest and resources next to the binary.
 add_custom_command(TARGET driver_vhmd PRE_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory ${VHMD_STAGE_DIR}

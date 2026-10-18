@@ -1,0 +1,5 @@
+/* Linux/ELF: export only the SteamVR entry point from driver_vhmd.so. */
+{
+  global: HmdDriverFactory;
+  local: *;
+};

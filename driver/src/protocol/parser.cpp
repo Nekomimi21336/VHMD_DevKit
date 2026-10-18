@@ -55,7 +55,7 @@ std::string ReadId(const json& obj, std::string& out) {
 std::string ReadFloatArray5(const json& j, std::array<float, 5>& out, float lo, float hi) {
     if (!j.is_array() || j.size() != 5) return "expected 5 numbers";
     for (size_t i = 0; i < 5; ++i) {
-        double d;
+        double d = 0.0;
         if (auto e = ReadNumber(j[i], d); !e.empty()) return e;
         if (d < lo || d > hi) return "value out of range";
         out[i] = static_cast<float>(d);
@@ -104,7 +104,7 @@ std::string ReadInputValue(const json& j, float limit, float& out) {
         out = j.get<bool>() ? 1.0f : 0.0f;
         return {};
     }
-    double d;
+    double d = 0.0;
     if (auto e = ReadNumber(j, d); !e.empty()) return e;
     if (std::abs(d) > limit) return "out of range";
     out = static_cast<float>(d);

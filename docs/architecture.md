@@ -76,7 +76,7 @@ OpenVR 非依存部分は静的ライブラリ `vhmd_core` にまとまってお
 - `util/precise_sleep.cpp`: Windows は高分解能 Waitable Timer(`timeBeginPeriod` によるシステム全体のタイマ変更はしない)、他は `sleep_until`。
 - CMake: `CMAKE_CXX_VISIBILITY_PRESET hidden`、出力先 `bin/<win64|linux64|osx64>/driver_vhmd.<dll|so>`、`PREFIX ""`。
 - 設定ファイルパスは `std::filesystem::u8path` で UTF-8 として扱う。
-- Linux 実ビルドは未実施(要件どおり)。
+- Linux: WSL2 でビルド・単体テスト済み。ELF では `driver_exports.map` で `HmdDriverFactory` 以外を非公開にし、libstdc++/libgcc を静的リンク。Linux 版 SteamVR での動作は未検証(`docs/linux.md`)。
 
 ## SteamVR に登録する名前・ID
 

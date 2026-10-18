@@ -26,7 +26,7 @@ import openvr  # noqa: E402
 import steamvr_util  # noqa: E402
 from vhmd_client import VHMDClient, math3d  # noqa: E402
 
-VRCMD = steamvr_util.steamvr_path() / "bin" / "win64" / "vrcmd.exe"
+VRCMD = steamvr_util.vrcmd_path()
 INDEX_PROXIMAL = 7  # eBone_IndexFinger1
 
 

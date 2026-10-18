@@ -118,9 +118,8 @@ void Decode(std::string_view data, int depth, std::vector<OscMessage>& out, std:
             return;
         }
         while (r.Remaining() >= 4) {
-            uint32_t size;
-            r.ReadU32(size);
-            if (size > r.Remaining() || size % 4 != 0) {
+            uint32_t size = 0;
+            if (!r.ReadU32(size) || size > r.Remaining() || size % 4 != 0) {
                 errors.emplace_back("osc: bad bundle element size");
                 return;
             }

@@ -1,48 +1,113 @@
-"""Helpers to start/stop SteamVR and read its logs (Windows)."""
+"""Helpers to start/stop SteamVR and read its logs (Windows and Linux).
+
+The Windows code paths were verified against SteamVR 2.17.10. The Linux code
+paths (process handling via /proc and signals, vrstartup.sh, ~/.steam paths)
+have not been run against a real Linux SteamVR yet.
+"""
 
 from __future__ import annotations
 
 import json
 import os
 import re
+import signal
 import subprocess
+import sys
 import time
-import winreg
 from pathlib import Path
 from typing import List, Optional
 
+IS_WINDOWS = sys.platform == "win32"
+if IS_WINDOWS:
+    import winreg
+
+
+def _openvrpaths_file() -> Path:
+    if IS_WINDOWS:
+        return Path(os.environ["LOCALAPPDATA"]) / "openvr" / "openvrpaths.vrpath"
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "openvr" / "openvrpaths.vrpath"
+
+
+def _openvrpaths() -> dict:
+    try:
+        return json.loads(_openvrpaths_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
 
 def steam_path() -> Path:
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as k:
-        return Path(winreg.QueryValueEx(k, "SteamPath")[0])
+    if IS_WINDOWS:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as k:
+            return Path(winreg.QueryValueEx(k, "SteamPath")[0])
+    for p in (Path.home() / ".steam" / "steam", Path.home() / ".local" / "share" / "Steam",
+              Path.home() / ".var" / "app" / "com.valvesoftware.Steam" / ".local" / "share" / "Steam"):
+        if (p / "steamapps").exists():
+            return p.resolve()
+    return Path.home() / ".steam" / "steam"
 
 
 def steamvr_path() -> Path:
-    vrpath = Path(os.environ["LOCALAPPDATA"]) / "openvr" / "openvrpaths.vrpath"
-    data = json.loads(vrpath.read_text(encoding="utf-8"))
-    for r in data.get("runtime", []):
-        if (Path(r) / "bin" / "win64" / "vrserver.exe").exists():
+    marker = Path("bin") / ("win64/vrserver.exe" if IS_WINDOWS else "linux64/vrserver")
+    for r in _openvrpaths().get("runtime", []):
+        if (Path(r) / marker).exists():
             return Path(r)
     return steam_path() / "steamapps" / "common" / "SteamVR"
 
 
+def vrcmd_path() -> Path:
+    return steamvr_path() / "bin" / ("win64/vrcmd.exe" if IS_WINDOWS else "linux64/vrcmd")
+
+
 def vrserver_log() -> Path:
+    logs = _openvrpaths().get("log") or []
+    if logs:
+        return Path(logs[0]) / "vrserver.txt"
     return steam_path() / "logs" / "vrserver.txt"
 
 
-def running(names=("vrserver.exe", "vrmonitor.exe", "vrcompositor.exe")) -> List[str]:
-    out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True).stdout
-    found = []
-    for line in out.splitlines():
-        name = line.split(",")[0].strip('"').lower()
-        if name in names:
-            found.append(name)
-    return found
+def _norm(name: str) -> str:
+    name = name.lower()
+    return name[:-4] if name.endswith(".exe") else name
+
+
+def _process_table() -> List[tuple]:
+    """[(pid, name)] for all processes; names lower-case without .exe."""
+    if IS_WINDOWS:
+        out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True).stdout
+        rows = []
+        for line in out.splitlines():
+            parts = [p.strip('"') for p in line.split('","')]
+            if len(parts) >= 2 and parts[1].strip('"').isdigit():
+                rows.append((int(parts[1].strip('"')), _norm(parts[0])))
+        return rows
+    rows = []
+    for d in Path("/proc").iterdir():
+        if d.name.isdigit():
+            try:
+                rows.append((int(d.name), _norm((d / "comm").read_text().strip())))
+            except OSError:
+                pass
+    return rows
+
+
+def running(names=("vrserver", "vrmonitor", "vrcompositor")) -> List[str]:
+    """Names (as given) of the listed processes that are running. Accepts
+    names with or without '.exe'."""
+    present = {n for _, n in _process_table()}
+    return [n for n in names if _norm(n) in present]
 
 
 def start_steamvr() -> None:
-    exe = steamvr_path() / "bin" / "win64" / "vrstartup.exe"
-    subprocess.Popen([str(exe)], cwd=str(exe.parent), close_fds=True)
+    if IS_WINDOWS:
+        exe = steamvr_path() / "bin" / "win64" / "vrstartup.exe"
+        subprocess.Popen([str(exe)], cwd=str(exe.parent), close_fds=True)
+        return
+    script = steamvr_path() / "bin" / "vrstartup.sh"
+    if script.exists():
+        subprocess.Popen([str(script)], cwd=str(script.parent), start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:  # let the Steam client launch it
+        subprocess.Popen(["xdg-open", "steam://rungameid/250820"], start_new_session=True)
 
 
 def wait_for_server(openvr_module, timeout: float = 90.0):
@@ -58,41 +123,76 @@ def wait_for_server(openvr_module, timeout: float = 90.0):
     raise TimeoutError(f"SteamVR did not come up within {timeout}s: {last_err}")
 
 
-
-
 _STEAMVR_PROCS = {"vrserver", "vrmonitor", "vrcompositor", "vrdashboard", "vrwebhelper", "vrstartup"}
 
 
+def _is_steam_or_game(name: str, path: str) -> bool:
+    """Steam client processes and games are never ours to stop."""
+    p = path.lower().replace("\\", "/")
+    return name.startswith("steam") or "/steam/" in p or "/steamapps/" in p or "/.steam/" in p
+
+
 def openvr_client_processes() -> List[tuple]:
-    """[(pid, name, path)] of running processes that loaded vrclient_x64.dll
-    (OpenVR apps / overlays), excluding SteamVR itself, the Steam client and
-    this process. Steam (steam.exe, steamwebhelper.exe, ...) loads vrclient
-    too and must never be touched."""
-    ps = (
-        "Get-Process | Where-Object { try { $_.Modules.ModuleName -contains 'vrclient_x64.dll' } catch { $false } }"
-        " | ForEach-Object { \"$($_.Id)|$($_.ProcessName)|$($_.Path)\" }"
-    )
-    out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True).stdout
+    """[(pid, name, path)] of running processes that loaded the OpenVR client
+    library (vrclient_x64.dll / vrclient.so): OpenVR apps and overlays.
+    Excludes SteamVR itself, the Steam client, games under steamapps (this
+    includes Proton games) and this process."""
     rows = []
-    for line in out.splitlines():
-        parts = line.strip().split("|")
-        if len(parts) == 3 and parts[0].isdigit():
-            pid = int(parts[0])
-            name, path = parts[1].lower(), parts[2].lower()
-            if pid == os.getpid() or name in _STEAMVR_PROCS:
+    if IS_WINDOWS:
+        ps = (
+            "Get-Process | Where-Object { try { $_.Modules.ModuleName -contains 'vrclient_x64.dll' } catch { $false } }"
+            " | ForEach-Object { \"$($_.Id)|$($_.ProcessName)|$($_.Path)\" }"
+        )
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True).stdout
+        candidates = []
+        for line in out.splitlines():
+            parts = line.strip().split("|")
+            if len(parts) == 3 and parts[0].isdigit():
+                candidates.append((int(parts[0]), parts[1], parts[2]))
+    else:
+        candidates = []
+        for d in Path("/proc").iterdir():
+            if not d.name.isdigit():
                 continue
-            if name.startswith("steam") or "\\steam\\" in path or "\\steamapps\\" in path:
-                continue  # Steam client / games: never ours to stop
-            rows.append((pid, parts[1], parts[2]))
+            try:
+                if "vrclient" not in (d / "maps").read_text(errors="replace"):
+                    continue
+                candidates.append((int(d.name), (d / "comm").read_text().strip(), os.readlink(d / "exe")))
+            except OSError:
+                continue
+    for pid, name, path in candidates:
+        if pid == os.getpid() or _norm(name) in _STEAMVR_PROCS or _is_steam_or_game(name.lower(), path):
+            continue
+        rows.append((pid, name, path))
     return rows
+
+
+def _kill_pid(pid: int) -> None:
+    if IS_WINDOWS:
+        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+    else:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+
+def _kill_name(name: str) -> None:
+    if IS_WINDOWS:
+        subprocess.run(["taskkill", "/F", "/IM", f"{name}.exe"], capture_output=True)
+    else:
+        for pid, n in _process_table():
+            if n == name:
+                _kill_pid(pid)
 
 
 def stop_steamvr(timeout: float = 60.0, stop_relaunchers: bool = False, relaunch_watch: float = 8.0) -> float:
     """Shuts SteamVR down and waits until it stays down. Returns seconds taken.
 
-    vrmonitor ignores WM_CLOSE from taskkill; when the master process goes away
-    vrserver logs "Lost master process ... Quitting all immediately" and exits
-    through its normal path (drivers get Cleanup()).
+    Windows: vrmonitor ignores WM_CLOSE from taskkill; when the master process
+    goes away vrserver logs "Lost master process ... Quitting all immediately"
+    and exits through its normal path (drivers get Cleanup()). On Linux the
+    same is attempted with SIGTERM to vrmonitor (unverified).
 
     Some OpenVR overlay apps that SteamVR auto-starts survive that and call
     VR_Init again right away, which relaunches SteamVR. Without
@@ -108,9 +208,9 @@ def stop_steamvr(timeout: float = 60.0, stop_relaunchers: bool = False, relaunch
             # Before SteamVR goes down, so they cannot relaunch it.
             for pid, name, path in clients:
                 print(f"stop_steamvr: terminating OpenVR overlay/app: {name} (pid {pid}, {path})")
-                subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
-        subprocess.run(["taskkill", "/F", "/IM", "vrmonitor.exe"], capture_output=True)
-        while "vrserver.exe" in running():
+                _kill_pid(pid)
+        _kill_name("vrmonitor")
+        while running(("vrserver",)):
             if time.monotonic() - t0 > timeout:
                 raise TimeoutError("vrserver did not exit")
             time.sleep(0.25)
@@ -119,7 +219,7 @@ def stop_steamvr(timeout: float = 60.0, stop_relaunchers: bool = False, relaunch
         deadline = time.monotonic() + relaunch_watch
         relaunched = False
         while time.monotonic() < deadline:
-            if running(("vrmonitor.exe", "vrserver.exe", "vrstartup.exe")):
+            if running(("vrmonitor", "vrserver", "vrstartup")):
                 relaunched = True
                 break
             time.sleep(0.5)

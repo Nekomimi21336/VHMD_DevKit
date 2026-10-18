@@ -26,7 +26,7 @@ import openvr  # noqa: E402
 sys.path.insert(0, str(HERE))
 import steamvr_util  # noqa: E402
 
-VRCMD = steamvr_util.steamvr_path() / "bin" / "win64" / "vrcmd.exe"
+VRCMD = steamvr_util.vrcmd_path()
 
 from vhmd_client import VHMDClient  # noqa: E402
 

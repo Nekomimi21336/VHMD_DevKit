@@ -83,7 +83,7 @@ std::optional<std::string> MessageRouter::HandleDatagram(std::string_view data, 
             reply = HandleConfig(*cfg, now);
             continue;
         }
-        const std::string& id = std::visit([](const auto& m) -> const std::string& { return m.id; }, msg);
+        const std::string id = std::visit([](const auto& m) { return m.id; }, msg);
         DeviceState* dev = Find(id);
         if (!dev || !dev->Config().enabled) {
             parsed.errors.push_back("unknown or disabled device '" + id.substr(0, 64) + "'");

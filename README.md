@@ -102,6 +102,14 @@ powershell -ExecutionPolicy Bypass -File tools/uninstall_driver.ps1 -CleanSettin
 >
 > `third_party/openvr` が無い(サブモジュール未取得)場合、CMake が configure 時に v2.15.6 を自動取得します。
 
+## Linux
+
+Linux 版 SteamVR 向けのビルド・登録手順と実機確認チェックリストは [docs/linux.md](docs/linux.md)。Linux ビルドと単体テストは WSL2 (Ubuntu 24.04, gcc 13.3) で確認済み、**Linux 版 SteamVR 上での動作は未検証**です。
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build && tools/install_driver.sh
+```
+
 ## 実機 HMD がある PC での注意
 
 - このドライバの HMD は `hmd_presence: ["*.*"]` で常に登録されます。実 HMD(PICO 等)のドライバと同時に有効だと、どちらがアクティブ HMD になるかは環境依存です(この PC では PICO 未接続時に vhmd が選ばれることを確認)。
@@ -156,7 +164,7 @@ driver/
     tracker_device.*        トラッカー + ロール
     math/ protocol/ config/ state/ net/ util/   OpenVR 非依存コア (vhmd_core)
 clients/python/             vhmd_client パッケージ、examples/
-tools/                      install/uninstall/verify_env (PowerShell)、gen_remapping.py
+tools/                      install/uninstall/verify_env (Windows: .ps1 / Linux: .sh)、gen_remapping.py
 tests/unit/                 C++ 単体テスト(34 件)
 tests/python/               Python クライアント単体テスト(pytest, 8 件)
 tests/integration/          SteamVR 統合テスト、入力/スケルトン検証、起動終了ストレス

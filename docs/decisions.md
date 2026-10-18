@@ -41,7 +41,9 @@
 | トラッカーのみモード (`hmd.enabled=false`) | ドライバが HMD を追加しないことは確認。この PC では実ヘッドセット(PICO 4S)が未接続のため、SteamVR に HMD が無く他デバイスも有効化されない → **未検証** | 実 HMD 接続時に `docs/verification.md` の手順で確認 |
 | VMT の Joint / Follow / Skeleton / ルーム行列 | 未実装(破棄してログ) | `protocol/osc.cpp` に追加 |
 | 実行時のデバイス追加・削除 | OpenVR はデバイス削除 API が無いため、台数は起動時の設定で決定 | `TrackedDeviceAdded` は後からも呼べるので「最初のパケットで追加」モードは追加可能 |
-| Linux / macOS ビルド | 対象外。構造上の配慮のみ(`docs/architecture.md`) | |
+| Linux ビルド | WSL2 (Ubuntu 24.04, gcc 13.3) でビルド・単体テスト成功。**Linux 版 SteamVR 上では未検証**。仮想ディスプレイ (`IVRDisplayComponent`) が Linux のコンポジタで起動するかが最大の不明点 | `docs/linux.md`。起動しなければ `IVRVirtualDisplay` 実装 |
+| Linux の配布性 | `.so` はビルド環境の glibc 以上を要求(Ubuntu 24.04 ビルドで 2.38)。libstdc++/libgcc は静的リンク | 対象 PC でビルド、または古い環境/Steam Runtime SDK でビルド |
+| macOS | 対象外 | |
 | 送信→反映の遅延 | 更新スレッド周期待ち(120 Hz で最大 8.3 ms) | 受信スレッドから即時 `TrackedDevicePoseUpdated` するモード |
 | `steam.client (vhmd_*) has no configured binding` | SteamVR が Steam クライアント等のアプリ向けに出すログ。PICO 等の実機でも同じ行が出ている。動作に影響なし | — |
 
