@@ -1,0 +1,25 @@
+{
+	"jsonid": "vrresources",
+	"statusicons": {
+		"HMD": {
+			"Prop_NamedIconPathDeviceOff_String": "{vhmd}/icons/headset_status_off.png",
+			"Prop_NamedIconPathDeviceSearching_String": "{vhmd}/icons/headset_status_searching.gif",
+			"Prop_NamedIconPathDeviceSearchingAlert_String": "{vhmd}/icons/headset_status_searching_alert.gif",
+			"Prop_NamedIconPathDeviceReady_String": "{vhmd}/icons/headset_status_ready.png",
+			"Prop_NamedIconPathDeviceReadyAlert_String": "{vhmd}/icons/headset_status_ready_alert.png",
+			"Prop_NamedIconPathDeviceNotReady_String": "{vhmd}/icons/headset_status_error.png",
+			"Prop_NamedIconPathDeviceStandby_String": "{vhmd}/icons/headset_status_standby.png",
+			"Prop_NamedIconPathDeviceAlertLow_String": "{vhmd}/icons/headset_status_ready_low.png"
+		},
+		"Controller": {
+			"Prop_NamedIconPathDeviceOff_String": "{vhmd}/icons/controller_status_off.png",
+			"Prop_NamedIconPathDeviceSearching_String": "{vhmd}/icons/controller_status_searching.gif",
+			"Prop_NamedIconPathDeviceSearchingAlert_String": "{vhmd}/icons/controller_status_searching_alert.gif",
+			"Prop_NamedIconPathDeviceReady_String": "{vhmd}/icons/controller_status_ready.png",
+			"Prop_NamedIconPathDeviceReadyAlert_String": "{vhmd}/icons/controller_status_ready_alert.png",
+			"Prop_NamedIconPathDeviceNotReady_String": "{vhmd}/icons/controller_status_error.png",
+			"Prop_NamedIconPathDeviceStandby_String": "{vhmd}/icons/controller_status_standby.png",
+			"Prop_NamedIconPathDeviceAlertLow_String": "{vhmd}/icons/controller_status_ready_low.png"
+		}
+	}
+}

@@ -1,0 +1,15 @@
+{
+  "jsonid": "input_profile",
+  "controller_type": "vhmd_tracker",
+  "device_class": "TrackedDeviceClass_GenericTracker",
+  "resource_root": "vhmd",
+  "driver_name": "vhmd",
+  "input_bindingui_mode": "single_device",
+  "input_source": {
+    "/pose/raw": {
+      "type": "pose",
+      "binding_image_point": [ 100, 90 ]
+    }
+  },
+  "default_bindings": []
+}

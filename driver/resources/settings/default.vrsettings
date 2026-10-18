@@ -1,0 +1,19 @@
+{
+	"driver_vhmd": {
+		"enable": true,
+		"loadPriority": 0,
+		"configFile": ""
+	},
+	"vhmd_display": {
+		"windowX": 0,
+		"windowY": 0,
+		"windowWidth": 1920,
+		"windowHeight": 1080,
+		"renderWidth": 1440,
+		"renderHeight": 1600,
+		"fovDegrees": 100.0,
+		"displayFrequency": 90.0,
+		"secondsFromVsyncToPhotons": 0.011,
+		"ipdMeters": 0.063
+	}
+}

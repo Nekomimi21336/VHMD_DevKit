@@ -1,0 +1,17 @@
+{
+  "jsonid": "input_profile",
+  "controller_type": "vhmd_hmd",
+  "device_class": "TrackedDeviceClass_HMD",
+  "resource_root": "vhmd",
+  "driver_name": "vhmd",
+  "input_bindingui_mode": "hmd",
+  "input_source": {
+    "/input/system": {
+      "type": "button",
+      "click": true,
+      "binding_image_point": [ 250, 60 ],
+      "order": 1
+    }
+  },
+  "default_bindings": []
+}

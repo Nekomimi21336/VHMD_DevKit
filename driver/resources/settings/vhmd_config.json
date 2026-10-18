@@ -1,0 +1,46 @@
+{
+  // VirtualHMD driver configuration. Comments are allowed.
+  // Reloaded on every SteamVR start. See docs/protocol.md and README.md.
+  "network": {
+    "bind": "127.0.0.1",   // loopback only by default
+    "port": 39570,
+    "allowRemote": false   // must be true to bind anything other than 127.0.0.1
+  },
+  "updateRateHz": 120,
+  "smoothing": 0.0,        // 0 = off, 0.5..0.9 = increasingly smooth (defined per 90 Hz tick)
+  "timeout": {
+    "ms": 500,
+    "policy": "hold"       // hold | invalid | disconnect
+  },
+  "applyTrackerRoles": true, // write tracker roles to SteamVR's "trackers" settings unless the user set one
+  "log": { "errorsPerSecond": 5, "verbose": false },
+  "vmt": {
+    "enabled": false,      // accept VMT compatible OSC on the same port
+    "indexMap": { }        // e.g. { "0": "tracker_0", "1": "left_hand" }
+  },
+  "hmd": {
+    "enabled": true,       // false = trackers/controllers only (use alongside a real HMD)
+    "serial": "VHMD-HMD-0",
+    "pos": [0.0, 1.7, 0.0],
+    "rot": [1.0, 0.0, 0.0, 0.0],
+    "eyeTracking": true,
+    "headModel": false     // true = "pos" is the neck pivot and SteamVR adds its neck model
+  },
+  "controllers": {
+    "enabled": true,
+    "skeleton": true,
+    "skeletonLevel": "full", // full = bone data passed through as sent | partial
+    "left":  { "serial": "VHMD-CTL-L", "pos": [-0.2, 1.2, -0.3] },
+    "right": { "serial": "VHMD-CTL-R", "pos": [ 0.2, 1.2, -0.3] }
+  },
+  "trackers": [
+    { "id": "tracker_0", "role": "waist",       "serial": "VHMD-TRK-0", "pos": [ 0.00, 1.00,  0.00] },
+    { "id": "tracker_1", "role": "left_foot",   "serial": "VHMD-TRK-1", "pos": [-0.12, 0.08,  0.00] },
+    { "id": "tracker_2", "role": "right_foot",  "serial": "VHMD-TRK-2", "pos": [ 0.12, 0.08,  0.00] },
+    { "id": "tracker_3", "role": "left_knee",   "serial": "VHMD-TRK-3", "pos": [-0.11, 0.50, -0.03] },
+    { "id": "tracker_4", "role": "right_knee",  "serial": "VHMD-TRK-4", "pos": [ 0.11, 0.50, -0.03] },
+    { "id": "tracker_5", "role": "left_elbow",  "serial": "VHMD-TRK-5", "pos": [-0.30, 1.15,  0.00] },
+    { "id": "tracker_6", "role": "right_elbow", "serial": "VHMD-TRK-6", "pos": [ 0.30, 1.15,  0.00] },
+    { "id": "tracker_7", "role": "chest",       "serial": "VHMD-TRK-7", "pos": [ 0.00, 1.35, -0.05] }
+  ]
+}

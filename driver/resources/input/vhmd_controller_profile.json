@@ -1,0 +1,30 @@
+{
+  "jsonid": "input_profile",
+  "controller_type": "vhmd_controller",
+  "device_class": "TrackedDeviceClass_Controller",
+  "resource_root": "vhmd",
+  "driver_name": "vhmd",
+  "legacy_binding": "{vhmd}/input/legacy_bindings_vhmd_controller.json",
+  "remapping": "{vhmd}/input/vhmd_controller_remapping.json",
+  "input_bindingui_mode": "controller_handed",
+  "should_show_binding_errors": true,
+  "input_source": {
+    "/input/system": { "type": "button", "click": true, "touch": true, "binding_image_point": [ 280, 300 ], "order": 0 },
+    "/input/menu": { "type": "button", "click": true, "binding_image_point": [ 270, 250 ], "order": 1 },
+    "/input/trigger": { "type": "trigger", "value": true, "click": true, "touch": true, "binding_image_point": [ 122, 200 ], "order": 2 },
+    "/input/grip": { "type": "trigger", "value": true, "click": true, "touch": true, "binding_image_point": [ 195, 390 ], "order": 3 },
+    "/input/joystick": { "type": "joystick", "click": true, "touch": true, "binding_image_point": [ 280, 200 ], "order": 4 },
+    "/input/a": { "type": "button", "side": "right", "click": true, "touch": true, "binding_image_point": [ 240, 240 ], "order": 5 },
+    "/input/b": { "type": "button", "side": "right", "click": true, "touch": true, "binding_image_point": [ 210, 210 ], "order": 6 },
+    "/input/x": { "type": "button", "side": "left", "click": true, "touch": true, "binding_image_point": [ 240, 240 ], "order": 5 },
+    "/input/y": { "type": "button", "side": "left", "click": true, "touch": true, "binding_image_point": [ 210, 210 ], "order": 6 },
+    "/input/skeleton/left": { "type": "skeleton", "side": "left", "skeleton": "/skeleton/hand/left", "binding_image_point": [ 200, 550 ] },
+    "/input/skeleton/right": { "type": "skeleton", "side": "right", "skeleton": "/skeleton/hand/right", "binding_image_point": [ 200, 550 ] },
+    "/output/haptic": { "type": "vibration", "binding_image_point": [ 192, 139 ] },
+    "/pose/raw": { "type": "pose", "binding_image_point": [ 214, 216 ] },
+    "/pose/base": { "type": "pose", "binding_image_point": [ 211, 250 ] },
+    "/pose/handgrip": { "type": "pose", "binding_image_point": [ 284, 346 ] },
+    "/pose/tip": { "type": "pose", "binding_image_point": [ 214, 216 ] }
+  },
+  "default_bindings": []
+}

@@ -1,0 +1,14 @@
+[
+  {
+    "language_tag": "en_US",
+    "vhmd_hmd": "VirtualHMD Headset",
+    "vhmd_controller": "VirtualHMD Controller",
+    "vhmd_tracker": "VirtualHMD Tracker"
+  },
+  {
+    "language_tag": "ja_JP",
+    "vhmd_hmd": "VirtualHMD ヘッドセット",
+    "vhmd_controller": "VirtualHMD コントローラー",
+    "vhmd_tracker": "VirtualHMD トラッカー"
+  }
+]

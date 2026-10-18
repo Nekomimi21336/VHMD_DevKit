@@ -1,0 +1,16 @@
+{
+  "controller_type": "vhmd_controller",
+  "name": "vhmd integration test bindings",
+  "bindings": {
+    "/actions/test": {
+      "skeleton": [
+        { "output": "/actions/test/in/skeleton_left", "path": "/user/hand/left/input/skeleton/left" },
+        { "output": "/actions/test/in/skeleton_right", "path": "/user/hand/right/input/skeleton/right" }
+      ],
+      "sources": [
+        { "path": "/user/hand/right/input/trigger", "mode": "trigger",
+          "inputs": { "pull": { "output": "/actions/test/in/trigger" } } }
+      ]
+    }
+  }
+}

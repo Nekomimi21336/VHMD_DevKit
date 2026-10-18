@@ -1,0 +1,12 @@
+{
+  "default_bindings": [
+    { "controller_type": "vhmd_controller", "binding_url": "bindings_vhmd_controller.json" }
+  ],
+  "actions": [
+    { "name": "/actions/test/in/skeleton_left", "type": "skeleton", "skeleton": "/skeleton/hand/left" },
+    { "name": "/actions/test/in/skeleton_right", "type": "skeleton", "skeleton": "/skeleton/hand/right" },
+    { "name": "/actions/test/in/trigger", "type": "vector1" }
+  ],
+  "action_sets": [ { "name": "/actions/test", "usage": "leftright" } ],
+  "localization": []
+}

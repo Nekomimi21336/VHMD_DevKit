@@ -1,0 +1,20 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "vs2022",
+      "displayName": "Visual Studio 2022 (x64)",
+      "description": "Pins the VS 2022 generator. Use when a newer Visual Studio without the C++ workload is also installed (CMake would pick it by default).",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build"
+    }
+  ],
+  "buildPresets": [
+    { "name": "vs2022-release", "configurePreset": "vs2022", "configuration": "Release" }
+  ],
+  "testPresets": [
+    { "name": "vs2022-release", "configurePreset": "vs2022", "configuration": "Release", "output": { "outputOnFailure": true } }
+  ]
+}
