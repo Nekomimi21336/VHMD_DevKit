@@ -32,6 +32,8 @@ Linux 版 SteamVR 的合成器无法像 Windows 那样“绘制到桌面上的�
 | 在 WSL2 上的 Linux 版 SteamVR 2.17.10(软件 Vulkan)上运行 v0.3.0 | ✅ 驱动加载、直接模式、集成测试 21/23,合成器运行到 `Headset is using driver direct mode` / ❌ 由于 llvmpipe 不支持导入时间线信号量,渲染器初始化失败([verification.md](../verification.md),日文) |
 | 在使用真实 GPU 的 Linux 版 SteamVR 2.17.10 上运行 v0.3.0(云 GPU：NVIDIA RTX 4000 Ada、驱动 595、Ubuntu 26.04、用 gcc 15.2 构建、无显示器 + Xvfb) | ✅ `linux_check.py` 全部通过：合成器创建交换纹理(单眼 2160×2400)并以 **90 fps present**，无 `CannotDRMLeaseDisplay`，预览中有 SteamVR 的画面，集成测试 28/28(含骨骼与输入)。连续两次通过 |
 | 相当于桌面的环境(NVIDIA 真实 X 服务器 + Steam 客户端 + 启用 SteamVR Home) | ✅ `linux_check.py` 14/14 通过。vrmonitor 运行，确认 SteamVR 正常退出及驱动的结束处理(`vhmd: shutting down`，约 2 秒)。已在云 GPU(RTX 4000 Ada)上确认。Proxmox 虚拟机中的 GTX 1050(2 GB，Pascal，驱动 580)也得到 14/14，但**启动后 5〜60 秒 vrcompositor 因 GPU 异常(`Xid 13: 3D WIDTH ZT Violation` → `VK_ERROR_DEVICE_LOST`)停止渲染**。在没有客户端、预览和 SteamVR Home 的情况下也会重现，未发现驱动侧的原因(GTX 1050 低于 SteamVR 最低要求 GTX 970 / 1060) |
+| 预览的开始/停止(轻量化之后，默认停止，通过 `preview` 操作开始) | 已通过 WSL 上的自测确认捕获 → 暂停 → 恢复。**尚未在使用真实 GPU 的 SteamVR 上确认** |
+| `preview_viewer.py` 的窗口显示 | **未确认**(此前只使用过 `--snapshot` 和通过 `PreviewReader` 取出画面) |
 | 通过 Proton 运行 VRChat(Proton Experimental) | ✅ 可启动，并向虚拟 HMD 的双眼渲染 VR 画面(登录界面)。VRChat 的 Oculus Touch 绑定应用于虚拟控制器，游戏内的手跟随发送的姿态。登录后也确认了虚拟形象的头部、手、手指跟随、移动、按键、菜单，以及控制器 ⇄ 手部追踪的切换(无需重启 VRChat)。全身校准也已在手部模式下完成，并确认脚部追踪器可驱动虚拟形象的腿。控制器模式下只要从正面照射菜单也可以点击(已在 Windows 确认)。**在虚拟机内 VRChat 的 Easy Anti-Cheat 会以 `Cannot run under Virtual Machine` 拒绝启动**(在云端 KVM 上可以启动；隐藏虚拟机检测属于规避反作弊，因此未进行) |
 
 ## 前提

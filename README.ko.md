@@ -19,6 +19,7 @@
 - [시작하기 (빌드된 바이너리)](#시작하기-빌드된-바이너리)
 - [소스에서 빌드](#소스에서-빌드)
 - [사용법 (Python)](#사용법-python)
+- [창 없이 사용하기 / FPS 낮추기(Windows)](#창-없이-사용하기--fps-낮추기windows)
 - [설정](#설정)
 - [실제 HMD와 함께 사용할 때](#실제-hmd와-함께-사용할-때)
 - [테스트](#테스트)
@@ -36,7 +37,8 @@
 - **컨트롤러와 핸드 트래킹 전환**: `hand_mode`로 SteamVR을 멈추지 않고 전환(VRChat에서는 버튼 조작 ⇄ 핸드 트래킹 조작). 보내는 ID와 내용은 그대로
 - **SteamVR에서 구분하기 쉬운 표시**: 트래커 모델과 상태 아이콘에 부위(`L FOOT`, `WAIST` 등)와 ID(`TRACKER_1`), 컨트롤러에 `L` / `R`와 ID를 표시. 롤을 바꾸면 표시도 따라감
 - **시선 입력**(SteamVR의 아이 트래킹 컴포넌트)
-- **Windows / Linux** 지원. Linux는 다이렉트 모드(SteamVR이 그린 영상을 드라이버가 받는 방식)로 동작하며, 영상은 공유 메모리를 통한 뷰어로 확인 가능(v0.3.0. Linux판 SteamVR에서의 확인 대기 중)
+- **Windows / Linux** 지원. Linux는 다이렉트 모드(SteamVR이 그린 영상을 드라이버가 받는 방식)로 동작하며, 실제 GPU의 Linux판 SteamVR에서 동작 확인 완료
+- **창 없이 저부하로 실행 가능**: Windows에서도 다이렉트 모드를 선택할 수 있으며, 프리뷰 창 표시 여부와 프레임 레이트(1~240 Hz, 실행 중 변경 가능)를 지정 가능. 영상은 Python에서 가져올 수 있음(머신러닝·자동화용)
 - **Python 클라이언트**(의존성 없음)와 예제, SteamVR 위에서 동작하는 자동 검증 스크립트
 - **위장 없음**: 독자적인 컨트롤러 타입 `vhmd_*`로 등록. 기존 앱의 바인딩은 SteamVR의 리매핑으로 재사용
 
@@ -215,12 +217,13 @@ SteamVR 컴포지터는 1~240 Hz의 어떤 값에도 정확히 따릅니다. 다
 
 | 종류 | 명령 | 내용 |
 |---|---|---|
-| C++ 단위 테스트 | `ctest --preset vs2022-release` | 37건(파서, 좌표 변환, 설정, 타임아웃, 라우터, UDP) |
-| Python 단위 테스트 | `python -m pytest tests/python` | 13건(클라이언트, 프리뷰 읽기) |
+| C++ 단위 테스트 | `ctest --preset vs2022-release` | 45건(파서, 좌표 변환, 설정, 타임아웃, 라우터, UDP, 라벨 생성) |
+| Python 단위 테스트 | `python -m pytest tests/python` | 14건(클라이언트, 프리뷰 읽기) |
 | Linux 캡처 셀프 테스트 | `ctest`(Linux) | 실제 Vulkan으로 공유 이미지 → 공유 메모리를 확인(SteamVR 불필요) |
 | Linux 실제 장비 확인 | `python3 tests/integration/linux_check.py` | 다이렉트 모드의 표시 경로 + 통합 테스트, 리포트 출력 |
 | SteamVR 통합 테스트 | `python tests/integration/run_integration.py` | 31개 항목(열거, 온디맨드 추가, 오차, 지연, 입력, 스켈레톤, 핸드 모드 전환, 잘못된 패킷, 부하, 종료 처리) |
 | 시작/종료 반복 | `python tests/integration/stress_restart.py --cycles 30` | 매번 드라이버의 종료 처리와 크래시 여부를 확인 |
+| 장시간 안정성 | `python tests/integration/soak_test.py --minutes 30` | 프레임 레이트, 자세 오차, 메모리 증가, 경고를 일정 간격으로 기록 |
 
 통합 테스트에는 `pip install openvr`이 필요합니다. 시작 후 SteamVR을 재시작해 버리는 오버레이 앱이 있는 환경에서는 `--stop-relaunchers`를 붙이십시오(Steam 본체와 게임은 대상 외).
 
@@ -234,8 +237,9 @@ SteamVR 컴포지터는 1~240 Hz의 어떤 값에도 정확히 따릅니다. 다
 | Linux | [linux](docs/linux.md) | [linux](docs/en/linux.md) | [linux](docs/zh-CN/linux.md) | [linux](docs/ko/linux.md) |
 | 검증 절차와 결과 | [verification](docs/verification.md) (일본어) | — | — | — |
 | 판단·미대응 사항 기록 | [decisions](docs/decisions.md) (일본어) | — | — | — |
+| 변경 이력 | [CHANGELOG](CHANGELOG.md) (일본어) | — | — | — |
 
-검증 기록과 판단 기록은 개발 기록이므로 일본어로만 제공됩니다.
+검증 기록·판단 기록·변경 이력은 개발 기록이므로 일본어로만 제공됩니다.
 
 ## 저장소 구성
 
@@ -243,18 +247,20 @@ SteamVR 컴포지터는 1~240 Hz의 어떤 값에도 정확히 따릅니다. 다
 CMakeLists.txt / CMakePresets.json   빌드 설정(OpenVR SDK 가져오기, 플랫폼별 출력)
 driver/
   driver.vrdrivermanifest
-  resources/            설정, 입력 프로파일, 리매핑, 레거시 바인딩, 아이콘
+  resources/            설정, 입력 프로파일, 리매핑, 레거시 바인딩, 아이콘, 컨트롤러 모델
   src/
     main.cpp            HmdDriverFactory(유일한 공개 심볼)
     device_provider.*   디바이스 관리, 수신 / 갱신 스레드, 온디맨드 추가
     device_base.*       모든 디바이스 공통
     hmd_device.*        HMD, 가상 디스플레이, 시선
     linux/              Linux의 다이렉트 모드, 프레임 캡처, Vulkan 동적 로드
+    windows/            Windows의 다이렉트 모드(D3D11), 프리뷰 창, 공유 메모리
+    visuals/            SteamVR에 표시할 라벨(모델·아이콘) 생성
     controller_device.* 컨트롤러, 진동, 스켈레톤
     tracker_device.*    트래커, 롤
     math/ protocol/ config/ state/ net/ util/   OpenVR 비의존 코어(단위 테스트 대상)
 clients/python/         vhmd_client 패키지와 examples/
-tools/                  등록 / 해제 / 환경 확인(Windows: .ps1, Linux: .sh), 배포물 생성
+tools/                  등록 / 해제 / 환경 확인(Windows: .ps1, Linux: .sh), 배포물 생성, 모델 생성
 tests/                  unit/(C++), python/, integration/(SteamVR)
 docs/                   문서(위의 표)
 third_party/            OpenVR SDK(서브모듈 v2.15.6), nlohmann/json 3.11.3
@@ -270,7 +276,7 @@ third_party/            OpenVR SDK(서브모듈 v2.15.6), nlohmann/json 3.11.3
 | Linux 컴파일러 | gcc 13.3(Ubuntu 24.04 / WSL2), gcc 15.2(Ubuntu 26.04), CMake 3.28 / 4.2 |
 | Python | 3.12(3.10 이상), 검증용으로 pyopenvr 2.12 |
 
-결과 상세: [docs/verification.md](docs/verification.md) (일본어). Linux판 SteamVR에서는 v0.3.0의 다이렉트 모드로 실제 GPU(NVIDIA RTX 4000 Ada)에서 컴포지터의 90 fps 렌더링, 통합 테스트 28/28, Steam 클라이언트와 SteamVR Home이 있는 환경에서의 정상 종료, Proton을 통한 VRChat의 렌더링과 컨트롤러 추종까지 확인했습니다. GTX 1050에서는 SteamVR 컴포지터가 시작 후 잠시 뒤 GPU 예외로 멈춥니다([docs/ko/linux.md](docs/ko/linux.md)). VRChat에 로그인한 상태의 조작(아바타, 풀바디 보정)과 실제 HMD와의 병용은 미검증입니다.
+결과 상세: [docs/verification.md](docs/verification.md) (일본어). Linux판 SteamVR에서는 v0.3.0의 다이렉트 모드로 실제 GPU(NVIDIA RTX 4000 Ada)에서 컴포지터의 90 fps 렌더링, 통합 테스트 28/28, Steam 클라이언트와 SteamVR Home이 있는 환경에서의 정상 종료, Proton을 통한 VRChat의 렌더링과 컨트롤러 추종까지 확인했습니다. GTX 1050에서는 SteamVR 컴포지터가 시작 후 잠시 뒤 GPU 예외로 멈춥니다([docs/ko/linux.md](docs/ko/linux.md)). VRChat에 로그인한 상태에서는 아바타 추종, 손가락, 이동, 메뉴 조작, 풀바디 보정을 Windows(컨트롤러)와 Linux(핸드 모드)에서 확인했습니다. 실제 HMD와의 병용, 실제 화면이 있는 Linux 데스크톱, Linux에서의 프리뷰 시작·정지(경량화 이후)는 미검증입니다. 변경 이력: [CHANGELOG.md](CHANGELOG.md) (일본어)
 
 ## 라이선스
 

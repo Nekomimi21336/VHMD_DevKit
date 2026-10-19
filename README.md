@@ -19,6 +19,7 @@
 - [はじめかた(ビルド済みバイナリ)](#はじめかたビルド済みバイナリ)
 - [ソースからビルド](#ソースからビルド)
 - [使い方(Python)](#使い方python)
+- [ウィンドウを出さずに使う / FPS を下げる(Windows)](#ウィンドウを出さずに使う--fps-を下げるwindows)
 - [設定](#設定)
 - [実機 HMD と併用するとき](#実機-hmd-と併用するとき)
 - [テスト](#テスト)
@@ -36,7 +37,8 @@
 - **コントローラとハンドトラッキングの切り替え**: SteamVR を止めずに `hand_mode` で切り替え(VRChat ではボタン操作 ⇄ ハンドトラッキング操作)。送る ID と内容はそのまま
 - **SteamVR 上で見分けやすい表示**: トラッカーのモデルとステータスアイコンに部位(`L FOOT`、`WAIST` など)と ID(`TRACKER_1`)、コントローラーに `L` / `R` と ID を表示。ロールを変えると表示も追従
 - **視線入力**(SteamVR のアイトラッキングコンポーネント)
-- **Windows / Linux** 対応。Linux はダイレクトモード(SteamVR が描いた映像をドライバが受け取る方式)で、映像は共有メモリ経由のビューアで確認可能(v0.3.0。Linux 版 SteamVR 上での確認待ち)
+- **Windows / Linux** 対応。Linux はダイレクトモード(SteamVR が描いた映像をドライバが受け取る方式)で、実 GPU の Linux 版 SteamVR で動作確認済み
+- **ウィンドウなし・低負荷で動かせる**: Windows でもダイレクトモードを選べ、プレビューウィンドウの有無とフレームレート(1〜240 Hz、実行中に変更可)を指定可能。映像は Python から取り出せる(機械学習・自動化向け)
 - **Python クライアント**(依存なし)とサンプル、SteamVR 上で動く自動検証スクリプト
 - **なりすましなし**: 独自のコントローラタイプ `vhmd_*` で登録。既存アプリのバインディングは SteamVR のリマッピングで流用
 
@@ -215,12 +217,13 @@ SteamVR のコンポジタは 1〜240 Hz のどの値にも正確に従います
 
 | 種類 | コマンド | 内容 |
 |---|---|---|
-| C++ 単体テスト | `ctest --preset vs2022-release` | 37 件(パーサ、座標変換、設定、タイムアウト、ルーター、UDP) |
-| Python 単体テスト | `python -m pytest tests/python` | 13 件(クライアント、プレビュー読み取り) |
+| C++ 単体テスト | `ctest --preset vs2022-release` | 45 件(パーサ、座標変換、設定、タイムアウト、ルーター、UDP、ラベル生成) |
+| Python 単体テスト | `python -m pytest tests/python` | 14 件(クライアント、プレビュー読み取り) |
 | Linux キャプチャセルフテスト | `ctest`(Linux) | 実際の Vulkan で共有イメージ → 共有メモリを確認(SteamVR 不要) |
 | Linux 実機確認 | `python3 tests/integration/linux_check.py` | ダイレクトモードの表示経路 + 統合テスト、レポート出力 |
 | SteamVR 統合テスト | `python tests/integration/run_integration.py` | 31 項目(列挙、オンデマンド追加、誤差、遅延、入力、スケルトン、ハンドモード切り替え、不正パケット、負荷、終了処理) |
 | 起動/終了の繰り返し | `python tests/integration/stress_restart.py --cycles 30` | 毎回ドライバの終了処理とクラッシュ有無を確認 |
+| 長時間の安定性 | `python tests/integration/soak_test.py --minutes 30` | フレームレート、姿勢の誤差、メモリ増加、警告を一定間隔で記録 |
 
 統合テストには `pip install openvr` が必要です。起動後に SteamVR を再起動してしまうオーバーレイアプリがある環境では `--stop-relaunchers` を付けてください(Steam 本体やゲームは対象外)。
 
@@ -234,8 +237,9 @@ SteamVR のコンポジタは 1〜240 Hz のどの値にも正確に従います
 | Linux | [linux](docs/linux.md) | [linux](docs/en/linux.md) | [linux](docs/zh-CN/linux.md) | [linux](docs/ko/linux.md) |
 | 検証手順と結果 | [verification](docs/verification.md) | — | — | — |
 | 判断・未対応事項の記録 | [decisions](docs/decisions.md) | — | — | — |
+| 変更履歴 | [CHANGELOG](CHANGELOG.md) | — | — | — |
 
-検証記録と判断記録は開発の記録なので日本語のみです。
+検証記録・判断記録・変更履歴は開発の記録なので日本語のみです。
 
 ## リポジトリ構成
 
@@ -243,18 +247,20 @@ SteamVR のコンポジタは 1〜240 Hz のどの値にも正確に従います
 CMakeLists.txt / CMakePresets.json   ビルド設定(OpenVR SDK の取得、プラットフォーム別出力)
 driver/
   driver.vrdrivermanifest
-  resources/            設定、入力プロファイル、リマッピング、レガシーバインディング、アイコン
+  resources/            設定、入力プロファイル、リマッピング、レガシーバインディング、アイコン、コントローラーモデル
   src/
     main.cpp            HmdDriverFactory(唯一の公開シンボル)
     device_provider.*   デバイス管理、受信 / 更新スレッド、オンデマンド追加
     device_base.*       全デバイス共通
     hmd_device.*        HMD、仮想ディスプレイ、視線
     linux/              Linux のダイレクトモード、フレームキャプチャ、Vulkan の動的ロード
+    windows/            Windows のダイレクトモード(D3D11)、プレビューウィンドウ、共有メモリ
+    visuals/            SteamVR に表示するラベル(モデル・アイコン)の生成
     controller_device.* コントローラ、振動、スケルトン
     tracker_device.*    トラッカー、ロール
     math/ protocol/ config/ state/ net/ util/   OpenVR 非依存のコア(単体テスト対象)
 clients/python/         vhmd_client パッケージと examples/
-tools/                  登録 / 解除 / 環境確認(Windows: .ps1、Linux: .sh)、配布物作成
+tools/                  登録 / 解除 / 環境確認(Windows: .ps1、Linux: .sh)、配布物作成、モデル生成
 tests/                  unit/(C++)、python/、integration/(SteamVR)
 docs/                   ドキュメント(上の表)
 third_party/            OpenVR SDK(サブモジュール v2.15.6)、nlohmann/json 3.11.3
@@ -270,7 +276,7 @@ third_party/            OpenVR SDK(サブモジュール v2.15.6)、nlohmann/jso
 | Linux コンパイラ | gcc 13.3(Ubuntu 24.04 / WSL2)、gcc 15.2(Ubuntu 26.04)、CMake 3.28 / 4.2 |
 | Python | 3.12(3.10 以上)、検証用に pyopenvr 2.12 |
 
-結果の詳細: [docs/verification.md](docs/verification.md)。Linux 版 SteamVR では v0.3.0 のダイレクトモードで、実 GPU(NVIDIA RTX 4000 Ada)上でコンポジタが 90 fps で描画し、統合テスト 28/28、Steam クライアントあり・SteamVR Home 有効での正常終了、Proton 経由の VRChat での描画とコントローラ追従まで確認しました。GTX 1050 では SteamVR のコンポジタが起動後しばらくして GPU 例外で停止します([docs/linux.md](docs/linux.md))。VRChat にログインした状態での操作(アバター、フルボディ較正)と、実 HMD との併用は未検証です。
+結果の詳細: [docs/verification.md](docs/verification.md)。Linux 版 SteamVR では v0.3.0 のダイレクトモードで、実 GPU(NVIDIA RTX 4000 Ada)上でコンポジタが 90 fps で描画し、統合テスト 28/28、Steam クライアントあり・SteamVR Home 有効での正常終了、Proton 経由の VRChat での描画とコントローラ追従まで確認しました。GTX 1050 では SteamVR のコンポジタが起動後しばらくして GPU 例外で停止します([docs/linux.md](docs/linux.md))。VRChat にログインした状態では、アバターの追従、指、移動、メニュー操作、フルボディ較正を Windows(コントローラー)と Linux(ハンドモード)で確認しました。実 HMD との併用、実画面のある Linux デスクトップ、Linux でのプレビューの開始・停止(軽量化後)は未検証です。変更履歴: [CHANGELOG.md](CHANGELOG.md)
 
 ## ライセンス
 

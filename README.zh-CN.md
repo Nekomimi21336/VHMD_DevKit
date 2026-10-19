@@ -19,6 +19,7 @@
 - [快速开始(预编译二进制)](#快速开始预编译二进制)
 - [从源码构建](#从源码构建)
 - [使用方法(Python)](#使用方法python)
+- [不显示窗口 / 降低帧率(Windows)](#不显示窗口--降低帧率windows)
 - [配置](#配置)
 - [与真实 HMD 同时使用时](#与真实-hmd-同时使用时)
 - [测试](#测试)
@@ -36,7 +37,8 @@
 - **控制器与手部追踪的切换**：通过 `hand_mode` 在不停止 SteamVR 的情况下切换(在 VRChat 中为按键操作 ⇄ 手部追踪操作)。发送的 ID 和内容保持不变
 - **在 SteamVR 中易于区分**：追踪器的模型和状态图标显示部位(`L FOOT`、`WAIST` 等)和 ID(`TRACKER_1`)，控制器显示 `L` / `R` 和 ID。更改角色后显示随之更新
 - **视线输入**(SteamVR 的眼动追踪组件)
-- 支持 **Windows / Linux**。Linux 上采用直接模式(由驱动接收 SteamVR 渲染的画面)，可通过基于共享内存的查看器确认画面(v0.3.0，尚待在 Linux 版 SteamVR 上确认)
+- 支持 **Windows / Linux**。Linux 上采用直接模式(由驱动接收 SteamVR 渲染的画面)，已在使用真实 GPU 的 Linux 版 SteamVR 上确认可运行
+- **可在无窗口、低负载下运行**：Windows 上也可选择直接模式，并可指定是否显示预览窗口以及帧率(1〜240 Hz，运行中可更改)。画面可从 Python 取出(面向机器学习、自动化)
 - **Python 客户端**(无依赖)及示例、可在 SteamVR 上运行的自动验证脚本
 - **不冒充其他设备**：以自有控制器类型 `vhmd_*` 注册。现有应用的按键绑定通过 SteamVR 的重映射复用
 
@@ -215,12 +217,13 @@ SteamVR 合成器会准确遵循 1〜240 Hz 的任意值。但低于 10 Hz 时�
 
 | 类型 | 命令 | 内容 |
 |---|---|---|
-| C++ 单元测试 | `ctest --preset vs2022-release` | 37 项(解析器、坐标变换、配置、超时、路由器、UDP) |
-| Python 单元测试 | `python -m pytest tests/python` | 13 项(客户端、预览读取) |
+| C++ 单元测试 | `ctest --preset vs2022-release` | 45 项(解析器、坐标变换、配置、超时、路由器、UDP、标签生成) |
+| Python 单元测试 | `python -m pytest tests/python` | 14 项(客户端、预览读取) |
 | Linux 捕获自测 | `ctest`(Linux) | 用真实 Vulkan 确认共享图像 → 共享内存(无需 SteamVR) |
 | Linux 实机确认 | `python3 tests/integration/linux_check.py` | 直接模式的显示路径 + 集成测试，输出报告 |
 | SteamVR 集成测试 | `python tests/integration/run_integration.py` | 31 项(枚举、按需添加、误差、延迟、输入、骨骼、手部模式切换、非法数据包、负载、退出处理) |
 | 反复启动/退出 | `python tests/integration/stress_restart.py --cycles 30` | 每次都检查驱动的退出处理以及是否崩溃 |
+| 长时间稳定性 | `python tests/integration/soak_test.py --minutes 30` | 按固定间隔记录帧率、姿态误差、内存增长、警告 |
 
 集成测试需要 `pip install openvr`。如果环境中存在启动后会重启 SteamVR 的叠加层应用，请加上 `--stop-relaunchers`(Steam 本体和游戏不受影响)。
 
@@ -234,8 +237,9 @@ SteamVR 合成器会准确遵循 1〜240 Hz 的任意值。但低于 10 Hz 时�
 | Linux | [linux](docs/linux.md) | [linux](docs/en/linux.md) | [linux](docs/zh-CN/linux.md) | [linux](docs/ko/linux.md) |
 | 验证步骤与结果 | [verification](docs/verification.md) | — | — | — |
 | 决策、未处理事项记录 | [decisions](docs/decisions.md) | — | — | — |
+| 变更历史 | [CHANGELOG](CHANGELOG.md) | — | — | — |
 
-验证记录和决策记录属于开发记录，因此仅有日文版。
+验证记录、决策记录和变更历史属于开发记录，因此仅有日文版。
 
 ## 仓库结构
 
@@ -243,18 +247,20 @@ SteamVR 合成器会准确遵循 1〜240 Hz 的任意值。但低于 10 Hz 时�
 CMakeLists.txt / CMakePresets.json   构建配置(获取 OpenVR SDK、按平台输出)
 driver/
   driver.vrdrivermanifest
-  resources/            设置、输入配置文件、重映射、旧版绑定、图标
+  resources/            设置、输入配置文件、重映射、旧版绑定、图标、控制器模型
   src/
     main.cpp            HmdDriverFactory(唯一的公开符号)
     device_provider.*   设备管理、接收 / 更新线程、按需添加
     device_base.*       所有设备通用
     hmd_device.*        HMD、虚拟显示、视线
     linux/              Linux 的直接模式、帧捕获、Vulkan 的动态加载
+    windows/            Windows 的直接模式(D3D11)、预览窗口、共享内存
+    visuals/            生成在 SteamVR 中显示的标签(模型、图标)
     controller_device.* 控制器、振动、骨骼
     tracker_device.*    追踪器、角色
     math/ protocol/ config/ state/ net/ util/   不依赖 OpenVR 的核心(单元测试对象)
 clients/python/         vhmd_client 包与 examples/
-tools/                  注册 / 卸载 / 环境检查(Windows：.ps1、Linux：.sh)、发布包制作
+tools/                  注册 / 卸载 / 环境检查(Windows：.ps1、Linux：.sh)、发布包制作、模型生成
 tests/                  unit/(C++)、python/、integration/(SteamVR)
 docs/                   文档(见上表)
 third_party/            OpenVR SDK(子模块 v2.15.6)、nlohmann/json 3.11.3
@@ -270,7 +276,7 @@ third_party/            OpenVR SDK(子模块 v2.15.6)、nlohmann/json 3.11.3
 | Linux 编译器 | gcc 13.3(Ubuntu 24.04 / WSL2)、gcc 15.2(Ubuntu 26.04)、CMake 3.28 / 4.2 |
 | Python | 3.12(3.10 及以上)、验证用 pyopenvr 2.12 |
 
-详细结果：[docs/verification.md](docs/verification.md)(日文)。在 Linux 版 SteamVR 上，v0.3.0 的直接模式已在真实 GPU(NVIDIA RTX 4000 Ada)上确认：合成器以 90 fps 渲染、集成测试 28/28 通过、在有 Steam 客户端并启用 SteamVR Home 的环境中正常退出、通过 Proton 运行的 VRChat 可渲染并跟随控制器。在 GTX 1050 上 SteamVR 合成器会在启动后不久因 GPU 异常停止([docs/zh-CN/linux.md](docs/zh-CN/linux.md))。登录 VRChat 后的操作(虚拟形象、全身校准)以及与实体 HMD 并用尚未验证。
+详细结果：[docs/verification.md](docs/verification.md)(日文)。在 Linux 版 SteamVR 上，v0.3.0 的直接模式已在真实 GPU(NVIDIA RTX 4000 Ada)上确认：合成器以 90 fps 渲染、集成测试 28/28 通过、在有 Steam 客户端并启用 SteamVR Home 的环境中正常退出、通过 Proton 运行的 VRChat 可渲染并跟随控制器。在 GTX 1050 上 SteamVR 合成器会在启动后不久因 GPU 异常停止([docs/zh-CN/linux.md](docs/zh-CN/linux.md))。在登录 VRChat 的状态下，已在 Windows(控制器)和 Linux(手部模式)上确认虚拟形象跟随、手指、移动、菜单操作和全身校准。与实体 HMD 并用、带真实显示器的 Linux 桌面、Linux 上预览的开始/停止(轻量化之后)尚未验证。变更历史：[CHANGELOG.md](CHANGELOG.md)(日文)
 
 ## 许可证
 

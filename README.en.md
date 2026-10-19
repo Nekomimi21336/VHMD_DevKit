@@ -19,6 +19,7 @@ No hardware needed: poses and inputs sent from an external process over UDP/JSON
 - [Getting started (prebuilt binaries)](#getting-started-prebuilt-binaries)
 - [Building from source](#building-from-source)
 - [Usage (Python)](#usage-python)
+- [Running without a window / lowering the frame rate (Windows)](#running-without-a-window--lowering-the-frame-rate-windows)
 - [Configuration](#configuration)
 - [Using alongside a physical HMD](#using-alongside-a-physical-hmd)
 - [Tests](#tests)
@@ -36,7 +37,8 @@ No hardware needed: poses and inputs sent from an external process over UDP/JSON
 - **Switch between controllers and hand tracking**: `hand_mode` changes it while SteamVR runs (in VRChat: button controls ⇄ hand-tracking controls). Ids and messages stay the same
 - **Easy to tell apart in SteamVR**: tracker models and status icons show the body part (`L FOOT`, `WAIST`, ...) and the id (`TRACKER_1`); controllers show `L` / `R` and their id. The labels follow role changes
 - **Eye gaze input** (SteamVR's eye tracking component)
-- **Windows / Linux** support. On Linux the driver runs in direct mode (the driver receives the frames SteamVR renders), and the output can be viewed with a viewer via shared memory (v0.3.0; awaiting confirmation on SteamVR for Linux)
+- **Windows / Linux** support. On Linux the driver runs in direct mode (the driver receives the frames SteamVR renders), and it has been verified on SteamVR for Linux with a real GPU
+- **Runs windowless at low load**: direct mode is available on Windows too, with a choice of whether to show a preview window and of the frame rate (1-240 Hz, changeable while running). Frames can be grabbed from Python (for machine learning and automation)
 - **Python client** (no dependencies) with samples, plus automated verification scripts that run against SteamVR
 - **No impersonation**: registers its own controller types `vhmd_*`. Existing apps' bindings are reused via SteamVR remapping
 
@@ -215,12 +217,13 @@ Settings are loaded when SteamVR starts. Either edit the source-side files and r
 
 | Kind | Command | Contents |
 |---|---|---|
-| C++ unit tests | `ctest --preset vs2022-release` | 37 tests (parser, coordinate conversion, config, timeouts, router, UDP) |
-| Python unit tests | `python -m pytest tests/python` | 13 tests (client, preview reader) |
+| C++ unit tests | `ctest --preset vs2022-release` | 45 tests (parser, coordinate conversion, config, timeouts, router, UDP, label generation) |
+| Python unit tests | `python -m pytest tests/python` | 14 tests (client, preview reader) |
 | Linux capture self-test | `ctest` (Linux) | Checks shared image → shared memory with real Vulkan (no SteamVR needed) |
 | Linux on-hardware check | `python3 tests/integration/linux_check.py` | Direct-mode display path + integration tests, writes a report |
 | SteamVR integration tests | `python tests/integration/run_integration.py` | 31 items (enumeration, on-demand addition, error, latency, input, skeleton, hand mode switching, invalid packets, load, shutdown) |
 | Repeated start/stop | `python tests/integration/stress_restart.py --cycles 30` | Checks the driver's shutdown and whether it crashed on every cycle |
+| Long-run stability | `python tests/integration/soak_test.py --minutes 30` | Records frame rate, pose error, memory growth and warnings at regular intervals |
 
 The integration tests require `pip install openvr`. In environments with an overlay app that relaunches SteamVR after it starts, add `--stop-relaunchers` (Steam itself and games are not affected).
 
@@ -234,8 +237,9 @@ The integration tests require `pip install openvr`. In environments with an over
 | Linux | [linux](docs/linux.md) | [linux](docs/en/linux.md) | [linux](docs/zh-CN/linux.md) | [linux](docs/ko/linux.md) |
 | Verification procedures and results | [verification](docs/verification.md) | — | — | — |
 | Record of decisions and open items | [decisions](docs/decisions.md) | — | — | — |
+| Changelog | [CHANGELOG](CHANGELOG.md) | — | — | — |
 
-The verification and decision records are development logs, so they are available in Japanese only.
+The verification records, decision records and changelog are development logs, so they are available in Japanese only.
 
 ## Repository layout
 
@@ -243,18 +247,20 @@ The verification and decision records are development logs, so they are availabl
 CMakeLists.txt / CMakePresets.json   Build configuration (fetching the OpenVR SDK, per-platform output)
 driver/
   driver.vrdrivermanifest
-  resources/            Settings, input profiles, remapping, legacy bindings, icons
+  resources/            Settings, input profiles, remapping, legacy bindings, icons, controller models
   src/
     main.cpp            HmdDriverFactory (the only exported symbol)
     device_provider.*   Device management, receive / update threads, on-demand addition
     device_base.*       Common to all devices
     hmd_device.*        HMD, virtual display, eye gaze
     linux/              Linux direct mode, frame capture, dynamic loading of Vulkan
+    windows/            Windows direct mode (D3D11), preview window, shared memory
+    visuals/            Generation of the labels (models, icons) shown in SteamVR
     controller_device.* Controllers, haptics, skeleton
     tracker_device.*    Trackers, roles
     math/ protocol/ config/ state/ net/ util/   OpenVR-independent core (covered by unit tests)
 clients/python/         vhmd_client package and examples/
-tools/                  Register / unregister / environment check (Windows: .ps1, Linux: .sh), packaging
+tools/                  Register / unregister / environment check (Windows: .ps1, Linux: .sh), packaging, model generation
 tests/                  unit/ (C++), python/, integration/ (SteamVR)
 docs/                   Documentation (table above)
 third_party/            OpenVR SDK (submodule v2.15.6), nlohmann/json 3.11.3
@@ -270,7 +276,7 @@ third_party/            OpenVR SDK (submodule v2.15.6), nlohmann/json 3.11.3
 | Linux compiler | gcc 13.3 (Ubuntu 24.04 / WSL2), gcc 15.2 (Ubuntu 26.04), CMake 3.28 / 4.2 |
 | Python | 3.12 (3.10 or later), pyopenvr 2.12 for verification |
 
-Detailed results: [docs/verification.md](docs/verification.md) (Japanese). On SteamVR for Linux, v0.3.0's direct mode was verified on a real GPU (NVIDIA RTX 4000 Ada): the compositor renders at 90 fps, the integration test passes 28/28, SteamVR shuts down cleanly with the Steam client and SteamVR Home, and VRChat through Proton renders and follows the controllers. On a GTX 1050 the SteamVR compositor stops on a GPU exception shortly after start ([docs/en/linux.md](docs/en/linux.md)). Using VRChat while logged in (avatars, full-body calibration) and use alongside a real HMD have not been verified.
+Detailed results: [docs/verification.md](docs/verification.md) (Japanese). On SteamVR for Linux, v0.3.0's direct mode was verified on a real GPU (NVIDIA RTX 4000 Ada): the compositor renders at 90 fps, the integration test passes 28/28, SteamVR shuts down cleanly with the Steam client and SteamVR Home, and VRChat through Proton renders and follows the controllers. On a GTX 1050 the SteamVR compositor stops on a GPU exception shortly after start ([docs/en/linux.md](docs/en/linux.md)). While logged in to VRChat, avatar tracking, fingers, locomotion, menu operation and full-body calibration were confirmed on Windows (controllers) and Linux (hand mode). Use alongside a real HMD, a Linux desktop with a physical display, and starting/stopping the preview on Linux (after the load reduction) have not been verified. Changelog: [CHANGELOG.md](CHANGELOG.md) (Japanese)
 
 ## License
 

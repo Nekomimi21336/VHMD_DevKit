@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 COMMON = [
     "README.md", "README.en.md", "README.zh-CN.md", "README.ko.md",
-    "LICENSE", "THIRD_PARTY_NOTICES.md",
+    "LICENSE", "THIRD_PARTY_NOTICES.md", "CHANGELOG.md",
     "docs", "clients/python",
     "tests/integration",  # linux_check.py / soak_test.py etc., so testers need no clone
 ]

@@ -32,6 +32,8 @@ Linux판 SteamVR의 컴포지터는 Windows처럼 "데스크톱 위의 창에 �
 | v0.3.0을 WSL2 위의 Linux판 SteamVR 2.17.10(소프트웨어 Vulkan)에서 실행 | ✅ 드라이버 로드, 다이렉트 모드, 통합 테스트 21/23, 컴포지터가 `Headset is using driver direct mode`까지 도달 / ❌ llvmpipe가 타임라인 세마포어 외부 가져오기를 지원하지 않아 렌더러 초기화 실패([verification.md](../verification.md), 일본어) |
 | v0.3.0을 실제 GPU의 Linux판 SteamVR 2.17.10에서 실행(클라우드 GPU: NVIDIA RTX 4000 Ada, 드라이버 595, Ubuntu 26.04, gcc 15.2로 빌드, 디스플레이 없음 + Xvfb) | ✅ `linux_check.py` 전 항목 합격: 컴포지터가 스왑 텍스처(한쪽 눈 2160×2400)를 만들고 **90 fps로 present**, `CannotDRMLeaseDisplay` 없음, 프리뷰에 SteamVR 영상, 통합 테스트 28/28(스켈레톤·입력 포함). 2회 연속 합격 |
 | 데스크톱에 상당하는 환경(NVIDIA 실제 X 서버 + Steam 클라이언트 + SteamVR Home 활성) | ✅ `linux_check.py` 14/14 합격. vrmonitor가 동작하며 SteamVR의 정상 종료와 드라이버 종료 처리(`vhmd: shutting down`, 약 2초)까지 확인. 클라우드 GPU(RTX 4000 Ada)에서 확인. Proxmox VM의 GTX 1050(2 GB, Pascal, 드라이버 580)에서도 14/14였으나 **시작 후 5~60초 뒤 vrcompositor가 GPU 예외(`Xid 13: 3D WIDTH ZT Violation` → `VK_ERROR_DEVICE_LOST`)로 렌더링을 멈춤**. 클라이언트·프리뷰·SteamVR Home이 모두 없어도 재현되며 드라이버 측 원인은 발견되지 않음(GTX 1050은 SteamVR 최소 요구 사양 GTX 970 / 1060 미만) |
+| 프리뷰 시작·정지(경량화 이후, 기본적으로 정지 상태이며 `preview` 조작으로 시작) | WSL 셀프 테스트에서 캡처 → 일시 정지 → 재개를 확인. **실제 GPU의 SteamVR에서는 미확인** |
+| `preview_viewer.py`의 창 표시 | **미확인**(지금까지는 `--snapshot`과 `PreviewReader`를 통한 가져오기만 사용) |
 | Proton을 통한 VRChat(Proton Experimental) | ✅ 실행되어 가상 HMD의 양쪽 눈에 VR 영상(로그인 화면)을 렌더링. VRChat의 Oculus Touch 바인딩이 가상 컨트롤러에 적용되고 게임 내 손이 보낸 자세를 따라감. 로그인 후에도 아바타의 머리·손·손가락 추종, 이동, 버튼, 메뉴, 컨트롤러 ⇄ 핸드 트래킹 전환(VRChat을 멈추지 않고)을 확인. 풀바디 보정도 핸드 모드에서 완료했으며 발 트래커로 아바타의 다리가 움직이는 것을 확인. 컨트롤러 모드에서도 레이저를 메뉴 정면에서 맞추면 클릭 가능(Windows에서 확인). **가상 머신 안에서는 VRChat의 Easy Anti-Cheat가 `Cannot run under Virtual Machine`으로 실행을 거부합니다**(클라우드 KVM에서는 실행됨. VM 감지를 숨기는 설정은 안티치트 회피에 해당하므로 하지 않았습니다) |
 
 ## 전제 조건
