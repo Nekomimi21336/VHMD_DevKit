@@ -172,6 +172,28 @@ TEST(config_direct_mode_window_and_refresh) {
     CHECK(j["ok"] == true && shown);
 }
 
+TEST(router_refresh_rate_op) {
+    auto warn = LoadConfigFromJson(R"({"display":{"refreshHz":500}})");
+    CHECK(warn.config.display_refresh_hz == kMaxRefreshHz && !warn.warnings.empty());
+    DriverConfig cfg = DefaultConfig();
+    std::vector<std::shared_ptr<DeviceState>> states;
+    for (const auto& dc : cfg.devices) states.push_back(std::make_shared<DeviceState>(dc, cfg));
+    double hz = 90.0;
+    RouterHooks hooks;
+    hooks.set_refresh_rate = [&](double v) -> std::string { hz = v; return ""; };
+    hooks.refresh_rate = [&] { return hz; };
+    MessageRouter router(cfg, states, hooks);
+    const auto now = Clock::now();
+    auto set = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"refresh_rate","hz":30})", now));
+    CHECK(set["ok"] == true && set["hz"] == 30.0 && hz == 30.0);
+    auto query = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"refresh_rate"})", now));
+    CHECK(query["ok"] == true && query["hz"] == 30.0);
+    auto bad = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"refresh_rate","hz":0.5})", now));
+    CHECK(bad["ok"] == false && hz == 30.0);
+    auto bad2 = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"refresh_rate","hz":1000})", now));
+    CHECK(bad2["ok"] == false);
+}
+
 TEST(config_shipped_file_parses_cleanly) {
     std::ifstream f(VHMD_SOURCE_DIR "/driver/resources/settings/vhmd_config.json");
     CHECK(f.good());

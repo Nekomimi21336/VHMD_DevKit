@@ -162,18 +162,21 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 | 설정 | 내용 |
 |---|---|
 | `mode: "direct"` | 다이렉트 모드(기본 `auto`는 Windows에서 창 모드) |
-| `refreshHz` | 가상 디스플레이의 프레임 레이트. 머신러닝이나 자동화라면 30이나 15로 충분하며 SteamVR과 앱의 부하가 줄어듭니다 |
+| `refreshHz` | 가상 디스플레이의 프레임 레이트(1~240, 기본 90). 머신러닝이나 자동화라면 30이나 15로 충분하며 SteamVR과 앱의 부하가 줄어듭니다. 실행 중에도 변경 가능 |
 | `previewWindow` | 시작 시 프리뷰 창(좌우 눈 영상)을 표시. 창을 닫아도 SteamVR은 멈추지 않음 |
 | `preview.windowFps` | 프리뷰 창의 갱신 레이트(기본 30) |
 
 실행 중 전환(`VHMDClient`):
 
 ```python
+c.refresh_rate(30)        # 프레임 레이트를 30으로(SteamVR을 멈추지 않고. 인수 없이 호출하면 현재 값)
 c.preview_window(True)    # 프리뷰 창 표시 / False로 숨김
 c.preview(True)           # 영상을 공유 메모리에 출력(꺼내는 쪽이 호출. 멈출 때는 False)
 from vhmd_client.preview import PreviewReader
 frame = PreviewReader().read()   # 좌우 눈을 가로로 나란히 놓은 RGBA. frame.save_png("eyes.png") 등
 ```
+
+SteamVR 컴포지터는 1~240 Hz의 어떤 값에도 정확히 따릅니다. 다만 10 Hz 미만으로 해도 앱은 12~15 fps 아래로 내려가지 않습니다(SteamVR이 대기를 중단하기 때문). 앱의 부하를 줄이는 실질적인 하한은 15 Hz 전후입니다.
 
 `python clients/python/examples/preview_viewer.py`로도 영상을 확인할 수 있습니다. 보는 사람이 없는 동안(창을 숨김, 영상 요청 없음)은 영상 복사를 전혀 하지 않습니다.
 

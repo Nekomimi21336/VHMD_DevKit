@@ -176,7 +176,11 @@ ConfigLoadResult LoadConfigFromJson(std::string_view text) {
         if (auto d = root.find("display"); d != root.end() && d->is_object()) {
             Get(*d, "mode", c.display_mode, w, "display.");
             Get(*d, "refreshHz", c.display_refresh_hz, w, "display.");
-            if (c.display_refresh_hz != 0.0) c.display_refresh_hz = std::clamp(c.display_refresh_hz, 1.0, 240.0);
+            if (c.display_refresh_hz != 0.0) {
+                if (c.display_refresh_hz < kMinRefreshHz || c.display_refresh_hz > kMaxRefreshHz)
+                    w.emplace_back("display.refreshHz: clamped to " + std::to_string(int(kMinRefreshHz)) + ".." + std::to_string(int(kMaxRefreshHz)));
+                c.display_refresh_hz = std::clamp(c.display_refresh_hz, kMinRefreshHz, kMaxRefreshHz);
+            }
             Get(*d, "previewWindow", c.preview_window, w, "display.");
             if (c.display_mode != "auto" && c.display_mode != "window" && c.display_mode != "direct") {
                 w.emplace_back("display.mode: expected auto|window|direct");

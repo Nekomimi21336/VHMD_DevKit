@@ -195,6 +195,14 @@ class VHMDClient:
         if not r.get("ok"):
             raise ValueError(r.get("error", "preview failed"))
 
+    def refresh_rate(self, hz: float = 0) -> float:
+        """Change the virtual display's frame rate while SteamVR runs (direct
+        mode; 1-240). Without an argument, returns the current rate."""
+        r = self.request("refresh_rate", hz=hz) if hz else self.request("refresh_rate")
+        if not r.get("ok"):
+            raise ValueError(r.get("error", "refresh_rate failed"))
+        return float(r.get("hz", 0))
+
     def preview_window(self, on: bool = True) -> None:
         """Show (or hide) the preview window: the HMD image in a desktop window
         (Windows, display.mode = direct). Hidden costs nothing."""

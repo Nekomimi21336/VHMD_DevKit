@@ -63,6 +63,9 @@ public:
     std::string DisplayStatusJson() const;
     // Starts / pauses the shared-memory preview (direct mode only). Returns false if unavailable.
     bool SetPreviewActive(bool active);
+    // Changes the frame rate while running (direct mode). Returns false if unavailable.
+    bool SetRefreshRate(double hz);
+    double RefreshRate() const;
     // Shows / hides the preview window (Windows direct mode). Returns false if unavailable.
     bool SetPreviewWindow(bool visible);
 

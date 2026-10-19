@@ -59,6 +59,9 @@ public:
     void GetFrameTiming(vr::DriverDirectMode_FrameTiming* timing) override;
 
     DirectModeStats Stats() const;
+    // Changes the vsync clock (frame rate) while running.
+    void SetRefreshRate(double hz) { refresh_hz_ = hz; }
+    double RefreshRate() const { return refresh_hz_; }
     void SetPreviewActive(bool active) { capture_->SetActive(active); }
 
 private:
@@ -72,7 +75,7 @@ private:
     void DestroySet(SwapSet* set); // mu_ held
     void VsyncLoop();
 
-    double refresh_hz_;
+    std::atomic<double> refresh_hz_;
     std::unique_ptr<FrameCapture> capture_;
 
     mutable std::mutex mu_;

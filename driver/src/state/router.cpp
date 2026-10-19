@@ -202,6 +202,18 @@ std::optional<std::string> MessageRouter::HandleConfig(const ConfigMessage& m, C
             if (!err.empty()) r["error"] = err;
             r["role"] = role->steamvr_role;
         }
+    } else if (m.op == "refresh_rate") {
+        if (m.hz && (!(*m.hz >= kMinRefreshHz) || *m.hz > kMaxRefreshHz)) {
+            r["ok"] = false;
+            r["error"] = "hz must be between " + std::to_string(int(kMinRefreshHz)) + " and " + std::to_string(int(kMaxRefreshHz));
+        } else if (m.hz) {
+            const std::string err = hooks_.set_refresh_rate ? hooks_.set_refresh_rate(*m.hz) : "refresh_rate not available";
+            r["ok"] = err.empty();
+            if (!err.empty()) r["error"] = err;
+        } else {
+            r["ok"] = true; // query only
+        }
+        if (hooks_.refresh_rate) r["hz"] = hooks_.refresh_rate();
     } else if (m.op == "preview_window") {
         if (m.mode != "on" && m.mode != "off") {
             r["ok"] = false;

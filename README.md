@@ -162,18 +162,21 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 | 設定 | 内容 |
 |---|---|
 | `mode: "direct"` | ダイレクトモード(既定の `auto` は Windows ではウィンドウモード) |
-| `refreshHz` | 仮想ディスプレイのフレームレート。機械学習や自動化なら 30 や 15 で十分で、SteamVR とアプリの負荷が下がります |
+| `refreshHz` | 仮想ディスプレイのフレームレート(1〜240、既定 90)。機械学習や自動化なら 30 や 15 で十分で、SteamVR とアプリの負荷が下がります。実行中も変更できます |
 | `previewWindow` | 起動時にプレビューウィンドウ(左右の目の映像)を出す。閉じても SteamVR は止まりません |
 | `preview.windowFps` | プレビューウィンドウの更新レート(既定 30) |
 
 実行中の切り替え(`VHMDClient`):
 
 ```python
+c.refresh_rate(30)        # フレームレートを 30 に(SteamVR を止めずに。引数なしで現在値)
 c.preview_window(True)    # プレビューウィンドウを出す / False で隠す
 c.preview(True)           # 映像を共有メモリへ書き出す(取り出す側が呼ぶ。止めるときは False)
 from vhmd_client.preview import PreviewReader
 frame = PreviewReader().read()   # 左右の目を横に並べた RGBA。frame.save_png("eyes.png") など
 ```
+
+SteamVR のコンポジタは 1〜240 Hz のどの値にも正確に従います。ただし 10 Hz 未満にしてもアプリ側は 12〜15 fps より下がりません(SteamVR が待ちを打ち切るため)。アプリの負荷を下げたい場合の実質的な下限は 15 Hz 前後です。
 
 `python clients/python/examples/preview_viewer.py` でも映像を確認できます。見る人がいないあいだ(ウィンドウを隠している・映像を頼まれていない)は、映像のコピーは一切しません。
 

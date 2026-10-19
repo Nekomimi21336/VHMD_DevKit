@@ -43,6 +43,10 @@ struct DeviceConfig {
     bool head_model = false;                      // hmd only: true = pos is the neck pivot
 };
 
+// Frame-rate limits of the virtual display (display.refreshHz, op "refresh_rate").
+inline constexpr double kMinRefreshHz = 1.0;
+inline constexpr double kMaxRefreshHz = 240.0;
+
 struct PreviewConfig {
     bool enabled = true;
     std::string path = "/dev/shm/vhmd_preview";

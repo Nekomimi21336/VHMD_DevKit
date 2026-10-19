@@ -21,7 +21,12 @@
   "log": { "errorsPerSecond": 5, "verbose": false },
   // HMD output. auto = "direct" on Linux (required by Linux SteamVR: the
   // compositor hands the eye images to the driver), "window" on Windows.
-  "display": { "mode": "auto" },
+  // Virtual display. mode: "auto" (Linux: direct, Windows: window) | "window" | "direct".
+  // refreshHz: frame rate, 1-240 (default 90). Lower = less work for SteamVR and the
+  // apps (30 or 15 is plenty for automation / machine learning). Honoured exactly in
+  // direct mode; change it while running with {"type":"config","op":"refresh_rate","hz":30}.
+  // previewWindow: Windows direct mode, show the HMD image in a window at start.
+  "display": { "mode": "auto", "refreshHz": 90, "previewWindow": false },
   // Direct mode only: latest eye images (both eyes side by side, RGBA8) in
   // shared memory for clients/python/examples/preview_viewer.py and your tools.
   "preview": {

@@ -75,6 +75,9 @@ public:
     void GetFrameTiming(vr::DriverDirectMode_FrameTiming* timing) override;
 
     DirectModeStats Stats() const;
+    // Changes the vsync clock (frame rate) while running.
+    void SetRefreshRate(double hz) { refresh_hz_ = hz; }
+    double RefreshRate() const { return refresh_hz_; }
     void SetPreviewActive(bool active);
     void SetWindowVisible(bool visible);
 
@@ -85,7 +88,7 @@ private:
     void WindowLoop();
     void ReadbackLoop();
 
-    double refresh_hz_;
+    std::atomic<double> refresh_hz_;
     CaptureSettings capture_;
     double window_fps_;
     uint64_t adapter_luid_ = 0;

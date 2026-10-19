@@ -162,18 +162,21 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 | 设置 | 说明 |
 |---|---|
 | `mode: "direct"` | 直接模式(默认的 `auto` 在 Windows 上为窗口模式) |
-| `refreshHz` | 虚拟显示器的帧率。机器学习或自动化用途 30 或 15 就足够，可降低 SteamVR 和应用的负载 |
+| `refreshHz` | 虚拟显示器的帧率(1〜240，默认 90)。机器学习或自动化用途 30 或 15 就足够，可降低 SteamVR 和应用的负载。运行中也可更改 |
 | `previewWindow` | 启动时显示预览窗口(左右眼画面)。关闭窗口不会停止 SteamVR |
 | `preview.windowFps` | 预览窗口的刷新率(默认 30) |
 
 运行中切换(`VHMDClient`)：
 
 ```python
+c.refresh_rate(30)        # 将帧率改为 30(无需停止 SteamVR；不带参数则返回当前值)
 c.preview_window(True)    # 显示预览窗口 / False 隐藏
 c.preview(True)           # 将画面写入共享内存(由读取方调用；停止时传 False)
 from vhmd_client.preview import PreviewReader
 frame = PreviewReader().read()   # 左右眼并排的 RGBA；frame.save_png("eyes.png") 等
 ```
+
+SteamVR 合成器会准确遵循 1〜240 Hz 的任意值。但低于 10 Hz 时应用不会低于 12〜15 fps(SteamVR 会结束等待)，因此降低应用负载的实际下限约为 15 Hz。
 
 也可用 `python clients/python/examples/preview_viewer.py` 查看画面。无人查看时(窗口隐藏、未请求画面)完全不进行画面复制。
 

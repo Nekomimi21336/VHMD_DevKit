@@ -162,18 +162,21 @@ Changing `display` in `vhmd_config.json` switches to **direct mode**: SteamVR op
 | Setting | Meaning |
 |---|---|
 | `mode: "direct"` | Direct mode (the default `auto` is window mode on Windows) |
-| `refreshHz` | Frame rate of the virtual display. 30 or 15 is plenty for machine learning or automation and lowers the load of SteamVR and the app |
+| `refreshHz` | Frame rate of the virtual display (1-240, default 90). 30 or 15 is plenty for machine learning or automation and lowers the load of SteamVR and the app. Can be changed while running |
 | `previewWindow` | Show the preview window (both eyes) at start. Closing it does not stop SteamVR |
 | `preview.windowFps` | Refresh rate of the preview window (default 30) |
 
 Switching at runtime (`VHMDClient`):
 
 ```python
+c.refresh_rate(30)        # frame rate 30 (without restarting SteamVR; no argument returns the current rate)
 c.preview_window(True)    # show the preview window / False hides it
 c.preview(True)           # write frames to shared memory (called by the reader; False stops)
 from vhmd_client.preview import PreviewReader
 frame = PreviewReader().read()   # both eyes side by side, RGBA; frame.save_png("eyes.png") etc.
 ```
+
+The SteamVR compositor follows any value from 1 to 240 Hz exactly. Below 10 Hz, however, apps do not drop under 12-15 fps (SteamVR stops waiting), so about 15 Hz is the practical floor for reducing an app's load.
 
 `python clients/python/examples/preview_viewer.py` shows the image as well. While nobody is looking (window hidden, no frames requested), no image is copied at all.
 

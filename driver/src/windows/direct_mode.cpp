@@ -155,7 +155,7 @@ void DirectModeComponent::Start() {
     vsync_thread_ = std::thread(&DirectModeComponent::VsyncLoop, this);
     window_thread_ = std::thread(&DirectModeComponent::WindowLoop, this);
     readback_thread_ = std::thread(&DirectModeComponent::ReadbackLoop, this);
-    Log(LogLevel::Info, "direct mode: vsync clock started at %.1f Hz", refresh_hz_);
+    Log(LogLevel::Info, "direct mode: vsync clock started at %.1f Hz", refresh_hz_.load());
 }
 
 void DirectModeComponent::Stop() {
@@ -169,10 +169,13 @@ void DirectModeComponent::Stop() {
 
 void DirectModeComponent::VsyncLoop() {
     using clock = std::chrono::steady_clock;
-    const auto period = std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(1.0 / refresh_hz_));
+    const auto period_now = [this] {
+        return std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(1.0 / refresh_hz_.load()));
+    };
     PreciseSleeper sleeper;
-    auto next = clock::now() + period;
+    auto next = clock::now() + period_now();
     while (running_) {
+        const auto period = period_now();
         sleeper.SleepUntil(next);
         vr::VRServerDriverHost()->VsyncEvent(0.0);
         {
@@ -419,7 +422,7 @@ void DirectModeComponent::CopyPreview(const SubmitLayerPerEye_t (&layer)[2]) {
 void DirectModeComponent::PostPresent(const Throttling_t* /*throttling*/) {
     std::unique_lock<std::mutex> lock(vsync_mu_);
     const uint64_t start = vsync_count_;
-    vsync_cv_.wait_for(lock, std::chrono::duration<double>(2.0 / refresh_hz_),
+    vsync_cv_.wait_for(lock, std::chrono::duration<double>(2.0 / refresh_hz_.load()),
                        [&] { return vsync_count_ != start || !running_; });
 }
 

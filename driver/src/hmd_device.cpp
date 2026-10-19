@@ -135,6 +135,29 @@ HmdDevice::~HmdDevice() = default;
 
 bool HmdDevice::DirectMode() const { return direct_ != nullptr; }
 
+bool HmdDevice::SetRefreshRate(double hz) {
+#if defined(VHMD_HAS_DIRECT_MODE)
+    if (direct_) {
+        direct_->SetRefreshRate(hz);
+        if (const uint32_t idx = Index(); idx != vr::k_unTrackedDeviceIndexInvalid) {
+            // The compositor predicts poses from this; keep it in step with the clock.
+            vr::VRProperties()->SetFloatProperty(vr::VRProperties()->TrackedDeviceToPropertyContainer(idx),
+                                                 vr::Prop_DisplayFrequency_Float, static_cast<float>(hz));
+        }
+        return true;
+    }
+#endif
+    (void)hz;
+    return false;
+}
+
+double HmdDevice::RefreshRate() const {
+#if defined(VHMD_HAS_DIRECT_MODE)
+    if (direct_) return direct_->RefreshRate();
+#endif
+    return display_cfg_.display_frequency;
+}
+
 bool HmdDevice::SetPreviewWindow(bool visible) {
 #if defined(VHMD_WINDOWS_DIRECT_MODE)
     if (direct_) {

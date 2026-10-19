@@ -68,6 +68,12 @@ vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* driver_context) {
     hooks.device_index = [this](const std::string& id) { return DeviceIndexFor(id); };
     hooks.set_role = [this](const std::string& id, const RoleInfo& role) { return SetRole(id, role); };
     hooks.request_add = [this](const std::string& id) { RequestAdd(id); };
+    hooks.set_refresh_rate = [this](double hz) -> std::string {
+        if (!hmd_ || !hmd_->SetRefreshRate(hz)) return "changing the frame rate needs direct mode (display.mode = direct)";
+        Log(LogLevel::Info, "refresh rate set to %.1f Hz", hz);
+        return "";
+    };
+    hooks.refresh_rate = [this]() { return hmd_ ? hmd_->RefreshRate() : 0.0; };
     hooks.set_preview_window = [this](bool on) -> std::string {
         if (!hmd_ || !hmd_->SetPreviewWindow(on)) return "the preview window needs display.mode = direct on Windows";
         Log(LogLevel::Info, "preview window %s", on ? "shown" : "hidden");
