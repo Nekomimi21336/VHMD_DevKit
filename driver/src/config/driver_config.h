@@ -51,6 +51,7 @@ struct PreviewConfig {
     int vulkan_device = -1;
     // Capture only while a tool asks for it (config op "preview"), unless set.
     bool auto_start = false;
+    double window_fps = 30.0; // Windows direct mode: refresh rate of the preview window
 };
 
 struct DriverConfig {
@@ -76,6 +77,11 @@ struct DriverConfig {
     // "direct": IVRDriverDirectModeComponent (Linux; the compositor hands the
     // eye images to the driver). "auto": direct on Linux, window elsewhere.
     std::string display_mode = "auto";
+    // Frame rate of the virtual display; 0 = vhmd_display.displayFrequency (90).
+    // Lower values cut the compositor's and the apps' work (e.g. 30 for automation).
+    double display_refresh_hz = 0.0;
+    // Windows direct mode: show the preview window at start (toggle with op "preview_window").
+    bool preview_window = false;
     PreviewConfig preview; // direct mode only: eye images to shared memory
     int log_errors_per_second = 5;
     bool verbose = false;

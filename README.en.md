@@ -151,6 +151,46 @@ From other languages, just send JSON over UDP.
 - Invalid values (NaN, out of range, wrong type, etc.) are discarded, and the driver keeps running.
 - Full specification: [docs/en/protocol.md](docs/en/protocol.md)
 
+## Running without a window / lowering the frame rate (Windows)
+
+Changing `display` in `vhmd_config.json` switches to **direct mode**: SteamVR opens no desktop window and the driver receives the images itself (the same approach as on Linux). Like a camera library, you choose whether a preview window is shown, and you can grab the frames from Python.
+
+```jsonc
+"display": { "mode": "direct", "refreshHz": 30, "previewWindow": true }
+```
+
+| Setting | Meaning |
+|---|---|
+| `mode: "direct"` | Direct mode (the default `auto` is window mode on Windows) |
+| `refreshHz` | Frame rate of the virtual display. 30 or 15 is plenty for machine learning or automation and lowers the load of SteamVR and the app |
+| `previewWindow` | Show the preview window (both eyes) at start. Closing it does not stop SteamVR |
+| `preview.windowFps` | Refresh rate of the preview window (default 30) |
+
+Switching at runtime (`VHMDClient`):
+
+```python
+c.preview_window(True)    # show the preview window / False hides it
+c.preview(True)           # write frames to shared memory (called by the reader; False stops)
+from vhmd_client.preview import PreviewReader
+frame = PreviewReader().read()   # both eyes side by side, RGBA; frame.save_png("eyes.png") etc.
+```
+
+`python clients/python/examples/preview_viewer.py` shows the image as well. While nobody is looking (window hidden, no frames requested), no image is copied at all.
+
+Load comparison (Windows 11, RX 7900 XTX, a test app that renders every frame, CPU as % of one core):
+
+| Case | App fps | CPU: compositor + vrserver + app | GPU (3D): compositor + vrserver + app |
+|---|---|---|---|
+| Window mode 90 Hz (before) | 66.6 | 32.1 + 5.1 + 1.6 = **38.8 %** | n/a + 0 + 3.7 % |
+| Direct 90 Hz (no window) | 89.9 | 10.0 + 6.9 + 1.5 = **18.4 %** | 6.8 + 0 + 2.7 = 9.5 % |
+| Direct 90 Hz + preview window | 89.9 | 10.7 + 8.0 + 2.0 = 20.7 % | 7.1 + 1.5 + 2.5 = 11.1 % |
+| Direct 90 Hz + frames to Python at 15 fps | 89.9 | 11.2 + 6.6 + 1.8 = 19.6 % | 6.8 + 0.6 + 2.6 = 10.0 % |
+| Direct 60 Hz | 59.9 | 7.2 + 7.8 + 1.1 = 16.1 % | 4.6 + 0 + 1.8 = 6.4 % |
+| Direct 30 Hz | 30.0 | 5.5 + 7.2 + 0.0 = **12.7 %** | 2.8 + 0 + 0.9 = **3.7 %** |
+| Direct 15 Hz | 15.0 | 3.1 + 6.0 + 0.3 = **9.4 %** | 1.3 + 0 + 0.6 = **1.9 %** |
+
+Window mode tops out at 66 fps for the app and its compositor uses more CPU. Direct mode reaches 90 fps at about half the total load, and 30 Hz cuts it to roughly a third (the heavier the app, the more lowering the frame rate saves). Details: [docs/verification.md](docs/verification.md) (Japanese)
+
 ## Configuration
 
 | File | Contents |

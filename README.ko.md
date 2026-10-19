@@ -151,6 +151,46 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 - 잘못된 값(NaN·범위 밖·타입 불일치 등)은 폐기되며, 드라이버는 멈추지 않습니다.
 - 전체 사양: [docs/ko/protocol.md](docs/ko/protocol.md)
 
+## 창 없이 사용하기 / FPS 낮추기(Windows)
+
+`vhmd_config.json`의 `display`를 바꾸면, SteamVR이 데스크톱에 창을 열지 않고 드라이버가 영상을 직접 받는 **다이렉트 모드**가 됩니다(Linux와 같은 방식). 카메라 라이브러리처럼 프리뷰 창을 띄울지 선택할 수 있고, 영상은 Python에서 꺼낼 수 있습니다.
+
+```jsonc
+"display": { "mode": "direct", "refreshHz": 30, "previewWindow": true }
+```
+
+| 설정 | 내용 |
+|---|---|
+| `mode: "direct"` | 다이렉트 모드(기본 `auto`는 Windows에서 창 모드) |
+| `refreshHz` | 가상 디스플레이의 프레임 레이트. 머신러닝이나 자동화라면 30이나 15로 충분하며 SteamVR과 앱의 부하가 줄어듭니다 |
+| `previewWindow` | 시작 시 프리뷰 창(좌우 눈 영상)을 표시. 창을 닫아도 SteamVR은 멈추지 않음 |
+| `preview.windowFps` | 프리뷰 창의 갱신 레이트(기본 30) |
+
+실행 중 전환(`VHMDClient`):
+
+```python
+c.preview_window(True)    # 프리뷰 창 표시 / False로 숨김
+c.preview(True)           # 영상을 공유 메모리에 출력(꺼내는 쪽이 호출. 멈출 때는 False)
+from vhmd_client.preview import PreviewReader
+frame = PreviewReader().read()   # 좌우 눈을 가로로 나란히 놓은 RGBA. frame.save_png("eyes.png") 등
+```
+
+`python clients/python/examples/preview_viewer.py`로도 영상을 확인할 수 있습니다. 보는 사람이 없는 동안(창을 숨김, 영상 요청 없음)은 영상 복사를 전혀 하지 않습니다.
+
+부하 비교(Windows 11, RX 7900 XTX, 매 프레임 렌더링하는 테스트 앱, CPU는 코어 1개 대비):
+
+| 조건 | 앱 fps | CPU: compositor + vrserver + 앱 | GPU(3D): compositor + vrserver + 앱 |
+|---|---|---|---|
+| 창 모드 90 Hz(이전) | 66.6 | 32.1 + 5.1 + 1.6 = **38.8 %** | 측정 불가 + 0 + 3.7 % |
+| 다이렉트 90 Hz(창 없음) | 89.9 | 10.0 + 6.9 + 1.5 = **18.4 %** | 6.8 + 0 + 2.7 = 9.5 % |
+| 다이렉트 90 Hz + 프리뷰 창 | 89.9 | 10.7 + 8.0 + 2.0 = 20.7 % | 7.1 + 1.5 + 2.5 = 11.1 % |
+| 다이렉트 90 Hz + Python에 15 fps로 영상 | 89.9 | 11.2 + 6.6 + 1.8 = 19.6 % | 6.8 + 0.6 + 2.6 = 10.0 % |
+| 다이렉트 60 Hz | 59.9 | 7.2 + 7.8 + 1.1 = 16.1 % | 4.6 + 0 + 1.8 = 6.4 % |
+| 다이렉트 30 Hz | 30.0 | 5.5 + 7.2 + 0.0 = **12.7 %** | 2.8 + 0 + 0.9 = **3.7 %** |
+| 다이렉트 15 Hz | 15.0 | 3.1 + 6.0 + 0.3 = **9.4 %** | 1.3 + 0 + 0.6 = **1.9 %** |
+
+창 모드는 앱이 66 fps에서 멈추고 compositor의 CPU가 높습니다. 다이렉트 모드는 90 fps를 내면서 전체 부하가 약 절반, 30 Hz로 하면 약 3분의 1입니다(무거운 앱일수록 fps를 낮춘 효과가 큽니다). 상세: [docs/verification.md](docs/verification.md)(일본어)
+
 ## 설정
 
 | 파일 | 내용 |

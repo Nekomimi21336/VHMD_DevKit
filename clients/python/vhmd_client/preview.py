@@ -22,7 +22,8 @@ import zlib
 from dataclasses import dataclass
 from typing import Optional
 
-DEFAULT_PATH = "/dev/shm/vhmd_preview"
+# Linux: a file in /dev/shm. Windows (display.mode = direct): a named shared-memory mapping.
+DEFAULT_PATH = "vhmd_preview" if os.name == "nt" else "/dev/shm/vhmd_preview"
 MAGIC = b"VHMDPRV1"
 # magic, version, header_size, width, height, stride, format, seq,
 # frame_index, timestamp_ns, eye_width, source_format, reserved[2]
@@ -91,19 +92,67 @@ class Frame:
         return tuple(sum(c) / n for c in px)
 
 
+class _WinMapping:
+    """Read-only view of a named Windows file mapping (opened, never created)."""
+
+    def __init__(self, name: str):
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.OpenFileMappingW.restype = wintypes.HANDLE
+        k32.OpenFileMappingW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+        k32.MapViewOfFile.restype = ctypes.c_void_p
+        k32.MapViewOfFile.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, ctypes.c_size_t]
+        k32.UnmapViewOfFile.argtypes = [ctypes.c_void_p]
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+        class MBI(ctypes.Structure):
+            _fields_ = [("BaseAddress", ctypes.c_void_p), ("AllocationBase", ctypes.c_void_p),
+                        ("AllocationProtect", wintypes.DWORD), ("PartitionId", wintypes.WORD),
+                        ("RegionSize", ctypes.c_size_t), ("State", wintypes.DWORD), ("Protect", wintypes.DWORD),
+                        ("Type", wintypes.DWORD)]
+
+        self._k32 = k32
+        self.handle = k32.OpenFileMappingW(0x0004, False, name)  # FILE_MAP_READ
+        if not self.handle:
+            raise FileNotFoundError(name)
+        self.addr = k32.MapViewOfFile(self.handle, 0x0004, 0, 0, 0)
+        if not self.addr:
+            k32.CloseHandle(self.handle)
+            raise OSError("MapViewOfFile failed")
+        mbi = MBI()
+        k32.VirtualQuery(ctypes.c_void_p(self.addr), ctypes.byref(mbi), ctypes.sizeof(mbi))
+        self.size = mbi.RegionSize
+        self.buf = (ctypes.c_char * self.size).from_address(self.addr)
+
+    def close(self) -> None:
+        if self.addr:
+            self._k32.UnmapViewOfFile(self.addr)
+            self._k32.CloseHandle(self.handle)
+        self.addr = None
+
+
 class PreviewReader:
+    """Reads the eye-image preview the direct-mode HMD publishes (Linux, or Windows
+    with display.mode = direct). The driver only writes while a tool has asked
+    for it: call VHMDClient().preview(True) first (preview_viewer.py does)."""
+
     def __init__(self, path: str = DEFAULT_PATH):
         self.path = path
         self._fd: Optional[int] = None
-        self._mm: Optional[mmap.mmap] = None
+        self._mm = None
+        self._win: Optional[_WinMapping] = None
         self._size = 0
 
     def close(self) -> None:
-        if self._mm is not None:
+        if self._win is not None:
+            self._win.close()
+        elif self._mm is not None:
             self._mm.close()
         if self._fd is not None:
             os.close(self._fd)
         self._mm = None
+        self._win = None
         self._fd = None
         self._size = 0
 
@@ -114,6 +163,16 @@ class PreviewReader:
         self.close()
 
     def _map(self) -> bool:
+        if os.name == "nt" and not os.path.dirname(self.path):  # a mapping name, not a file
+            if self._win is not None:
+                return True
+            try:
+                self._win = _WinMapping(self.path)
+            except (FileNotFoundError, OSError):
+                return False
+            self._mm = self._win.buf
+            self._size = self._win.size
+            return self._size >= _HEADER.size
         try:
             st = os.stat(self.path)
         except FileNotFoundError:

@@ -131,7 +131,8 @@
 | `reset` | `id`(생략 시 전체) | 설정 파일의 기본 포즈로 되돌림 |
 | `add` | `id`(생략 시 온디맨드 전체) | 온디맨드 디바이스를 즉시 SteamVR에 추가(다음 프레임에 반영). `{"ok":true,"ids":[...]}` |
 | `hand_mode` | `mode`(`controllers` / `hands`, 생략 시 현재 모드만 반환) | 좌우 손을 컨트롤러 / 핸드 트래킹으로 전환(SteamVR은 멈추지 않음). `{"ok":true,"mode":"hands"}`. `status`에도 `hand_mode`가 포함됨 |
-| `preview` | `mode`(`on` / `off`) | Linux 다이렉트 모드에서 프리뷰(공유 메모리로 영상 출력)를 시작 / 정지. 기본은 꺼져 있어 보는 사람이 없을 때는 GPU 복사도 쓰기도 하지 않음(`preview_viewer.py`와 `linux_check.py`는 자동으로 시작·정지) |
+| `preview` | `mode`(`on` / `off`) | 다이렉트 모드(Linux, 또는 Windows에서 `display.mode = direct`)에서 프리뷰(공유 메모리로 영상 출력)를 시작 / 정지. 기본은 꺼져 있어 보는 사람이 없을 때는 GPU 복사도 쓰기도 하지 않음(`preview_viewer.py`와 `linux_check.py`는 자동으로 시작·정지) |
+| `preview_window` | `mode`(`on` / `off`) | Windows 다이렉트 모드(`display.mode = direct`)에서 프리뷰 창(HMD 영상)을 표시 / 숨김. 숨긴 동안은 아무것도 하지 않음 |
 | (`status`의 `perf`) | | 드라이버 자체의 부하: `update_thread_cpu_pct`, `receive_thread_cpu_pct`(코어 1개 대비 %, 1초마다 갱신), `update_tick_us_avg` / `update_tick_us_max`(갱신 1회의 처리 시간) |
 
 `status`의 `display`: `mode`(`window` / `direct`), `width`, `height`, `refresh_hz`. 다이렉트 모드(Linux)에서는 추가로 `swap_sets_created`, `swap_sets_alive`, `layers_submitted`, `presents`, `vsyncs`, `eye_texture`(`width`, `height`, `vk_format`), `preview`(`state`, `submitted`, `written`, `active`).

@@ -131,7 +131,8 @@ Passed to `IVRDriverInput::CreateEyeTrackingComponent("/eyetracking")` as `VREye
 | `reset` | `id` (all devices if omitted) | Restores the default pose from the config file |
 | `add` | `id` (all on-demand devices if omitted) | Adds on-demand devices to SteamVR immediately (applied on the next frame). `{"ok":true,"ids":[...]}` |
 | `hand_mode` | `mode` (`controllers` / `hands`; without it, only returns the current mode) | Switches both hands between controllers and hand tracking (SteamVR keeps running). `{"ok":true,"mode":"hands"}`. `status` also carries `hand_mode` |
-| `preview` | `mode` (`on` / `off`) | Starts / pauses the preview (eye images in shared memory) in Linux direct mode. It is off by default, so nothing is copied or written while nobody watches (`preview_viewer.py` and `linux_check.py` start and stop it themselves) |
+| `preview` | `mode` (`on` / `off`) | Starts / pauses the preview (eye images in shared memory) in direct mode (Linux, or Windows with `display.mode = direct`). It is off by default, so nothing is copied or written while nobody watches (`preview_viewer.py` and `linux_check.py` start and stop it themselves) |
+| `preview_window` | `mode` (`on` / `off`) | Shows / hides the preview window (the HMD image) in Windows direct mode (`display.mode = direct`). Nothing is done while it is hidden |
 | (`perf` in `status`) | | The driver's own load: `update_thread_cpu_pct`, `receive_thread_cpu_pct` (% of one core, refreshed every second), `update_tick_us_avg` / `update_tick_us_max` (time per update) |
 
 `display` in `status`: `mode` (`window` / `direct`), `width`, `height`, `refresh_hz`. In direct mode (Linux), additionally `swap_sets_created`, `swap_sets_alive`, `layers_submitted`, `presents`, `vsyncs`, `eye_texture` (`width`, `height`, `vk_format`), `preview` (`state`, `submitted`, `written`, `active`).

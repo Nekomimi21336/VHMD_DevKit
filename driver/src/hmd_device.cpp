@@ -11,6 +11,10 @@
 #if defined(VHMD_PLATFORM_POSIX) && defined(__linux__)
 #include "linux/direct_mode.h"
 #define VHMD_HAS_DIRECT_MODE 1
+#elif defined(VHMD_PLATFORM_WINDOWS)
+#include "windows/direct_mode.h"
+#define VHMD_HAS_DIRECT_MODE 1
+#define VHMD_WINDOWS_DIRECT_MODE 1
 #endif
 
 namespace vhmd {
@@ -93,7 +97,12 @@ class DirectModeComponent {};
 
 HmdDevice::HmdDevice(std::shared_ptr<DeviceState> state, const DisplayConfig& display, bool direct_mode,
                      const PreviewConfig& preview)
+    : HmdDevice(std::move(state), display, direct_mode, preview, false) {}
+
+HmdDevice::HmdDevice(std::shared_ptr<DeviceState> state, const DisplayConfig& display, bool direct_mode,
+                     const PreviewConfig& preview, bool preview_window)
     : VirtualDevice(std::move(state)), display_cfg_(display), head_model_(State().Config().head_model), display_(display) {
+    (void)preview_window;
 #if defined(VHMD_HAS_DIRECT_MODE)
     if (direct_mode) {
         CaptureSettings cs;
@@ -103,7 +112,18 @@ HmdDevice::HmdDevice(std::shared_ptr<DeviceState> state, const DisplayConfig& di
         cs.max_eye_width = preview.max_eye_width;
         cs.vulkan_device = preview.vulkan_device;
         cs.start_active = preview.auto_start;
+#if defined(VHMD_WINDOWS_DIRECT_MODE)
+        direct_ = std::make_unique<DirectModeComponent>(display.display_frequency, cs, preview_window, preview.window_fps);
+        std::string err;
+        if (!direct_->Init(err)) {
+            Log(LogLevel::Error, "direct mode unavailable (%s); using window mode", err.c_str());
+            direct_.reset();
+        } else {
+            display_.SetOnDesktop(false); // no desktop window: the driver takes the frames
+        }
+#else
         direct_ = std::make_unique<DirectModeComponent>(display.display_frequency, cs);
+#endif
     }
 #else
     if (direct_mode) Log(LogLevel::Warning, "display.mode=direct is only implemented on Linux; using window mode");
@@ -115,8 +135,19 @@ HmdDevice::~HmdDevice() = default;
 
 bool HmdDevice::DirectMode() const { return direct_ != nullptr; }
 
+bool HmdDevice::SetPreviewWindow(bool visible) {
+#if defined(VHMD_WINDOWS_DIRECT_MODE)
+    if (direct_) {
+        direct_->SetWindowVisible(visible);
+        return true;
+    }
+#endif
+    (void)visible;
+    return false;
+}
+
 bool HmdDevice::SetPreviewActive(bool active) {
-#if defined(__linux__)
+#if defined(VHMD_HAS_DIRECT_MODE)
     if (direct_) {
         direct_->SetPreviewActive(active);
         return true;
@@ -142,6 +173,9 @@ std::string HmdDevice::DisplayStatusJson() const {
         j["vsyncs"] = s.vsyncs;
         j["eye_texture"] = {{"width", s.last_width}, {"height", s.last_height}, {"vk_format", s.last_format}};
         if (!s.last_error.empty()) j["error"] = s.last_error;
+#if defined(VHMD_WINDOWS_DIRECT_MODE)
+        j["preview_window"] = {{"visible", s.window_visible}, {"frames", s.window_frames}};
+#endif
         j["preview"] = {{"state", s.capture.state},
                         {"submitted", s.capture.submitted},
                         {"written", s.capture.written},
@@ -181,6 +215,10 @@ void HmdDevice::OnActivate(vr::PropertyContainerHandle_t c) {
         p->SetBoolProperty(c, vr::Prop_Hmd_AllowsClientToControlTextureIndex, true);
         p->SetBoolProperty(c, vr::Prop_SupportsXrTextureSets_Bool, true);
         p->SetBoolProperty(c, vr::Prop_HasDriverDirectModeComponent_Bool, true);
+#if defined(VHMD_WINDOWS_DIRECT_MODE)
+        // The compositor must render on the adapter that owns the eye textures.
+        p->SetUint64Property(c, vr::Prop_GraphicsAdapterLuid_Uint64, direct_->AdapterLuid());
+#endif
         direct_->Start();
         Log(LogLevel::Info, "HMD display: direct mode (eye images handed to the driver)");
     } else

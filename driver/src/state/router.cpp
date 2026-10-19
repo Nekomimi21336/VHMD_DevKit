@@ -202,6 +202,16 @@ std::optional<std::string> MessageRouter::HandleConfig(const ConfigMessage& m, C
             if (!err.empty()) r["error"] = err;
             r["role"] = role->steamvr_role;
         }
+    } else if (m.op == "preview_window") {
+        if (m.mode != "on" && m.mode != "off") {
+            r["ok"] = false;
+            r["error"] = "mode must be \"on\" or \"off\"";
+        } else {
+            const std::string err =
+                hooks_.set_preview_window ? hooks_.set_preview_window(m.mode == "on") : "preview window not available";
+            r["ok"] = err.empty();
+            if (!err.empty()) r["error"] = err;
+        }
     } else if (m.op == "preview") {
         if (m.mode != "on" && m.mode != "off") {
             r["ok"] = false;

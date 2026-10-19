@@ -35,6 +35,8 @@ struct RouterHooks {
     std::function<std::string(const std::string& mode)> set_hand_mode;
     // Current hand mode ("controllers" / "hands"), for status.
     std::function<std::string()> hand_mode;
+    // Shows / hides the preview window (Windows direct mode). Returns an error string.
+    std::function<std::string(bool on)> set_preview_window;
     // Starts / pauses the direct-mode preview. Returns an error string (empty = success).
     std::function<std::string(bool on)> set_preview;
     // JSON object with the driver's own CPU use ("perf" in status).

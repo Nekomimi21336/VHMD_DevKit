@@ -154,6 +154,24 @@ TEST(config_preview_auto_start_and_op) {
     CHECK(na["ok"] == false);
 }
 
+TEST(config_direct_mode_window_and_refresh) {
+    auto d = DefaultConfig();
+    CHECK(d.display_refresh_hz == 0.0 && !d.preview_window && d.preview.window_fps == 30.0);
+    auto r = LoadConfigFromJson(R"({"display":{"mode":"direct","refreshHz":30,"previewWindow":true},"preview":{"windowFps":10}})");
+    CHECK(r.config.display_mode == "direct" && r.config.display_refresh_hz == 30.0 && r.config.preview_window);
+    CHECK(r.config.preview.window_fps == 10.0 && r.warnings.empty());
+    CHECK(LoadConfigFromJson(R"({"display":{"refreshHz":1000}})").config.display_refresh_hz == 240.0);
+    DriverConfig cfg = DefaultConfig();
+    std::vector<std::shared_ptr<DeviceState>> states;
+    for (const auto& dc : cfg.devices) states.push_back(std::make_shared<DeviceState>(dc, cfg));
+    bool shown = false;
+    RouterHooks hooks;
+    hooks.set_preview_window = [&](bool v) -> std::string { shown = v; return ""; };
+    MessageRouter router(cfg, states, hooks);
+    auto j = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"preview_window","mode":"on"})", Clock::now()));
+    CHECK(j["ok"] == true && shown);
+}
+
 TEST(config_shipped_file_parses_cleanly) {
     std::ifstream f(VHMD_SOURCE_DIR "/driver/resources/settings/vhmd_config.json");
     CHECK(f.good());

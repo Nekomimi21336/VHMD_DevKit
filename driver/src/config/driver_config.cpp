@@ -175,6 +175,9 @@ ConfigLoadResult LoadConfigFromJson(std::string_view text) {
 
         if (auto d = root.find("display"); d != root.end() && d->is_object()) {
             Get(*d, "mode", c.display_mode, w, "display.");
+            Get(*d, "refreshHz", c.display_refresh_hz, w, "display.");
+            if (c.display_refresh_hz != 0.0) c.display_refresh_hz = std::clamp(c.display_refresh_hz, 1.0, 240.0);
+            Get(*d, "previewWindow", c.preview_window, w, "display.");
             if (c.display_mode != "auto" && c.display_mode != "window" && c.display_mode != "direct") {
                 w.emplace_back("display.mode: expected auto|window|direct");
                 c.display_mode = "auto";
@@ -190,6 +193,8 @@ ConfigLoadResult LoadConfigFromJson(std::string_view text) {
             c.preview.max_eye_width = static_cast<uint32_t>(std::clamp(max_w, 16, 8192));
             Get(*p, "vulkanDevice", c.preview.vulkan_device, w, "preview.");
             Get(*p, "autoStart", c.preview.auto_start, w, "preview.");
+            Get(*p, "windowFps", c.preview.window_fps, w, "preview.");
+            c.preview.window_fps = std::clamp(c.preview.window_fps, 1.0, 240.0);
         }
         if (auto t = root.find("timeout"); t != root.end() && t->is_object()) {
             Get(*t, "ms", c.timeout_ms, w, "timeout.");

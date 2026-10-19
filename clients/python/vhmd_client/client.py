@@ -195,6 +195,13 @@ class VHMDClient:
         if not r.get("ok"):
             raise ValueError(r.get("error", "preview failed"))
 
+    def preview_window(self, on: bool = True) -> None:
+        """Show (or hide) the preview window: the HMD image in a desktop window
+        (Windows, display.mode = direct). Hidden costs nothing."""
+        r = self.request("preview_window", mode="on" if on else "off")
+        if not r.get("ok"):
+            raise ValueError(r.get("error", "preview_window failed"))
+
     def hand_mode(self, mode: str = "") -> str:
         """Switch both hands between "controllers" and "hands" (hand tracking)
         while SteamVR runs, or return the current mode when called without

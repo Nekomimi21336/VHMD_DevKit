@@ -151,6 +151,46 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 - 不正な値(NaN・範囲外・型違いなど)は破棄され、ドライバは止まりません。
 - 全仕様: [docs/protocol.md](docs/protocol.md)
 
+## ウィンドウを出さずに使う / FPS を下げる(Windows)
+
+`vhmd_config.json` の `display` を変えると、SteamVR がデスクトップにウィンドウを開かず、ドライバが映像を直接受け取る**ダイレクトモード**になります(Linux と同じ方式)。カメラのライブラリのように、プレビューウィンドウを出すかどうかを選べ、映像は Python から取り出せます。
+
+```jsonc
+"display": { "mode": "direct", "refreshHz": 30, "previewWindow": true }
+```
+
+| 設定 | 内容 |
+|---|---|
+| `mode: "direct"` | ダイレクトモード(既定の `auto` は Windows ではウィンドウモード) |
+| `refreshHz` | 仮想ディスプレイのフレームレート。機械学習や自動化なら 30 や 15 で十分で、SteamVR とアプリの負荷が下がります |
+| `previewWindow` | 起動時にプレビューウィンドウ(左右の目の映像)を出す。閉じても SteamVR は止まりません |
+| `preview.windowFps` | プレビューウィンドウの更新レート(既定 30) |
+
+実行中の切り替え(`VHMDClient`):
+
+```python
+c.preview_window(True)    # プレビューウィンドウを出す / False で隠す
+c.preview(True)           # 映像を共有メモリへ書き出す(取り出す側が呼ぶ。止めるときは False)
+from vhmd_client.preview import PreviewReader
+frame = PreviewReader().read()   # 左右の目を横に並べた RGBA。frame.save_png("eyes.png") など
+```
+
+`python clients/python/examples/preview_viewer.py` でも映像を確認できます。見る人がいないあいだ(ウィンドウを隠している・映像を頼まれていない)は、映像のコピーは一切しません。
+
+負荷の比較(Windows 11、RX 7900 XTX、毎フレーム描画するテストアプリ、CPU は 1 コア比):
+
+| 条件 | アプリの fps | CPU: compositor + vrserver + アプリ | GPU(3D): compositor + vrserver + アプリ |
+|---|---|---|---|
+| ウィンドウモード 90 Hz(従来) | 66.6 | 32.1 + 5.1 + 1.6 = **38.8 %** | 計測不可 + 0 + 3.7 % |
+| ダイレクト 90 Hz(ウィンドウなし) | 89.9 | 10.0 + 6.9 + 1.5 = **18.4 %** | 6.8 + 0 + 2.7 = 9.5 % |
+| ダイレクト 90 Hz + プレビューウィンドウ | 89.9 | 10.7 + 8.0 + 2.0 = 20.7 % | 7.1 + 1.5 + 2.5 = 11.1 % |
+| ダイレクト 90 Hz + Python へ 15 fps で映像 | 89.9 | 11.2 + 6.6 + 1.8 = 19.6 % | 6.8 + 0.6 + 2.6 = 10.0 % |
+| ダイレクト 60 Hz | 59.9 | 7.2 + 7.8 + 1.1 = 16.1 % | 4.6 + 0 + 1.8 = 6.4 % |
+| ダイレクト 30 Hz | 30.0 | 5.5 + 7.2 + 0.0 = **12.7 %** | 2.8 + 0 + 0.9 = **3.7 %** |
+| ダイレクト 15 Hz | 15.0 | 3.1 + 6.0 + 0.3 = **9.4 %** | 1.3 + 0 + 0.6 = **1.9 %** |
+
+ウィンドウモードはアプリが 66 fps 止まりなうえ、compositor の CPU が高めでした。ダイレクトモードは 90 fps を出しつつ全体で約半分、30 Hz にするとさらに 3 分の 1 程度です(重いアプリほど fps を下げた効果は大きくなります)。詳細: [docs/verification.md](docs/verification.md)
+
 ## 設定
 
 | ファイル | 内容 |

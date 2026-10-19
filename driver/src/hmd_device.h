@@ -30,7 +30,8 @@ public:
     explicit HmdDisplayComponent(const DisplayConfig& cfg) : cfg_(cfg) {}
 
     void GetWindowBounds(int32_t* x, int32_t* y, uint32_t* width, uint32_t* height) override;
-    bool IsDisplayOnDesktop() override { return true; }
+    bool IsDisplayOnDesktop() override { return on_desktop_; }
+    void SetOnDesktop(bool v) { on_desktop_ = v; }
     bool IsDisplayRealDisplay() override { return false; }
     void GetRecommendedRenderTargetSize(uint32_t* width, uint32_t* height) override;
     void GetEyeOutputViewport(vr::EVREye eye, uint32_t* x, uint32_t* y, uint32_t* width, uint32_t* height) override;
@@ -39,6 +40,7 @@ public:
     bool ComputeInverseDistortion(vr::HmdVector2_t* result, vr::EVREye eye, uint32_t channel, float u, float v) override;
 
 private:
+    bool on_desktop_ = true;
     DisplayConfig cfg_;
 };
 
@@ -48,6 +50,8 @@ class HmdDevice : public VirtualDevice {
 public:
     // `direct_mode` (Linux only) makes the compositor hand the eye images to
     // the driver instead of opening a window; see linux/direct_mode.h.
+    HmdDevice(std::shared_ptr<DeviceState> state, const DisplayConfig& display, bool direct_mode, const PreviewConfig& preview,
+              bool preview_window);
     HmdDevice(std::shared_ptr<DeviceState> state, const DisplayConfig& display, bool direct_mode,
               const PreviewConfig& preview);
     ~HmdDevice() override;
@@ -59,6 +63,8 @@ public:
     std::string DisplayStatusJson() const;
     // Starts / pauses the shared-memory preview (direct mode only). Returns false if unavailable.
     bool SetPreviewActive(bool active);
+    // Shows / hides the preview window (Windows direct mode). Returns false if unavailable.
+    bool SetPreviewWindow(bool visible);
 
 protected:
     void OnActivate(vr::PropertyContainerHandle_t container) override;

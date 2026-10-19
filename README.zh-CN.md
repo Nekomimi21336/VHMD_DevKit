@@ -151,6 +151,46 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 - 非法值(NaN、超出范围、类型错误等)会被丢弃，驱动不会停止。
 - 完整规范：[docs/zh-CN/protocol.md](docs/zh-CN/protocol.md)
 
+## 不显示窗口 / 降低帧率(Windows)
+
+修改 `vhmd_config.json` 的 `display` 即可切换为**直接模式**：SteamVR 不在桌面打开窗口，由驱动直接接收画面(与 Linux 相同的方式)。像相机库一样可以选择是否显示预览窗口，并可从 Python 取出画面。
+
+```jsonc
+"display": { "mode": "direct", "refreshHz": 30, "previewWindow": true }
+```
+
+| 设置 | 说明 |
+|---|---|
+| `mode: "direct"` | 直接模式(默认的 `auto` 在 Windows 上为窗口模式) |
+| `refreshHz` | 虚拟显示器的帧率。机器学习或自动化用途 30 或 15 就足够，可降低 SteamVR 和应用的负载 |
+| `previewWindow` | 启动时显示预览窗口(左右眼画面)。关闭窗口不会停止 SteamVR |
+| `preview.windowFps` | 预览窗口的刷新率(默认 30) |
+
+运行中切换(`VHMDClient`)：
+
+```python
+c.preview_window(True)    # 显示预览窗口 / False 隐藏
+c.preview(True)           # 将画面写入共享内存(由读取方调用；停止时传 False)
+from vhmd_client.preview import PreviewReader
+frame = PreviewReader().read()   # 左右眼并排的 RGBA；frame.save_png("eyes.png") 等
+```
+
+也可用 `python clients/python/examples/preview_viewer.py` 查看画面。无人查看时(窗口隐藏、未请求画面)完全不进行画面复制。
+
+负载对比(Windows 11、RX 7900 XTX、每帧渲染的测试应用，CPU 为占单核的 %)：
+
+| 条件 | 应用 fps | CPU: compositor + vrserver + 应用 | GPU(3D): compositor + vrserver + 应用 |
+|---|---|---|---|
+| 窗口模式 90 Hz(以前) | 66.6 | 32.1 + 5.1 + 1.6 = **38.8 %** | 无法测量 + 0 + 3.7 % |
+| 直接 90 Hz(无窗口) | 89.9 | 10.0 + 6.9 + 1.5 = **18.4 %** | 6.8 + 0 + 2.7 = 9.5 % |
+| 直接 90 Hz + 预览窗口 | 89.9 | 10.7 + 8.0 + 2.0 = 20.7 % | 7.1 + 1.5 + 2.5 = 11.1 % |
+| 直接 90 Hz + 以 15 fps 向 Python 输出画面 | 89.9 | 11.2 + 6.6 + 1.8 = 19.6 % | 6.8 + 0.6 + 2.6 = 10.0 % |
+| 直接 60 Hz | 59.9 | 7.2 + 7.8 + 1.1 = 16.1 % | 4.6 + 0 + 1.8 = 6.4 % |
+| 直接 30 Hz | 30.0 | 5.5 + 7.2 + 0.0 = **12.7 %** | 2.8 + 0 + 0.9 = **3.7 %** |
+| 直接 15 Hz | 15.0 | 3.1 + 6.0 + 0.3 = **9.4 %** | 1.3 + 0 + 0.6 = **1.9 %** |
+
+窗口模式下应用最高只有 66 fps，且 compositor 的 CPU 偏高。直接模式在 90 fps 下总负载约为一半，设为 30 Hz 时约为三分之一(应用越重，降低帧率的效果越大)。详情：[docs/verification.md](docs/verification.md)(日文)
+
 ## 配置
 
 | 文件 | 内容 |

@@ -53,6 +53,13 @@ set_target_properties(driver_vhmd PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY "$<1:${VHMD_STAGE_DIR}/bin/${VHMD_PLATFORM_DIR}>"
   PDB_OUTPUT_DIRECTORY "$<1:${CMAKE_BINARY_DIR}/pdb>")
 
+if(WIN32)
+  # Direct-mode HMD output on Windows (display.mode = "direct"): D3D11 shared
+  # textures, optional preview window, shared-memory frames.
+  target_sources(driver_vhmd PRIVATE src/windows/direct_mode.cpp)
+  target_link_libraries(driver_vhmd PRIVATE d3d11 dxgi)
+endif()
+
 if(UNIX AND NOT APPLE)
   # Direct-mode HMD output (required by Linux SteamVR) + shared-memory preview.
   # Only Vulkan *headers* are needed: libvulkan is dlopen()ed at runtime.

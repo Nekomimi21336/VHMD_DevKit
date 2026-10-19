@@ -68,8 +68,13 @@ vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* driver_context) {
     hooks.device_index = [this](const std::string& id) { return DeviceIndexFor(id); };
     hooks.set_role = [this](const std::string& id, const RoleInfo& role) { return SetRole(id, role); };
     hooks.request_add = [this](const std::string& id) { RequestAdd(id); };
+    hooks.set_preview_window = [this](bool on) -> std::string {
+        if (!hmd_ || !hmd_->SetPreviewWindow(on)) return "the preview window needs display.mode = direct on Windows";
+        Log(LogLevel::Info, "preview window %s", on ? "shown" : "hidden");
+        return "";
+    };
     hooks.set_preview = [this](bool on) -> std::string {
-        if (!hmd_ || !hmd_->SetPreviewActive(on)) return "preview is only available in direct mode (Linux)";
+        if (!hmd_ || !hmd_->SetPreviewActive(on)) return "preview needs direct mode (Linux, or display.mode = direct on Windows)";
         Log(LogLevel::Info, "preview %s", on ? "started" : "paused");
         return "";
     };
@@ -108,7 +113,8 @@ vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* driver_context) {
 }
 
 void DeviceProvider::CreateDevices() {
-    const DisplayConfig display = DisplayConfig::FromSettings();
+    DisplayConfig display = DisplayConfig::FromSettings();
+    if (config_.display_refresh_hz > 0.0) display.display_frequency = static_cast<float>(config_.display_refresh_hz);
     for (const auto& dc : config_.devices) {
         auto state = std::make_shared<DeviceState>(dc, config_);
         states_.push_back(state);
@@ -122,7 +128,7 @@ void DeviceProvider::CreateDevices() {
 #else
             const bool direct = config_.display_mode == "direct";
 #endif
-            auto h = std::make_unique<HmdDevice>(state, display, direct, config_.preview);
+            auto h = std::make_unique<HmdDevice>(state, display, direct, config_.preview, config_.preview_window);
             hmd_ = h.get();
             dev = std::move(h);
             break;

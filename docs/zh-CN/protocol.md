@@ -131,7 +131,8 @@
 | `reset` | `id`(省略时为全部设备) | 恢复为配置文件中的默认姿态 |
 | `add` | `id`(省略时为全部按需设备) | 立即将按需设备添加到 SteamVR(下一帧生效)。`{"ok":true,"ids":[...]}` |
 | `hand_mode` | `mode`(`controllers` / `hands`，省略时仅返回当前模式) | 在控制器 / 手部追踪之间切换左右手(SteamVR 不会停止)。`{"ok":true,"mode":"hands"}`。`status` 中也包含 `hand_mode` |
-| `preview` | `mode`(`on` / `off`) | 在 Linux 直接模式下开始 / 暂停预览(向共享内存写出画面)。默认关闭，无人查看时不进行 GPU 复制和写入(`preview_viewer.py` 和 `linux_check.py` 会自动开始和停止) |
+| `preview` | `mode`(`on` / `off`) | 在直接模式下(Linux，或 Windows 上 `display.mode = direct`)开始 / 暂停预览(向共享内存写出画面)。默认关闭，无人查看时不进行 GPU 复制和写入(`preview_viewer.py` 和 `linux_check.py` 会自动开始和停止) |
+| `preview_window` | `mode`(`on` / `off`) | 在 Windows 直接模式(`display.mode = direct`)下显示 / 隐藏预览窗口(HMD 画面)。隐藏期间不进行任何处理 |
 | (`status` 中的 `perf`) | | 驱动自身的负载：`update_thread_cpu_pct`、`receive_thread_cpu_pct`(占单核的 %，每秒更新)、`update_tick_us_avg` / `update_tick_us_max`(每次更新的处理时间) |
 
 `status` 的 `display`：`mode`(`window` / `direct`)、`width`、`height`、`refresh_hz`。在直接模式(Linux)下还包含 `swap_sets_created`、`swap_sets_alive`、`layers_submitted`、`presents`、`vsyncs`、`eye_texture`(`width`、`height`、`vk_format`)、`preview`(`state`、`submitted`、`written`、`active`)。
