@@ -254,6 +254,20 @@ SteamVR 合成器会准确遵循 1〜240 Hz 的任意值。但低于 10 Hz 时�
 - 姿态请按真实 HMD 的原始坐标(`TrackingUniverseRawAndUncalibrated`)发送：可以在发送程序中读取真实 HMD 的姿态来计算，也可以用 VMT 兼容 OSC 的 Joint / Follow 以真实 HMD(`HMD`)为父设备。让追踪器持续位于真实 HMD 下方 50 cm 时，即使头部移动，误差中位数也只有 0.7 mm。
 - 也可以在 SteamVR 的“启动/关闭 → 管理加载项”中禁用 `vhmd`。
 
+### 在 VHMD 与真实 HMD 之间切换(Windows)
+
+```powershell
+python -m vhmd_client.mode pico    # 真实 HMD(PICO Connect)+ VHMD 追踪器
+python -m vhmd_client.mode vhmd    # VHMD 的 HMD 和控制器(关闭真实 HMD 的驱动)
+python -m vhmd_client.mode         # 显示当前模式
+```
+
+FPS 操作工具中的"切换到 Pico"/"切换到 VHMD"按钮作用相同(切换后工具会重新打开)。
+
+- SteamVR 在启动时确定 HMD，运行中无法更改，因此切换时会重启 SteamVR(本机切到 Pico 约 7 秒，切到 VHMD 约 27 秒)。正在运行的 VR 应用会关闭。
+- 只修改两项 SteamVR 设置：`driver_pico.enable` 和 `driver_vhmd.configFile`。后者指向已安装配置的副本(仅修改 `hmd` / `controllers`，位于 `%LOCALAPPDATA%\VHMD\profiles`)，每次切换都会重新生成，因此对原配置的修改会被沿用。
+- 在 Pico 模式下，FPS 操作工具的头部取自真实 HMD，追踪器跟随佩戴者。
+
 ## 测试
 
 | 类型 | 命令 | 内容 |

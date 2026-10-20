@@ -16,6 +16,7 @@ gamepad = ["pygame>=2.5"]
 
 [project.scripts]
 vhmd-fps = "vhmd_client.fps:main"   # Windows only
+vhmd-mode = "vhmd_client.mode:main" # Windows only
 
 [tool.setuptools]
 packages = ["vhmd_client"]

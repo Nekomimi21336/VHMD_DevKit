@@ -31,11 +31,13 @@ import argparse
 import ctypes
 import ctypes.wintypes
 import math
+import os
+import subprocess
 import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import math3d
@@ -83,6 +85,9 @@ TEXT = {
         "no_openvr": "pyopenvr not installed: SteamVR column and take over disabled",
         "no_driver": "driver not answering on {}:{}",
         "copied": "copied {} lines", "absent": "not in SteamVR", "invalid": "not tracked",
+        "to_pico": "Switch to Pico", "to_vhmd": "Switch to VHMD",
+        "switch_confirm": "Restart SteamVR in {} mode?\nRunning VR apps will close.",
+        "switching": "Switching to {}: {}", "switch_failed": "Switch failed: {}",
         "help": (
             "Mouse: look  |  WASD: move  Space/C: up/down  Shift: fast  Alt: slow  Q/E: roll  R: level\n"
             "F1 head  F2 left hand  F3 right hand  (mouse moves the selected one, wheel = depth)  L: WASD as joystick\n"
@@ -112,6 +117,9 @@ TEXT = {
         "no_openvr": "pyopenvr が無いため、SteamVR 上の値と引き継ぎは使えません",
         "no_driver": "{}:{} のドライバが応答しません",
         "copied": "{} 行をコピーしました", "absent": "SteamVR に無い", "invalid": "トラッキングなし",
+        "to_pico": "Pico に切り替え", "to_vhmd": "VHMD に切り替え",
+        "switch_confirm": "SteamVR を再起動して {} モードにします。\n実行中の VR アプリは終了します。よろしいですか?",
+        "switching": "{} に切り替え中: {}", "switch_failed": "切り替えに失敗しました: {}",
         "help": (
             "マウス: 視点  |  WASD: 移動  Space/C: 上下  Shift: 速く  Alt: ゆっくり  Q/E: 首をかしげる  R: 水平に戻す\n"
             "F1 頭  F2 左手  F3 右手(選んだものをマウスで動かす、ホイールで前後)  L: WASD をスティックとして送る\n"
@@ -465,6 +473,9 @@ class App:
         self.take_btn.pack(side="left")
         ttk.Button(top, text=t["reset"], command=self.reset_all).pack(side="left", padx=4)
         ttk.Button(top, text=t["copy"], command=self.copy_python).pack(side="left")
+        self.switch_target = "vhmd" if not self.hmd_active else "pico"
+        self.switch_btn = ttk.Button(top, text=t["to_" + self.switch_target], command=self.switch_mode)
+        self.switch_btn.pack(side="left", padx=(16, 0))
         self.rate_lbl = ttk.Label(top, foreground="#666")
         self.rate_lbl.pack(side="right")
 
@@ -1176,8 +1187,54 @@ class App:
         self.root.clipboard_append("\n".join(lines) + "\n")
         self.message.set(self.t["copied"].format(len(lines)))
 
-    def close(self) -> None:
+    def switch_mode(self) -> None:
+        """Restarts SteamVR with the other headset (vhmd_client.mode), then
+        reopens this tool, whose devices change with the mode."""
+        from . import mode as vmode
+        target = self.switch_target
+        if not messagebox.askyesno(self.t["title"], self.t["switch_confirm"].format(target.upper()), parent=self.root):
+            return
         self.release_capture()
+        self.switch_btn.config(state="disabled")
+        self.switch_state = {"text": "", "done": False, "error": ""}
+
+        def progress(text: str) -> None:
+            self.switch_state["text"] = text
+
+        def work() -> None:
+            try:
+                self.stop_workers()
+                vmode.switch(target, progress=progress)
+                self.switch_state["done"] = True
+            except BaseException as e:          # SystemExit from the module too
+                self.switch_state["error"] = str(e) or type(e).__name__
+
+        threading.Thread(target=work, name="vhmd-fps-switch", daemon=True).start()
+        self.poll_switch(target)
+
+    def poll_switch(self, target: str) -> None:
+        st = self.switch_state
+        if st["error"]:
+            self.banner.config(text=self.t["switch_failed"].format(st["error"]), bg="#fed7d7")
+            return
+        if st["done"]:
+            # The package's parent on the path, however this instance was started.
+            pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            env = dict(os.environ, PYTHONPATH=os.pathsep.join(filter(None, [pkg_parent, os.environ.get("PYTHONPATH")])))
+            args = sys.argv[1:] if os.path.basename(sys.argv[0]).startswith("fps") else []
+            exe = sys.executable
+            pyw = os.path.join(os.path.dirname(exe), "pythonw.exe")
+            if os.path.basename(exe).lower() == "python.exe" and os.path.exists(pyw):
+                exe = pyw                       # no console window for the new instance
+            subprocess.Popen([exe, "-m", "vhmd_client.fps", *args], env=env, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+            self.root.destroy()
+            return
+        self.banner.config(text=self.t["switching"].format(target.upper(), st["text"]), bg="#fefcbf")
+        self.root.after(200, lambda: self.poll_switch(target))
+
+    def stop_workers(self) -> None:
+        """Stops sending and the preview, and leaves SteamVR (any thread)."""
         self.running = False
         time.sleep(0.05)                 # let the sender thread finish its step
         if self.preview_on:
@@ -1185,11 +1242,17 @@ class App:
                 self.c.preview(False)
             except Exception:
                 pass
+            self.preview_on = False
         if self.vr:
             try:
                 self.openvr.shutdown()
             except Exception:
                 pass
+            self.vr = None
+
+    def close(self) -> None:
+        self.release_capture()
+        self.stop_workers()
         self.root.destroy()
 
 

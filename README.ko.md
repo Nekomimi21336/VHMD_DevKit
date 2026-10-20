@@ -254,6 +254,20 @@ SteamVR 컴포지터는 1~240 Hz의 어떤 값에도 정확히 따릅니다. 다
 - 자세는 실제 HMD의 원시 좌표(`TrackingUniverseRawAndUncalibrated`)에 맞춰 보냅니다. 송신 프로그램에서 실제 HMD의 자세를 읽어 계산하거나, VMT 호환 OSC의 Joint / Follow로 실제 HMD(`HMD`)를 부모로 지정합니다. 트래커를 실제 HMD 아래 50 cm에 계속 두었을 때 머리를 움직여도 오차 중앙값은 0.7 mm였습니다.
 - SteamVR의 "시작/종료 → 애드온 관리"에서 `vhmd`를 비활성화할 수도 있습니다.
 
+### VHMD 와 실제 HMD 전환하기(Windows)
+
+```powershell
+python -m vhmd_client.mode pico    # 실제 HMD(PICO Connect) + VHMD 트래커
+python -m vhmd_client.mode vhmd    # VHMD 의 HMD 와 컨트롤러(실제 HMD 드라이버는 끔)
+python -m vhmd_client.mode         # 현재 모드 표시
+```
+
+FPS 조작 도구의 "Pico 로 전환" / "VHMD 로 전환" 버튼으로도 같은 일을 할 수 있습니다(전환 후 도구가 다시 열림).
+
+- SteamVR 은 시작할 때 HMD 를 정하고 실행 중에는 바꿀 수 없으므로, 전환 시 SteamVR 을 다시 시작합니다(이 PC 에서 Pico 로 약 7 초, VHMD 로 약 27 초). 실행 중인 VR 앱은 종료됩니다.
+- 바꾸는 것은 SteamVR 설정 2 개뿐입니다: `driver_pico.enable` 과 `driver_vhmd.configFile`. 후자는 설치된 설정에서 `hmd` / `controllers` 만 바꾼 사본(`%LOCALAPPDATA%\VHMD\profiles`)을 가리키며, 전환할 때마다 다시 만들므로 원래 설정의 변경이 그대로 반영됩니다.
+- Pico 모드의 FPS 조작 도구에서는 머리가 실제 HMD 의 자세가 되고, 트래커가 착용자를 따라갑니다.
+
 ## 테스트
 
 | 종류 | 명령 | 내용 |

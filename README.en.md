@@ -254,6 +254,20 @@ You can add VHMD trackers to a real headset's head and hands (e.g. Pico 4 Ultra 
 - Send poses in the real HMD's raw coordinates (`TrackingUniverseRawAndUncalibrated`): either read the real HMD's pose in your sender and compute from it, or use VMT-compatible Joint / Follow with the real HMD (`HMD`) as the parent. Keeping a tracker 50 cm below the real HMD gave a median error of 0.7 mm while the head moved.
 - You can also disable `vhmd` in SteamVR under "Startup/Shutdown → Manage Add-ons".
 
+### Switching between VHMD and a physical HMD (Windows)
+
+```powershell
+python -m vhmd_client.mode pico    # physical HMD (PICO Connect) + VHMD trackers
+python -m vhmd_client.mode vhmd    # VHMD HMD and controllers (physical driver off)
+python -m vhmd_client.mode         # show the current mode
+```
+
+The FPS control tool's "Switch to Pico" / "Switch to VHMD" button does the same (the tool reopens afterwards).
+
+- SteamVR picks its HMD at startup and cannot change it while running, so a switch restarts SteamVR (on this PC about 7 s to Pico, 27 s to VHMD). Running VR apps close.
+- Only two SteamVR settings change: `driver_pico.enable` and `driver_vhmd.configFile`. The latter points to a copy of the installed config with only `hmd` / `controllers` changed (`%LOCALAPPDATA%\VHMD\profiles`), rebuilt on every switch so edits to the original carry over.
+- In Pico mode the FPS control tool takes the head from the physical HMD, and the trackers follow the person wearing it.
+
 ## Tests
 
 | Kind | Command | Contents |
