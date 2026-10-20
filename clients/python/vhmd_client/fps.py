@@ -409,6 +409,10 @@ class App:
         self.thread_message = ""     # set by worker threads, shown by Tk
 
         self.load_devices()
+        if not self.hmd_active:
+            # Following a physical HMD (Pico mode): velocities let SteamVR make up
+            # for the frame or two between reading the HMD and the tracker update.
+            self.predict_var.set(True)
         self.init_openvr()
         self.build_ui()
         self.reset_all()

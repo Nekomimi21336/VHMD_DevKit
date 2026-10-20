@@ -179,7 +179,7 @@ python -m vhmd_client.fps        # 在 clients/python 中运行，或 pip instal
 | 暂停 / 接管 SteamVR 姿态 | 停止发送，交给自动化程序 / 从 SteamVR 当前的姿态恢复手动操作 |
 | 复制为 Python | 把当前姿态作为 `c.pose(...)` 行复制到剪贴板 |
 | Raw 鼠标输入 | 开启(默认)时忽略 Windows 鼠标加速，直接用鼠标的移动量控制视角 |
-| 运动预测 | 默认关闭。开启后同时发送速度，SteamVR 在两次发送之间插值(动作可能有惯性感) |
+| 运动预测 | VHMD 模式下默认关闭，跟随真实 HMD 的 Pico 模式下默认开启(佩戴真实 HMD 走动时，脚部追踪器的最大误差从 28 mm 降到 10 mm)。开启后同时发送速度，SteamVR 在两次发送之间插值(动作可能有惯性感) |
 | 视角显示 | 单眼 16:9(默认)/ 双眼 / 单眼(完整)可选，随窗口大小缩放。想放大显示请把 `preview.maxEyeWidth` 设为 1200 以上(默认 960 时，视渲染尺寸单眼可能缩到 540 px) |
 
 - "SteamVR 中的值"一列和图中的圆圈是应用实际看到的姿态(需要 pyopenvr：`pip install openvr`)。真实 HMD 等其他驱动的设备以灰色显示。
