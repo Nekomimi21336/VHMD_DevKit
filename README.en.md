@@ -260,13 +260,17 @@ You can add VHMD trackers to a real headset's head and hands (e.g. Pico 4 Ultra 
 ```powershell
 python -m vhmd_client.mode pico    # physical HMD (PICO Connect) + VHMD trackers
 python -m vhmd_client.mode vhmd    # VHMD HMD and controllers (physical driver off)
+python -m vhmd_client.mode off     # as before VHMD: its driver off, the settings it changed restored
 python -m vhmd_client.mode         # show the current mode
 ```
+
+The VHMD Link PC app's "Use SteamVR with" buttons (VHMD Link / PICO Connect / As before VHMD) do the same.
 
 The FPS control tool's "Switch to Pico" / "Switch to VHMD" button does the same (the tool reopens afterwards).
 
 - SteamVR picks its HMD at startup and cannot change it while running, so a switch restarts SteamVR (on this PC about 13 s to Pico, 19 s to VHMD). Running VR apps close.
-- Only two SteamVR settings change: `driver_pico.enable` and `driver_vhmd.configFile`. The latter points to a copy of the installed config with only `hmd` / `controllers` changed (`%LOCALAPPDATA%\VHMD\profiles`), rebuilt on every switch so edits to the original carry over.
+- Only a few SteamVR settings change: `driver_pico.enable`, `driver_vhmd.enable` / `configFile` and (with `--headset`) `vhmd_display`. `configFile` points to a copy of the installed config with only `hmd` / `controllers` changed (`%LOCALAPPDATA%\VHMD\profiles`), rebuilt on every switch so edits to the original carry over.
+- **Reversible**: their values before the first change are recorded in `%LOCALAPPDATA%\VHMD\original_steamvr.json`, and `off` puts them back (keys that did not exist are removed). In `off` the VHMD driver is not loaded, so SteamVR runs as it did before VHMD (the driver stays registered, so `vhmd` / `pico` are one switch away; `tools/uninstall_driver.ps1` removes it). On a PC that switched before this record existed, SteamVR's defaults (no VHMD keys, the physical driver on) are taken as the original.
 - In Pico mode the FPS control tool takes the head from the physical HMD, and the trackers follow the person wearing it.
 
 ## Tests

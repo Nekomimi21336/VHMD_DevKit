@@ -58,6 +58,10 @@ struct StreamStats {
     uint64_t submitted = 0, encoded = 0, dropped = 0, bytes = 0;
     std::string audio = "off";       // "off", "capturing <rate> Hz", or an error
     uint64_t audio_packets = 0;
+    // Over the last 72 frames: time in Submit (compositor thread: scale + color
+    // conversion queued on the GPU) and from Submit to the encoded frame sent.
+    double submit_ms_avg = 0, submit_ms_max = 0, encode_ms_avg = 0, encode_ms_max = 0;
+    double encoder_ms_avg = 0, encoder_ms_max = 0;   // of that, inside the encoder (input -> output)
 };
 
 class StreamEncoder {

@@ -733,12 +733,23 @@ public:
         int audio_packets, audio_underruns, audio_skipped;
         float wait_avg_ms, wait_p95_ms;   // decoded image waiting before it is shown
         long long bytes;                  // received on the video connection
+        float decode_avg_ms, decode_max_ms;   // frame to decoder -> image out
     };
     Stats TakeStats() {
         std::lock_guard<std::mutex> l(queue_mu_);
         Stats s{received_.exchange(0), decoded_.exchange(0), shown_, repeats_, dropped_, buffer_.load(),
                 rx_close_.exchange(0), dec_close_.exchange(0), 0, 0, 0, 0, 0, bytes_.exchange(0)};
         audio_.TakeStats(&s.audio_packets, &s.audio_underruns, &s.audio_skipped);
+        s.decode_avg_ms = s.decode_max_ms = 0;
+        if (!decode_ms_.empty()) {
+            float sum = 0;
+            for (float d : decode_ms_) {
+                sum += d;
+                s.decode_max_ms = std::max(s.decode_max_ms, d);
+            }
+            s.decode_avg_ms = sum / decode_ms_.size();
+            decode_ms_.clear();
+        }
         if (!waits_ms_.empty()) {
             float sum = 0;
             for (float w : waits_ms_) sum += w;
@@ -841,8 +852,15 @@ private:
         AImage* in = nullptr;
         if (AImageReader_acquireNextImage(r, &in) != AMEDIA_OK || !in) return;
         NoteGap(last_dec_, dec_close_);
+        const auto now = std::chrono::steady_clock::now();
+        int64_t ts_ns = 0;
+        AImage_getTimestamp(in, &ts_ns);
+        const uint64_t index = static_cast<uint64_t>((ts_ns / 1000 + kPtsStepUs / 2) / kPtsStepUs);
         std::lock_guard<std::mutex> l(queue_mu_);
-        queue_.push_back({in, std::chrono::steady_clock::now()});
+        // Decode time: from handing the frame to the decoder until its image is here.
+        if (fed_index_[index % kPoseRing] == index)
+            decode_ms_.push_back(std::chrono::duration<float, std::milli>(now - fed_at_[index % kPoseRing]).count());
+        queue_.push_back({in, now});
         while (queue_.size() > 4) {   // the render loop is not taking them: keep the newest
             AImage_delete(queue_.front().img);
             queue_.pop_front();
@@ -927,6 +945,9 @@ private:
         AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_HEIGHT, height_);
         AMediaFormat_setInt32(f, "low-latency", 1);
         AMediaFormat_setInt32(f, "vendor.qti-ext-dec-low-latency.enable", 1);
+        // Output in decode order (no B-frames are sent): the decoder does not hold a
+        // frame back waiting for reordering that never happens.
+        AMediaFormat_setInt32(f, "vendor.qti-ext-dec-picture-order.enable", 1);
         AMediaFormat_setInt32(f, "priority", 0);
         media_status_t st = AMediaCodec_configure(codec_, f, window, nullptr, 0);
         AMediaFormat_delete(f);
@@ -946,6 +967,11 @@ private:
         uint8_t* buf = AMediaCodec_getInputBuffer(codec_, static_cast<size_t>(i), &cap);
         const size_t n = std::min(cap, au.size());
         memcpy(buf, au.data(), n);
+        {
+            std::lock_guard<std::mutex> l(queue_mu_);
+            fed_at_[index % kPoseRing] = std::chrono::steady_clock::now();
+            fed_index_[index % kPoseRing] = index;
+        }
         AMediaCodec_queueInputBuffer(codec_, static_cast<size_t>(i), 0, n, index * kPtsStepUs, 0);
         ++received_;
     }
@@ -1000,6 +1026,9 @@ private:
     std::deque<Queued> queue_;   // filled by OnImage, emptied by Update
     int repeats_ = 0, dropped_ = 0;
     std::vector<float> waits_ms_;
+    std::vector<float> decode_ms_;
+    std::chrono::steady_clock::time_point fed_at_[64] = {};
+    uint64_t fed_index_[64] = {};
     float period_ms_ = 0;                  // the headset's display period
     float phase_c_ = 0, phase_s_ = 0;      // sums of cos / sin of the wait phase
     int phase_n_ = 0;
@@ -2067,9 +2096,11 @@ void Frame(App& app) {
         snprintf(st, sizeof(st),
                  "{\"type\":\"link_stats\",\"display\":%.1f,\"received\":%.1f,\"decoded\":%.1f,\"shown\":%.1f,"
                  "\"repeats\":%.1f,\"dropped\":%.1f,\"buffer\":%d,\"wait_ms\":%.1f,\"wait_p95_ms\":%.1f,"
-                 "\"reprojected\":%.0f,\"audio_packets\":%.1f,\"audio_underruns\":%d}",
+                 "\"reprojected\":%.0f,\"audio_packets\":%.1f,\"audio_underruns\":%d,\"decode_ms\":%.2f,"
+                 "\"decode_max_ms\":%.2f}",
                  xr_frames / s, v.received / s, v.decoded / s, v.shown / s, v.repeats / s, v.dropped / s, v.buffer,
-                 v.wait_avg_ms, v.wait_p95_ms, rep, v.audio_packets / s, v.audio_underruns);
+                 v.wait_avg_ms, v.wait_p95_ms, rep, v.audio_packets / s, v.audio_underruns, v.decode_avg_ms,
+                 v.decode_max_ms);
         app.link_stats = st;
         app.st_display = xr_frames / s;
         app.st_received = v.received / s;

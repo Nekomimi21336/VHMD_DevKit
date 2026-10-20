@@ -28,6 +28,7 @@ from __future__ import annotations
 import collections
 import json
 import math
+import os
 import queue
 import shutil
 import socket
@@ -41,6 +42,24 @@ from .client import VHMDClient
 from .preview import PreviewReader
 
 VIDEO_PORT = 39581
+
+
+def _precise_now_us():
+    """Wall clock in microseconds, the same clock the driver stamps frames with
+    (GetSystemTimePreciseAsFileTime on Windows)."""
+    if os.name == "nt":
+        import ctypes
+        ft = ctypes.c_uint64()
+        get = ctypes.windll.kernel32.GetSystemTimePreciseAsFileTime
+
+        def now() -> int:
+            get(ctypes.byref(ft))
+            return (ft.value - 116444736000000000) // 10
+        return now
+    return lambda: time.time_ns() // 1000
+
+
+now_us = _precise_now_us()
 DRIVER_STREAM_PORT = 39583
 HEADER = struct.Struct("<4sIIIQQ7fI")
 assert HEADER.size == 64
@@ -126,6 +145,9 @@ class VideoServer(threading.Thread):
         self.min_bitrate = 8.0
         self.bitrate_now = bitrate_mbps
         self._drv: Optional[socket.socket] = None   # the driver's encoder, while relaying
+        # Delay this relay adds per frame (driver sent -> handed to the network
+        # here), ms over the last second: avg, p99, max.
+        self.relay_ms = (0.0, 0.0, 0.0)
 
     def run(self) -> None:
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -227,10 +249,11 @@ class VideoServer(threading.Thread):
         calm = 0                          # calm seconds in a row
         hold_until = 0.0                  # no increase before this
         ceiling, ceiling_at = 0.0, 0.0    # the rate that last proved too much, and when
+        delays: list = []
         try:
             while True:
                 hdr = recvn(HEADER.size)
-                magic, kind, size, *_ = HEADER.unpack(hdr)
+                magic, kind, size, _flags, _index, sent_us, *_ = HEADER.unpack(hdr)
                 if magic != b"VHV1":
                     raise ValueError("bad stream framing from the driver")
                 payload = recvn(size)
@@ -241,10 +264,16 @@ class VideoServer(threading.Thread):
                 now = time.monotonic()
                 blocked += now - t
                 if kind == KIND_FRAME:
+                    delays.append((now_us() - sent_us) / 1000.0)
                     self.frames_in += 1
                     self.frames_out += 1
                     self.bytes_out += size
                 if now - window >= 1.0:
+                    if delays:
+                        delays.sort()
+                        self.relay_ms = (sum(delays) / len(delays), delays[min(len(delays) - 1, len(delays) * 99 // 100)],
+                                         delays[-1])
+                        delays.clear()
                     busy = blocked / (now - window)
                     blocked, window = 0.0, now
                     new = self.bitrate_now

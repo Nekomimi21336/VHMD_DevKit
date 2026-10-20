@@ -122,7 +122,31 @@ struct StreamEncoder::Impl {
         float pose[7];
         bool pose_ok;
         uint32_t w, h;
+        uint64_t submit_us;   // when Submit took it (NowUs)
+        uint64_t input_us;    // when it went into the encoder
     };
+    // Timing windows (72 frames), published into the stats.
+    struct Window {
+        double sum = 0, max = 0;
+        int n = 0;
+        // Adds one sample (ms); true with avg / max when the window is full.
+        bool Add(double ms, double* avg, double* mx) {
+            sum += ms;
+            max = std::max(max, ms);
+            if (++n < 72) return false;
+            *avg = sum / n;
+            *mx = max;
+            sum = max = 0;
+            n = 0;
+            return true;
+        }
+    };
+    Window submit_win, encode_win, encoder_win;
+    // The encoder's events, read by a thread that blocks on them (so an output
+    // is picked up the moment it is ready, not on the next poll); q_mu guards.
+    std::thread event_thread;
+    std::deque<MediaEventType> events_q;
+    bool event_failed = false;
     std::mutex q_mu;
     std::condition_variable q_cv;
     std::deque<Frame> queue;
@@ -235,6 +259,7 @@ StreamStats StreamEncoder::Stats() const {
 // --- compositor thread --------------------------------------------------------
 void StreamEncoder::Submit(ID3D11Texture2D* src, uint32_t eye_w, uint32_t eye_h, const float* pose) {
     if (!wanted_) return;
+    const uint64_t t0 = NowUs();
     Impl& m = *impl_;
     D3D11_TEXTURE2D_DESC sd{};
     src->GetDesc(&sd);
@@ -373,6 +398,7 @@ void StreamEncoder::Submit(ID3D11Texture2D* src, uint32_t eye_w, uint32_t eye_h,
     f.w = out_w;
     f.h = out_h;
     f.pose_ok = pose != nullptr;
+    f.submit_us = t0;
     if (pose) std::memcpy(f.pose, pose, sizeof(f.pose));
     {
         std::lock_guard<std::mutex> l(m.q_mu);
@@ -383,6 +409,7 @@ void StreamEncoder::Submit(ID3D11Texture2D* src, uint32_t eye_w, uint32_t eye_h,
     m.q_cv.notify_one();
     std::lock_guard<std::mutex> s(stats_mu_);
     ++stats_.submitted;
+    m.submit_win.Add((NowUs() - t0) / 1000.0, &stats_.submit_ms_avg, &stats_.submit_ms_max);
 }
 
 // --- network thread -----------------------------------------------------------
@@ -509,7 +536,18 @@ void StreamEncoder::EncodeLoop() {
             m.mft->ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0);
             m.mft->ProcessMessage(MFT_MESSAGE_NOTIFY_END_STREAMING, 0);
             ComPtr<IMFShutdown> sd;
-            if (SUCCEEDED(m.mft.As(&sd))) sd->Shutdown();
+            const bool shut = SUCCEEDED(m.mft.As(&sd)) && SUCCEEDED(sd->Shutdown());
+            // Shutdown ends the event thread's wait; without it the thread keeps
+            // its own reference and is left to finish whenever it does.
+            if (m.event_thread.joinable()) {
+                if (shut) m.event_thread.join();
+                else m.event_thread.detach();
+            }
+        }
+        {
+            std::lock_guard<std::mutex> l(m.q_mu);
+            m.events_q.clear();
+            m.event_failed = false;
         }
         m.mft.Reset();
         m.events.Reset();
@@ -769,6 +807,11 @@ void StreamEncoder::EncodeLoop() {
                     std::lock_guard<std::mutex> l(stats_mu_);
                     ++stats_.encoded;
                     stats_.bytes += len;
+                    if (found) {
+                        const uint64_t t = NowUs();
+                        m.encode_win.Add((t - f.submit_us) / 1000.0, &stats_.encode_ms_avg, &stats_.encode_ms_max);
+                        m.encoder_win.Add((t - f.input_us) / 1000.0, &stats_.encoder_ms_avg, &stats_.encoder_ms_max);
+                    }
                 }
             }
             if (!own) sample->Release();
@@ -799,6 +842,24 @@ void StreamEncoder::EncodeLoop() {
                 continue;
             }
             send_config();
+            {
+                ComPtr<IMFMediaEventGenerator> gen = m.events;
+                m.event_thread = std::thread([&m, gen] {
+                    for (;;) {
+                        ComPtr<IMFMediaEvent> ev;
+                        const HRESULT hr = gen->GetEvent(0, &ev);   // blocks until the next event
+                        MediaEventType type = MEUnknown;
+                        if (SUCCEEDED(hr)) ev->GetType(&type);
+                        {
+                            std::lock_guard<std::mutex> l(m.q_mu);
+                            if (FAILED(hr)) m.event_failed = true;
+                            else m.events_q.push_back(type);
+                        }
+                        m.q_cv.notify_all();
+                        if (FAILED(hr)) return;   // shut down (or broken)
+                    }
+                });
+            }
             {   // frames that piled up while the encoder started are stale: keep the newest
                 std::lock_guard<std::mutex> l(m.q_mu);
                 while (m.queue.size() > 1) {
@@ -840,17 +901,24 @@ void StreamEncoder::EncodeLoop() {
         }
         if (need_config) send_config();
 
-        ComPtr<IMFMediaEvent> ev;
-        HRESULT hr = m.events->GetEvent(MF_EVENT_FLAG_NO_WAIT, &ev);
-        if (hr == MF_E_NO_EVENTS_AVAILABLE) {
+        // Sleep until the encoder has an event, a frame can go in, or something
+        // changed (50 ms at most, for the checks above).
+        std::deque<MediaEventType> evs;
+        bool failed;
+        {
             std::unique_lock<std::mutex> l(m.q_mu);
-            m.q_cv.wait_for(l, std::chrono::milliseconds(1));
-        } else if (FAILED(hr)) {
+            m.q_cv.wait_for(l, std::chrono::milliseconds(50), [&] {
+                return !m.events_q.empty() || m.event_failed || (m.need_input > 0 && !m.queue.empty()) || !wanted_ ||
+                       !running_ || m.bitrate_changed.load();
+            });
+            evs.swap(m.events_q);
+            failed = m.event_failed;
+        }
+        if (failed) {
             teardown();
             continue;
-        } else {
-            MediaEventType type = MEUnknown;
-            ev->GetType(&type);
+        }
+        for (MediaEventType type : evs) {
             if (type == METransformNeedInput) ++m.need_input;
             else if (type == METransformHaveOutput) drain_output();
         }
@@ -880,6 +948,10 @@ void StreamEncoder::EncodeLoop() {
             sample->SetSampleTime(f.time);
             sample->SetSampleDuration(100000);
             if (m.keyframe.exchange(false) && m.codec_api) SetCodecValue(m.codec_api.Get(), CODECAPI_AVEncVideoForceKeyFrame, 1);
+            {
+                std::lock_guard<std::mutex> l(m.q_mu);
+                m.in_flight.back().input_us = NowUs();
+            }
             if (FAILED(m.mft->ProcessInput(m.in_id, sample.Get(), 0))) {
                 std::lock_guard<std::mutex> l(m.q_mu);
                 m.slot_busy[f.slot] = false;

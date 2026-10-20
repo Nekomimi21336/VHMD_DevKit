@@ -260,13 +260,17 @@ SteamVR のコンポジタは 1〜240 Hz のどの値にも正確に従います
 ```powershell
 python -m vhmd_client.mode pico    # 実機 HMD(PICO Connect)+ VHMD のトラッカー
 python -m vhmd_client.mode vhmd    # VHMD の HMD とコントローラー(実機のドライバは無効)
+python -m vhmd_client.mode off     # 元の環境: VHMD のドライバを止め、VHMD が変えた設定を元に戻す
 python -m vhmd_client.mode         # 今のモードを表示
 ```
+
+PC のアプリ VHMD Link の「SteamVR の使い方」(VHMD Link / PICO Connect / 元の環境)でも切り替えられます。
 
 FPS 操作ツールの「Pico に切り替え」「VHMD に切り替え」ボタンでも同じことができます(切り替え後にツールが開き直します)。
 
 - SteamVR は起動時に HMD を決め、起動中は変えられないため、切り替えでは SteamVR を再起動します(この PC で Pico へ約 13 秒、VHMD へ約 19 秒)。実行中の VR アプリは終了します。
-- 変えるのは SteamVR の設定 2 つだけです: `driver_pico.enable` と `driver_vhmd.configFile`。後者は、インストール済みの設定から `hmd` / `controllers` だけを変えたコピー(`%LOCALAPPDATA%\VHMD\profiles`)を指します。コピーは切り替えのたびに作り直すので、元の設定への変更はそのまま引き継がれます。
+- 変えるのは SteamVR の設定の一部だけです: `driver_pico.enable`、`driver_vhmd.enable` / `configFile`、(`--headset` のとき)`vhmd_display`。`configFile` は、インストール済みの設定から `hmd` / `controllers` だけを変えたコピー(`%LOCALAPPDATA%\VHMD\profiles`)を指します。コピーは切り替えのたびに作り直すので、元の設定への変更はそのまま引き継がれます。
+- **元に戻せる**: 最初に変える前の値を `%LOCALAPPDATA%\VHMD\original_steamvr.json` に記録し、`off` でその値に戻します(もとは無かったキーは消す)。`off` では VHMD のドライバが読み込まれないので、SteamVR は VHMD を入れる前と同じに動きます(ドライバの登録は残るので、`vhmd` / `pico` にいつでも戻せる。登録ごと消すのは `tools/uninstall_driver.ps1`)。記録より前に切り替えていた PC では、SteamVR の既定(VHMD のキーなし、実機のドライバは有効)を元の値とします。
 - Pico モードの FPS 操作ツールでは、頭は実機 HMD の姿勢になり、トラッカーが装着者に追従します。
 
 ## テスト

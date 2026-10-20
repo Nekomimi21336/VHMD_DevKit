@@ -1,19 +1,28 @@
 """Switch SteamVR between the VHMD headset and a physical one (e.g. Pico 4 Ultra
-through PICO Connect). Windows only.
+through PICO Connect), or back to how it was before VHMD. Windows only.
 
     python -m vhmd_client.mode            # show the current mode
     python -m vhmd_client.mode pico       # physical HMD + VHMD trackers
     python -m vhmd_client.mode vhmd       # VHMD HMD and controllers, physical driver off
+    python -m vhmd_client.mode off        # as before VHMD: its driver off, the rest restored
     python -m vhmd_client.mode vhmd --headset     # ... rendering for the VHMD Link headset's display
     python -m vhmd_client.mode vhmd --no-headset  # ... back to VHMD's own display settings
 
 SteamVR picks its HMD when it starts and cannot change it while running, so a
 switch restarts SteamVR (about 20-30 s; running VR apps close). Nothing else is
-touched: the mode is two SteamVR settings,
+touched: the mode is a few SteamVR settings,
 
-- ``driver_<physical>.enable``  (the physical headset's driver on / off), and
+- ``driver_<physical>.enable``  (the physical headset's driver on / off),
+- ``driver_vhmd.enable``        (off only in mode "off"),
 - ``driver_vhmd.configFile``    (a VHMD config derived from the installed one,
-  with ``hmd`` / ``controllers`` enabled or not),
+  with ``hmd`` / ``controllers`` enabled or not), and
+- ``vhmd_display``              (only with --headset),
+
+Before the first change, their values are recorded in
+%LOCALAPPDATA%/VHMD/original_steamvr.json; mode "off" puts them back (keys that
+did not exist are removed) and turns the VHMD driver off, so SteamVR runs as it
+did before (the driver folder stays registered; tools/uninstall_driver.ps1
+removes it).
 
 written through SteamVR's own settings API while it runs (so SteamVR does not
 overwrite them) and into steamvr.vrsettings while it is stopped. The derived
@@ -38,12 +47,15 @@ if sys.platform != "win32":
 
 import winreg
 
-MODES = ("vhmd", "pico")
+MODES = ("vhmd", "pico", "off")
 PHYSICAL_DRIVER = "pico"              # driver name in its driver.vrdrivermanifest
 DRIVER_SECTION = "driver_vhmd"
 PROFILE_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "VHMD" / "profiles"
 # What each mode enables in the VHMD config (trackers keep their own settings).
 PROFILE_FLAGS = {"vhmd": {"hmd": True, "controllers": True}, "pico": {"hmd": False, "controllers": False}}
+ORIGINAL = PROFILE_DIR.parent / "original_steamvr.json"
+# Every SteamVR setting a switch may write: recorded before the first change.
+TOUCHED = {f"driver_{PHYSICAL_DRIVER}": ["enable"], DRIVER_SECTION: ["enable", "configFile"]}
 
 Progress = Callable[[str], None]
 
@@ -131,9 +143,44 @@ def write_profile(mode: str, edits: Optional[Dict[str, Dict[str, str]]] = None) 
     return out
 
 
+def _read_settings() -> dict:
+    try:
+        return json.loads(settings_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def original_settings() -> Dict[str, Dict[str, object]]:
+    """The SteamVR settings VHMD switches, as they were before VHMD changed them
+    (None = the key did not exist). Recorded on first use; on a PC where VHMD
+    switched modes before this record existed, SteamVR's defaults are assumed
+    (no VHMD keys, the physical driver on)."""
+    try:
+        return json.loads(ORIGINAL.read_text(encoding="utf-8"))["settings"]
+    except (OSError, ValueError, KeyError):
+        pass
+    from . import headset_info
+    data = _read_settings()
+    earlier = PROFILE_DIR.exists() and any(PROFILE_DIR.glob("*.json"))
+    rec: Dict[str, Dict[str, object]] = {}
+    for section, keys in TOUCHED.items():
+        rec[section] = {k: (None if earlier else data.get(section, {}).get(k)) for k in keys}
+    rec["vhmd_display"] = {k: (None if earlier else data.get("vhmd_display", {}).get(k))
+                           for k in headset_info.DISPLAY_KEYS}
+    ORIGINAL.parent.mkdir(parents=True, exist_ok=True)
+    ORIGINAL.write_text(json.dumps({"settings": rec, "inferred": earlier,
+                                    "recorded": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=1), encoding="utf-8")
+    return rec
+
+
 def wanted_settings(mode: str, headset: Optional[bool] = None) -> Dict[str, Dict[str, object]]:
     """headset: True = render for the VHMD Link headset (headset_info), False =
     VHMD's own display settings, None = as chosen last time."""
+    original = original_settings()   # recorded before anything is written
+    if mode == "off":
+        out = {section: dict(values) for section, values in original.items()}
+        out.setdefault(DRIVER_SECTION, {})["enable"] = False
+        return out
     from . import headset_info
     if headset is None:
         headset = headset_info.APPLIED.exists() or None
@@ -149,8 +196,10 @@ def wanted_settings(mode: str, headset: Optional[bool] = None) -> Dict[str, Dict
     elif headset is False:
         display = {k: None for k in headset_info.DISPLAY_KEYS}   # removed: driver defaults
         headset_info.APPLIED.unlink(missing_ok=True)
-    out = {f"driver_{PHYSICAL_DRIVER}": {"enable": mode == "pico"},
-           DRIVER_SECTION: {"configFile": str(write_profile(mode, edits))}}
+    phys = original.get(f"driver_{PHYSICAL_DRIVER}", {}).get("enable")
+    # pico: the physical driver on (its key removed if it was never set: on by default).
+    out = {f"driver_{PHYSICAL_DRIVER}": {"enable": (None if phys is None else True) if mode == "pico" else False},
+           DRIVER_SECTION: {"enable": True, "configFile": str(write_profile(mode, edits))}}
     if display:
         out["vhmd_display"] = display
     return out
@@ -251,17 +300,20 @@ def _apply_to_file(settings: Dict[str, Dict[str, object]]) -> None:
                 sec.pop(k, None)
             else:
                 sec[k] = v
+        if not sec:
+            data.pop(section, None)   # nothing left: as if never there
     # A crash during a switch can leave the driver disabled by SteamVR's safe mode.
     data.get(DRIVER_SECTION, {}).pop("blocked_by_safe_mode", None)
     p.write_text(json.dumps(data, indent=3, ensure_ascii=False), encoding="utf-8")
 
 
 def current_mode() -> Optional[str]:
-    """The mode the settings select (None if they match neither)."""
-    try:
-        data = json.loads(settings_file().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    """The mode the settings select (None if they match none)."""
+    data = _read_settings()
+    if not data:
         return None
+    if data.get(DRIVER_SECTION, {}).get("enable") is False:
+        return "off"
     physical_on = data.get(f"driver_{PHYSICAL_DRIVER}", {}).get("enable", True)
     cfg = data.get(DRIVER_SECTION, {}).get("configFile", "")
     if cfg:
@@ -299,6 +351,9 @@ def switch(mode: str, progress: Progress = print, restart: bool = True, headset:
     t0 = time.time()
     while not steamvr_running() and time.time() - t0 < 60:
         time.sleep(0.5)
+    if mode == "off":   # the VHMD driver is not loaded: nothing to wait for
+        progress("mode: off (SteamVR as before VHMD)")
+        return
     _wait_driver(progress)
     if effective_mode() not in (mode, None):
         # Rare: the new SteamVR came up before the settings were saved. Once more.

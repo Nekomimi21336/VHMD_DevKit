@@ -138,6 +138,8 @@ class Bridge:
         self.summary = ""
         self.sync_state: dict = {}      # the driver's last display_sync reply
         self.sync_shift_total = 0.0     # ms moved since the start (drift followed)
+        self.forward_us = (0.0, 0.0)    # pose message: received -> sent to the driver (avg, max), last second
+        self._fwd_samples: list = []
         self._models_applied: Optional[str] = None   # render models set for this driver session
         self._rate_note = ""                          # last refresh-rate message logged
         self._driver = (options.driver_host, options.driver_port)
@@ -260,6 +262,8 @@ class Bridge:
             **self.rates,
             "headset_stats": dict(self.stats.headset),
             "bitrate_now": self.video.bitrate_now if self.video else 0.0,
+            "relay_ms": self.video.relay_ms if self.video else (0.0, 0.0, 0.0),
+            "forward_us": self.forward_us,
             "sync": dict(self.sync_state),
             "sync_total_ms": self.sync_shift_total,
             "summary": self.summary,
@@ -270,6 +274,7 @@ class Bridge:
         """One JSON array from the app to the driver; the app's "headset" message
         (its display: fields of view, eyes, render size, refresh rate, edition)
         and statistics stay here."""
+        t0 = time.perf_counter()
         self.link.last_seen = time.monotonic()
         if b'"type":"headset"' in data or b'"type":"link_stats"' in data or b'"type":"link_timing"' in data:
             try:
@@ -288,6 +293,7 @@ class Bridge:
             data = json.dumps(rest, separators=(",", ":")).encode()
         self._udp.sendto(data, self._driver)
         self.stats.add(data)
+        self._fwd_samples.append((time.perf_counter() - t0) * 1e6)
 
     def _display_sync(self, m: dict) -> None:
         """The headset's frame timing to the driver, which moves its vsync clock
@@ -391,6 +397,8 @@ class Bridge:
             self.rates = {"msgs": round(n / dt), "kib": b / 1024 / dt, "video_in": round(fin / dt),
                           "video_out": round(fout / dt), "mbps": vb * 8 / 1e6 / dt}
             self.summary = summary(last) if n else ""
+            fwd, self._fwd_samples = self._fwd_samples, []
+            self.forward_us = (sum(fwd) / len(fwd), max(fwd)) if fwd else (0.0, 0.0)
 
             # SteamVR and the driver: is it up, who has control of the HMD.
             if now - last_steamvr_check > 3.0:
@@ -464,7 +472,9 @@ def summary(last: str) -> str:
 def report_line(st: dict) -> str:
     line = f"{st['msgs']:4d} msg/s  {st['kib']:6.1f} KiB/s  {st['summary']}" if st["msgs"] else ""
     if st["video_in"] or st["video_out"]:
-        line += f"  |  video in {st['video_in']} / out {st['video_out']} fps  {st['mbps']:5.1f} Mbit/s"
+        r = st["relay_ms"]
+        line += (f"  |  video in {st['video_in']} / out {st['video_out']} fps  {st['mbps']:5.1f} Mbit/s"
+                 f"  relay {r[0]:.2f}/{r[1]:.2f}/{r[2]:.2f} ms  pose fwd {st['forward_us'][0]:.0f}/{st['forward_us'][1]:.0f} us")
     if st["sync"]:
         line += f"  |  sync {st['sync'].get('shift_ms', 0):+.2f} ms (total {st['sync_total_ms']:+.1f})"
         if not st["sync"].get("ok", True):

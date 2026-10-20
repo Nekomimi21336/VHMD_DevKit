@@ -55,6 +55,12 @@ TEXT = {
         "wifi": "Wi-Fi {addr}", "usb": "USB cable",
         "vr_off": "Not running", "vr_starting": "Starting...", "vr_on": "Running (VHMD)", "vr_pico": "Running (physical HMD mode)",
         "vr_other": "Running", "start_vr": "Start SteamVR", "to_vhmd": "Use VHMD mode",
+        "env": "Use SteamVR with", "env_vhmd": "VHMD Link", "env_pico": "PICO Connect",
+        "env_off": "As before VHMD",
+        "env_hint_vhmd": "This headset through VHMD (VHMD's HMD and controllers).",
+        "env_hint_pico": "The physical headset through its own app; VHMD only adds trackers.",
+        "env_hint_off": "VHMD's driver is off; SteamVR's settings are back to how they were before VHMD.",
+        "vr_off_mode": "Running (VHMD off)",
         "match": "Match the headset's display",
         "match_hint": "VHMD renders with a different field of view or resolution than this headset.",
         "auto_vr": "Start SteamVR when the headset connects",
@@ -79,6 +85,12 @@ TEXT = {
         "wifi": "Wi-Fi {addr}", "usb": "USB ケーブル",
         "vr_off": "停止中", "vr_starting": "起動しています…", "vr_on": "起動中(VHMD)", "vr_pico": "起動中(実機 HMD モード)",
         "vr_other": "起動中", "start_vr": "SteamVR を起動", "to_vhmd": "VHMD モードにする",
+        "env": "SteamVR の使い方", "env_vhmd": "VHMD Link", "env_pico": "PICO Connect",
+        "env_off": "元の環境",
+        "env_hint_vhmd": "このヘッドセットを VHMD でつなぐ(VHMD の HMD とコントローラー)。",
+        "env_hint_pico": "実機をそのメーカーのアプリでつなぐ。VHMD はトラッカーだけを足す。",
+        "env_hint_off": "VHMD のドライバを止め、SteamVR の設定を VHMD を入れる前に戻す。",
+        "vr_off_mode": "起動中(VHMD は停止)",
         "match": "ヘッドセットの画面に合わせる",
         "match_hint": "VHMD の視野角・解像度がこのヘッドセットと違います。",
         "auto_vr": "ヘッドセットがつながったら SteamVR を起動する",
@@ -276,11 +288,22 @@ class LinkApp:
         self.vr_text = tk.Label(row, text="", bg=pal["card"], fg=pal["fg"], font=f["big"])
         self.vr_text.pack(side="left", padx=(6, 0))
         self.vr_btn = ttk.Button(row, text=t["start_vr"], style="Accent.TButton", command=self.start_vr)
-        self.mode_btn = ttk.Button(row, text=t["to_vhmd"], command=lambda: self.switch(headset=None))
+        # Which way SteamVR runs: switching restarts it (asked first). "元の環境"
+        # restores the settings recorded before VHMD changed anything.
+        env = ttk.Frame(c, style="Card.TFrame")
+        env.pack(fill="x", pady=(8, 0))
+        ttk.Label(env, text=t["env"], style="CardMuted.TLabel").pack(side="left", padx=(0, 8))
+        self.env_btns = {}
+        for m in ("vhmd", "pico", "off"):
+            b = ttk.Button(env, text=t["env_" + m], command=lambda m=m: self.switch(target=m))
+            b.pack(side="left", padx=(0, 6))
+            self.env_btns[m] = b
+        self.env_hint = ttk.Label(c, text="", style="CardMuted.TLabel", wraplength=470, justify="left")
+        self.env_hint.pack(anchor="w", pady=(2, 0))
         self.match_row = ttk.Frame(c, style="Card.TFrame")
         ttk.Label(self.match_row, text=t["match_hint"], style="CardMuted.TLabel", wraplength=300,
                   justify="left").pack(side="left")
-        ttk.Button(self.match_row, text=t["match"], command=lambda: self.switch(headset=True)).pack(side="right")
+        ttk.Button(self.match_row, text=t["match"], command=lambda: self.switch(target="vhmd", headset=True)).pack(side="right")
         self.busy_lbl = ttk.Label(c, text="", style="CardMuted.TLabel")
         self.busy_lbl.pack(anchor="w")
         self.auto_var = tk.BooleanVar(value=bool(self.s["auto_steamvr"]))
@@ -362,15 +385,18 @@ class LinkApp:
         except OSError as e:
             self.log(f"could not start SteamVR: {e}")
 
-    def switch(self, headset: Optional[bool]) -> None:
-        if self.busy:
+    def switch(self, target: str, headset: Optional[bool] = None) -> None:
+        if self.busy or (target == self.mode and headset is None):
             return
         if mode.steamvr_running() and not messagebox.askyesno(self.t["title"], self.t["confirm_restart"]):
             return
 
         def work() -> None:
             try:
-                mode.switch("vhmd", progress=lambda m: (setattr(self, "busy", m), self.log(m)), headset=headset)
+                # Only the VHMD mode starts SteamVR; the others leave that to the user.
+                mode.switch(target, progress=lambda m: (setattr(self, "busy", m), self.log(m)), headset=headset,
+                            restart=target == "vhmd")
+                self.mode = mode.current_mode()
                 self.busy = ""
             except (Exception, SystemExit) as e:   # noqa: BLE001 - shown to the user
                 self.busy = ""
@@ -464,6 +490,8 @@ class LinkApp:
             text, color = t["vr_on"], "#22c55e"
         elif running and self.mode == "pico":
             text, color = t["vr_pico"], "#f59e0b"
+        elif running and self.mode == "off":
+            text, color = t["vr_off_mode"], pal["muted"]
         elif running:
             text, color = t["vr_other"], "#22c55e"
         elif starting:
@@ -473,11 +501,12 @@ class LinkApp:
         self.vr_dot.config(fg=color)
         self.vr_text.config(text=text)
         self.vr_btn.pack_forget()
-        self.mode_btn.pack_forget()
         if not running and not starting and not self.busy:
             self.vr_btn.pack(side="right")
-        if self.mode == "pico" and not self.busy:
-            self.mode_btn.pack(side="right")
+        for m, b in self.env_btns.items():
+            b.configure(style="Accent.TButton" if m == self.mode else "TButton",
+                        state="disabled" if self.busy else "normal")
+        self.env_hint.config(text=t["env_hint_" + self.mode] if self.mode in self.env_btns else "")
         if self.differs and st["headset"] and self.mode == "vhmd" and not self.busy:
             self.match_row.pack(fill="x", pady=(6, 0), before=self.busy_lbl)
         else:
@@ -501,8 +530,11 @@ class LinkApp:
                 f"shown {h.get('shown', 0):.0f}/s at {h.get('display', 0):.0f} Hz  repeats {h.get('repeats', 0):.0f}",
                 f"       wait {h.get('wait_ms', 0):.1f} ms (p95 {h.get('wait_p95_ms', 0):.1f})  "
                 f"reprojected {h.get('reprojected', 0):.0f}%  audio {h.get('audio_packets', 0):.0f}/s "
-                f"underruns {h.get('audio_underruns', 0)}",
+                f"underruns {h.get('audio_underruns', 0)}  decode {h.get('decode_ms', 0):.2f} ms "
+                f"(max {h.get('decode_max_ms', 0):.1f})",
                 f"{t['control']}: {t['anyone'] if control == 'any' else control}   {st['summary']}",
+                f"Relay  video +{st['relay_ms'][0]:.2f} ms (p99 {st['relay_ms'][1]:.2f}, max {st['relay_ms'][2]:.2f})   "
+                f"pose +{st['forward_us'][0]:.0f} us (max {st['forward_us'][1]:.0f})",
             ]
             self.stats_lbl.config(text="\n".join(lines))
             if self.log_dirty:

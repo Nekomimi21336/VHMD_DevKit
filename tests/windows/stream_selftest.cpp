@@ -57,6 +57,7 @@ static bool RecvAll(SOCKET s, void* p, size_t n) {
 int main(int argc, char** argv) {
     const std::string codec = argc > 1 ? argv[1] : "h264";
     const int eye_out = argc > 2 ? std::atoi(argv[2]) : 960;
+    const int interval_us = argc > 4 ? std::atoi(argv[4]) : 13889;   // between frames
     const uint32_t eye_w = argc > 3 ? uint32_t(std::atoi(argv[3])) : 1280, eye_h = eye_w;   // source eye size
 
     ComPtr<ID3D11Device> dev;
@@ -199,7 +200,7 @@ int main(int argc, char** argv) {
         ctx->UpdateSubresource(tex.Get(), 0, nullptr, px.data(), td.Width * 4, 0);
         const float pose[7] = {0.1f * n, 1.6f, 0, 1, 0, 0, 0};
         enc.Submit(tex.Get(), eye_w, eye_h, pose);
-        std::this_thread::sleep_until(t0 + std::chrono::microseconds(13889) * (n + 1));
+        std::this_thread::sleep_until(t0 + std::chrono::microseconds(interval_us) * (n + 1));
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
     const StreamStats st = enc.Stats();
@@ -211,6 +212,9 @@ int main(int argc, char** argv) {
     std::printf("encoder: %s (%s), %ux%u\n", st.encoder.c_str(), st.state.c_str(), st.width, st.height);
     std::printf("submitted %llu, encoded %llu, dropped %llu\n", (unsigned long long)st.submitted,
                 (unsigned long long)st.encoded, (unsigned long long)st.dropped);
+    std::printf("timing: submit %.2f ms (max %.2f), submit to sent %.2f ms (max %.2f)\n", st.submit_ms_avg,
+                st.submit_ms_max, st.encode_ms_avg, st.encode_ms_max);
+    std::printf("timing: inside the encoder %.2f ms (max %.2f)\n", st.encoder_ms_avg, st.encoder_ms_max);
     std::printf("client: %d config, %d frames (%d with pose, %d with parameter sets), %.1f Mbit/s, ordered %s\n",
                 configs, frames, posed, keyframes_with_ps, bytes * 8.0 / 6.0 / 1e6, ordered ? "yes" : "no");
     const double mbps_a = bytes_a * 8.0 / 2.0 / 1e6, mbps_b = bytes_b * 8.0 / 2.0 / 1e6;

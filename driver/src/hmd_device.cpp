@@ -274,7 +274,10 @@ std::string HmdDevice::DisplayStatusJson() const {
                        {"encoder", s.stream.encoder},  {"width", s.stream.width},
                        {"height", s.stream.height},    {"submitted", s.stream.submitted},
                        {"encoded", s.stream.encoded},  {"dropped", s.stream.dropped},
-                       {"bytes", s.stream.bytes}};
+                       {"bytes", s.stream.bytes},
+                       {"submit_ms", {s.stream.submit_ms_avg, s.stream.submit_ms_max}},
+                       {"encode_ms", {s.stream.encode_ms_avg, s.stream.encode_ms_max}},
+                       {"encoder_ms", {s.stream.encoder_ms_avg, s.stream.encoder_ms_max}}};
 #endif
         j["preview"] = {{"state", s.capture.state},
                         {"submitted", s.capture.submitted},
