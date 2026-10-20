@@ -33,7 +33,7 @@ COMMON = [
 ]
 TOOLS = {
     "win64": ["tools/common.ps1", "tools/install_driver.ps1", "tools/uninstall_driver.ps1", "tools/verify_env.ps1"],
-    "linux64": ["tools/common.sh", "tools/install_driver.sh", "tools/uninstall_driver.sh", "tools/verify_env.sh"],
+    "linux64": ["tools/common.sh", "tools/install_driver.sh", "tools/uninstall_driver.sh", "tools/verify_env.sh", "tools/vhmd_records.py"],
 }
 BINARY = {"win64": "driver_vhmd.dll", "linux64": "driver_vhmd.so"}
 SKIP_PARTS = {"__pycache__", ".pytest_cache", "results"}

@@ -65,11 +65,13 @@ ctest --test-dir build --output-on-failure
 ```bash
 tools/verify_env.sh            # 環境の確認(読み取りのみ)
 tools/install_driver.sh        # vrpathreg.sh adddriver build/driver/vhmd
-tools/uninstall_driver.sh --clean-settings   # 登録解除 + SteamVR 設定から vhmd の項目を削除(バックアップ付き)
+tools/uninstall_driver.sh     # 登録解除 + 生成ファイルと SteamVR 設定の vhmd の項目を削除、記録との差分を表示
+tools/uninstall_driver.sh --restore   # インストール時に記録した状態に戻す
 ```
 
 - `vrpathreg.sh` は `<SteamVR>/bin/vrpathreg.sh` です。SteamVR の場所は `~/.config/openvr/openvrpaths.vrpath` の `runtime` から、無ければ `~/.steam/steam`、`~/.local/share/Steam`、Flatpak の順に探します。
 - SteamVR 本体のフォルダへのコピーはしません。
+- インストール・解除のたびに、SteamVR の設定ファイルと登録済みドライバの一覧を `~/.local/state/vhmd_devkit/history/` に記録します(python3 を使用)。
 - **ビルドし直すときは SteamVR を終了してください。**
 
 ## 使う

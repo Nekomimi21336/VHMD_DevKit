@@ -65,11 +65,13 @@ ctest --test-dir build --output-on-failure
 ```bash
 tools/verify_env.sh            # 检查环境(只读)
 tools/install_driver.sh        # vrpathreg.sh adddriver build/driver/vhmd
-tools/uninstall_driver.sh --clean-settings   # 取消注册 + 从 SteamVR 设置中删除 vhmd 相关项(会先备份)
+tools/uninstall_driver.sh     # 取消注册 + 删除生成的文件和 SteamVR 设置中的 vhmd 相关项，显示与记录的差异
+tools/uninstall_driver.sh --restore   # 恢复到安装时记录的状态
 ```
 
 - `vrpathreg.sh` 位于 `<SteamVR>/bin/vrpathreg.sh`。SteamVR 的位置取自 `~/.config/openvr/openvrpaths.vrpath` 的 `runtime`，若没有则依次查找 `~/.steam/steam`、`~/.local/share/Steam`、Flatpak。
 - 不会复制到 SteamVR 本体文件夹。
+- 每次安装和卸载都会把 SteamVR 的设置文件和已注册驱动的列表记录到 `~/.local/state/vhmd_devkit/history/`(使用 python3)。
 - **重新构建时请先退出 SteamVR。**
 
 ## 使用

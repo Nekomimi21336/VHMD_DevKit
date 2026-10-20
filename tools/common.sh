@@ -1,5 +1,6 @@
 # Shared helpers for the Linux tool scripts (source this file).
-# Read-only discovery of Steam / SteamVR locations; nothing here modifies the system.
+# Discovery of Steam / SteamVR locations. Install records are handled by
+# tools/vhmd_records.py (see vhmd_records below).
 
 set -euo pipefail
 
@@ -53,4 +54,10 @@ default_driver_path() {
 # True if the folder's manifest names the driver "vhmd".
 is_vhmd_driver() {
     [ -f "$1/driver.vrdrivermanifest" ] && grep -Eq '"name"[[:space:]]*:[[:space:]]*"vhmd"' "$1/driver.vrdrivermanifest"
+}
+
+# Install records (see tools/vhmd_records.py). Needs python3.
+vhmd_records() {
+    if ! command -v python3 >/dev/null; then echo "python3 is required" >&2; return 1; fi
+    python3 "$REPO_ROOT/tools/vhmd_records.py" "$@"
 }

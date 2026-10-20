@@ -67,6 +67,8 @@
    | Windows | `VHMD_DevKit-<版>-win64.zip` | `powershell -ExecutionPolicy Bypass -File tools/install_driver.ps1` |
    | Linux | `VHMD_DevKit-<版>-linux64.tar.gz` | `tools/install_driver.sh`(glibc 2.38 及以上) |
 
+   注册前会记录 SteamVR 的设置文件(`openvrpaths.vrpath`、`steamvr.vrsettings`、`chaperone_info.vrchap`)和已注册驱动的列表(Windows：`%LOCALAPPDATA%\VHMD_DevKit\history`，Linux：`~/.local/state/vhmd_devkit/history`)。
+
 3. 启动 SteamVR，运行示例。
 
    ```bash
@@ -75,7 +77,9 @@
 
    `--points` 可取 `3` / `5` / `6` / `11`。
 
-4. 卸载时使用 `tools/uninstall_driver.ps1`(Linux 为 `.sh`)。加上 `-CleanSettings`(Linux 为 `--clean-settings`)后，还会删除驱动写入 SteamVR 设置中的追踪器角色(会先备份)。
+4. 卸载时使用 `tools/uninstall_driver.ps1`(Linux 为 `.sh`)。除取消注册外，还会删除驱动生成的文件(带标签的模型和图标)以及 SteamVR 设置中的 vhmd 相关项(追踪器角色等)，并列出安装后发生变化的其他设置(不会修改它们)。
+   - `-Restore`(Linux 为 `--restore`)：完全恢复到安装时记录的状态。请先关闭 SteamVR。卸载前的状态也会被记录，因此可以用 `-Restore -Record <记录>` 再撤销。
+   - `-List`(`--list`)：显示记录列表。`-KeepSettings` / `-KeepGeneratedFiles`(`--keep-settings` / `--keep-generated-files`)可跳过删除。
 
 ## 从源码构建
 

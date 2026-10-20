@@ -1,5 +1,11 @@
 # 変更履歴
 
+## 未リリース
+
+### 変更
+- **インストール時に既存の環境を記録**: `install_driver` が登録前に SteamVR の設定ファイル(`openvrpaths.vrpath`、`steamvr.vrsettings`、`chaperone_info.vrchap`)、登録済みドライバの一覧、SteamVR のビルド番号を記録する(Windows: `%LOCALAPPDATA%\VHMD_DevKit\history`、Linux: `~/.local/state/vhmd_devkit/history`)。
+- **アンインストールの整理**: 既定で、登録解除に加えてドライバが作ったファイルと SteamVR 設定の vhmd の項目を削除し、記録からのそれ以外の差分を表示する。`-Restore` / `--restore` で記録した状態に戻せる。解除の直前の状態も記録するので、解除自体も元に戻せる。`-CleanSettings` は不要になった(互換のため受け付ける)。
+
 ## v0.4.0(2026-10-19)
 
 ### 追加

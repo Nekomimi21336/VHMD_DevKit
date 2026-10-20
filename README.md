@@ -67,6 +67,8 @@
    | Windows | `VHMD_DevKit-<版>-win64.zip` | `powershell -ExecutionPolicy Bypass -File tools/install_driver.ps1` |
    | Linux | `VHMD_DevKit-<版>-linux64.tar.gz` | `tools/install_driver.sh`(glibc 2.38 以上) |
 
+   登録の前に、SteamVR の設定ファイル(`openvrpaths.vrpath`、`steamvr.vrsettings`、`chaperone_info.vrchap`)と登録済みドライバの一覧を記録します(Windows: `%LOCALAPPDATA%\VHMD_DevKit\history`、Linux: `~/.local/state/vhmd_devkit/history`)。
+
 3. SteamVR を起動し、サンプルを動かします。
 
    ```bash
@@ -75,7 +77,9 @@
 
    `--points` は `3` / `5` / `6` / `11`。
 
-4. 解除するときは `tools/uninstall_driver.ps1`(Linux は `.sh`)。`-CleanSettings`(Linux は `--clean-settings`)を付けると、ドライバが SteamVR 設定に書いたトラッカーロールもバックアップ付きで削除します。
+4. 解除するときは `tools/uninstall_driver.ps1`(Linux は `.sh`)。登録解除に加えて、ドライバが作ったファイル(ラベル付きのモデルとアイコン)と、SteamVR 設定の vhmd の項目(トラッカーロールなど)を削除し、インストール後に変わったそれ以外の設定を一覧表示します(そちらは変更しません)。
+   - `-Restore`(Linux は `--restore`): インストール時に記録した状態にそのまま戻します。SteamVR を閉じてから実行してください。解除の直前の状態も記録されるので、`-Restore -Record <記録>` でさらに元に戻せます。
+   - `-List`(`--list`): 記録の一覧。`-KeepSettings` / `-KeepGeneratedFiles`(`--keep-settings` / `--keep-generated-files`)で削除を省けます。
 
 ## ソースからビルド
 

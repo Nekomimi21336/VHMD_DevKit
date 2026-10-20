@@ -65,11 +65,13 @@ ctest --test-dir build --output-on-failure
 ```bash
 tools/verify_env.sh            # 환경 확인(읽기 전용)
 tools/install_driver.sh        # vrpathreg.sh adddriver build/driver/vhmd
-tools/uninstall_driver.sh --clean-settings   # 등록 해제 + SteamVR 설정에서 vhmd 항목 삭제(백업 포함)
+tools/uninstall_driver.sh     # 등록 해제 + 생성된 파일과 SteamVR 설정의 vhmd 항목 삭제, 기록과의 차이 표시
+tools/uninstall_driver.sh --restore   # 설치 때 기록한 상태로 되돌리기
 ```
 
 - `vrpathreg.sh`는 `<SteamVR>/bin/vrpathreg.sh`입니다. SteamVR의 위치는 `~/.config/openvr/openvrpaths.vrpath`의 `runtime`에서, 없으면 `~/.steam/steam`, `~/.local/share/Steam`, Flatpak 순서로 찾습니다.
 - SteamVR 본체 폴더로 복사하지 않습니다.
+- 설치·해제할 때마다 SteamVR 설정 파일과 등록된 드라이버 목록을 `~/.local/state/vhmd_devkit/history/`에 기록합니다(python3 사용).
 - **다시 빌드할 때는 SteamVR을 종료하십시오.**
 
 ## 사용하기

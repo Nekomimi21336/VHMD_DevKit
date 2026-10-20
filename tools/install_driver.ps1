@@ -3,13 +3,18 @@
   Registers the VirtualHMD driver folder with SteamVR via vrpathreg.
 
 .DESCRIPTION
-  Uses SteamVR's own vrpathreg tool ("adddriver"), which adds the folder to
-  external_drivers in %LOCALAPPDATA%\openvr\openvrpaths.vrpath. Nothing is
-  copied into the SteamVR installation and no system settings are changed.
-  Undo with tools/uninstall_driver.ps1.
+  Before changing anything, copies the SteamVR files the driver can affect
+  (openvrpaths.vrpath, steamvr.vrsettings, chaperone_info.vrchap) and the list
+  of registered drivers into a record under
+  %LOCALAPPDATA%\VHMD_DevKit\history\<time>-install. Then uses SteamVR's own
+  vrpathreg tool ("adddriver"), which adds the folder to external_drivers in
+  %LOCALAPPDATA%\openvr\openvrpaths.vrpath. Nothing is copied into the SteamVR
+  installation and no system settings are changed.
+  Undo with tools/uninstall_driver.ps1 (-Restore puts the recorded files back).
 
 .PARAMETER DriverPath
-  Folder containing driver.vrdrivermanifest. Default: build\driver\vhmd
+  Folder containing driver.vrdrivermanifest. Default: the bundled vhmd folder
+  of a release archive, else build\driver\vhmd
 #>
 param(
     [string]$DriverPath
@@ -31,6 +36,9 @@ if (Test-SteamVRRunning) {
 }
 
 $vrpathreg = Get-VrPathReg
+$record = Read-VhmdRecord (Save-VhmdRecord 'install' $DriverPath)
+Write-Host "Recorded the current SteamVR setup: $($record.dir)"
+
 $existing = Get-RegisteredExternalDrivers | Where-Object { $_ -and ([System.IO.Path]::GetFullPath($_) -ieq $DriverPath) }
 if ($existing) {
     Write-Host "Already registered: $DriverPath"
@@ -46,6 +54,7 @@ if ($existing) {
     if ($LASTEXITCODE -ne 0) { throw "vrpathreg adddriver failed ($LASTEXITCODE)" }
     Write-Host "Registered: $DriverPath"
 }
+Set-VhmdRecordField $record 'external_drivers_after' @(Get-RegisteredExternalDrivers)
 
 Write-Host ''
 Write-Host 'Current SteamVR paths:'

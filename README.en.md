@@ -67,6 +67,8 @@ A tracker is **added the moment you send to it** (about 40 ms measured), and sho
    | Windows | `VHMD_DevKit-<version>-win64.zip` | `powershell -ExecutionPolicy Bypass -File tools/install_driver.ps1` |
    | Linux | `VHMD_DevKit-<version>-linux64.tar.gz` | `tools/install_driver.sh` (glibc 2.38 or later) |
 
+   Before registering, it records SteamVR's settings files (`openvrpaths.vrpath`, `steamvr.vrsettings`, `chaperone_info.vrchap`) and the list of registered drivers (Windows: `%LOCALAPPDATA%\VHMD_DevKit\history`, Linux: `~/.local/state/vhmd_devkit/history`).
+
 3. Start SteamVR and run a sample.
 
    ```bash
@@ -75,7 +77,9 @@ A tracker is **added the moment you send to it** (about 40 ms measured), and sho
 
    `--points` is `3` / `5` / `6` / `11`.
 
-4. To unregister, use `tools/uninstall_driver.ps1` (`.sh` on Linux). Adding `-CleanSettings` (`--clean-settings` on Linux) also removes the tracker roles the driver wrote into the SteamVR settings, with a backup.
+4. To uninstall, use `tools/uninstall_driver.ps1` (`.sh` on Linux). Besides unregistering, it deletes the files the driver generated (labelled models and icons) and the vhmd entries in the SteamVR settings (tracker roles and so on), and lists any other settings that changed since the install (without touching them).
+   - `-Restore` (`--restore` on Linux): puts everything back exactly as recorded at install time. Close SteamVR first. The state just before the uninstall is recorded too, so `-Restore -Record <record>` can undo that as well.
+   - `-List` (`--list`): shows the records. `-KeepSettings` / `-KeepGeneratedFiles` (`--keep-settings` / `--keep-generated-files`) skip the deletions.
 
 ## Building from source
 

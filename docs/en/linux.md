@@ -65,11 +65,13 @@ The resulting `.so` requires **a glibc version at least as new as the build envi
 ```bash
 tools/verify_env.sh            # check the environment (read-only)
 tools/install_driver.sh        # vrpathreg.sh adddriver build/driver/vhmd
-tools/uninstall_driver.sh --clean-settings   # unregister + remove vhmd entries from SteamVR settings (with backup)
+tools/uninstall_driver.sh     # unregister + delete generated files and vhmd entries in SteamVR settings, show differences from the record
+tools/uninstall_driver.sh --restore   # put back the state recorded at install time
 ```
 
 - `vrpathreg.sh` is `<SteamVR>/bin/vrpathreg.sh`. The SteamVR location is taken from `runtime` in `~/.config/openvr/openvrpaths.vrpath`; if absent, it searches `~/.steam/steam`, `~/.local/share/Steam`, and Flatpak, in that order.
 - Nothing is copied into the SteamVR installation folder.
+- Every install and uninstall records SteamVR's settings files and the list of registered drivers in `~/.local/state/vhmd_devkit/history/` (uses python3).
 - **Quit SteamVR before rebuilding.**
 
 ## Usage
