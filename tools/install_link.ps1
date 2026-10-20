@@ -6,8 +6,10 @@
 .DESCRIPTION
   1. Registers the driver (tools/install_driver.ps1, with its record of the
      SteamVR setup for undoing).
-  2. Creates a Start menu shortcut (and with -Desktop a desktop shortcut) that
-     opens VHMD Link without a console window (pythonw clients\python\vhmd_link.pyw).
+  2. Creates a Start menu shortcut (and with -Desktop a desktop shortcut) to
+     "VHMD Link.exe" (the release's "VHMD Link" folder, or dist\VHMD Link after
+     tools\build_link_exe.py): no Python needed. Without the exe it uses Python
+     (pythonw clients\python\vhmd_link.pyw, Python 3.9+ with tkinter).
   3. With a headset connected over USB (developer mode, adb on PATH), installs
      the headset app: -Apk link (default: "VHMD Link"), dev ("VHMD Link Dev"),
      both, or none.
@@ -36,38 +38,50 @@ $root = Split-Path -Parent $PSScriptRoot
 # 1. The driver.
 & "$PSScriptRoot\install_driver.ps1"
 
-# 2. Python and the shortcut.
+# 2. The app: "VHMD Link.exe" if there is one, else Python.
+$exe = @((Join-Path $root 'VHMD Link\VHMD Link.exe'), (Join-Path $root 'dist\VHMD Link\VHMD Link.exe')) |
+       Where-Object { Test-Path $_ } | Select-Object -First 1
 $python = $null
 foreach ($cand in @('pythonw.exe', 'python.exe')) {
     $cmd = Get-Command $cand -ErrorAction SilentlyContinue
     if ($cmd) { $python = $cmd.Source; break }
 }
-if (-not $python) {
-    $py = Get-Command 'py.exe' -ErrorAction SilentlyContinue
-    if ($py) { $python = (& $py.Source -3 -c "import sys; print(sys.executable)").Trim() }
+if ($exe) {
+    $target = $exe
+    $arguments = ''
+    $workdir = Split-Path $exe
+    $icon = "$exe,0"
+    Write-Host "App: $exe"
+} else {
+    if (-not $python) {
+        $py = Get-Command 'py.exe' -ErrorAction SilentlyContinue
+        if ($py) { $python = (& $py.Source -3 -c "import sys; print(sys.executable)").Trim() }
+    }
+    if (-not $python) {
+        throw 'No "VHMD Link.exe" here, and no Python 3.9+ (https://www.python.org/downloads/windows/).'
+    }
+    $pythonw = Join-Path (Split-Path $python) 'pythonw.exe'
+    if (-not (Test-Path $pythonw)) { $pythonw = $python }
+    $console = Join-Path (Split-Path $python) 'python.exe'
+    & $console -c "import sys, tkinter; sys.exit(0 if sys.version_info >= (3, 9) else 1)"
+    if ($LASTEXITCODE -ne 0) { throw "VHMD Link needs Python 3.9+ with tkinter ($console)" }
+    $script = Join-Path $root 'clients\python\vhmd_link.pyw'
+    $workdir = Join-Path $root 'clients\python'
+    $target = $pythonw
+    $arguments = "`"$script`""
+    # The app icon, drawn by the app (needs Pillow; Windows' default icon otherwise).
+    $icon = (& $console -c "import sys; sys.path.insert(0, r'$workdir'); from vhmd_client.link import make_icon; print(make_icon() or '')").Trim()
+    Write-Host "App: Python ($pythonw)"
 }
-if (-not $python) {
-    throw 'Python 3.9 or newer is needed for VHMD Link (https://www.python.org/downloads/windows/).'
-}
-$pythonw = Join-Path (Split-Path $python) 'pythonw.exe'
-if (-not (Test-Path $pythonw)) { $pythonw = $python }
-$console = Join-Path (Split-Path $python) 'python.exe'
-& $console -c "import sys, tkinter; sys.exit(0 if sys.version_info >= (3, 9) else 1)"
-if ($LASTEXITCODE -ne 0) { throw "VHMD Link needs Python 3.9+ with tkinter ($console)" }
-
-$script = Join-Path $root 'clients\python\vhmd_link.pyw'
-$clients = Join-Path $root 'clients\python'
-# The app icon, drawn by the app (needs Pillow; Windows' default icon otherwise).
-$icon = (& $console -c "import sys; sys.path.insert(0, r'$clients'); from vhmd_client.link import make_icon; print(make_icon() or '')").Trim()
 
 $shell = New-Object -ComObject WScript.Shell
 $places = @([Environment]::GetFolderPath('Programs'))
 if ($Desktop) { $places += [Environment]::GetFolderPath('Desktop') }
 foreach ($dir in $places) {
     $lnk = $shell.CreateShortcut((Join-Path $dir 'VHMD Link.lnk'))
-    $lnk.TargetPath = $pythonw
-    $lnk.Arguments = "`"$script`""
-    $lnk.WorkingDirectory = $clients
+    $lnk.TargetPath = $target
+    $lnk.Arguments = $arguments
+    $lnk.WorkingDirectory = $workdir
     $lnk.Description = 'VHMD Link: connect a standalone headset to SteamVR'
     if ($icon) { $lnk.IconLocation = $icon }
     $lnk.Save()
@@ -106,4 +120,7 @@ if ($Apk -ne 'none') {
 
 Write-Host ''
 Write-Host 'VHMD Link is set up. Open it from the Start menu ("VHMD Link"), then start VHMD Link on the headset.'
-if ($Start) { Start-Process -FilePath $pythonw -ArgumentList "`"$script`"" -WorkingDirectory $clients }
+if ($Start) {
+    if ($arguments) { Start-Process -FilePath $target -ArgumentList $arguments -WorkingDirectory $workdir }
+    else { Start-Process -FilePath $target -WorkingDirectory $workdir }
+}

@@ -3,6 +3,7 @@ headset running the VHMD Link app to SteamVR.
 
     python -m vhmd_client.link [--minimized] [--dev] [--lang ja|en]
     pythonw clients/python/vhmd_link.pyw        (no console window)
+    "VHMD Link.exe"                              (built by tools/build_link_exe.py; no Python needed)
 
 It runs the relay (headset_bridge.Bridge), shows whether the headset and
 SteamVR are connected, starts SteamVR when the headset connects (VHMD mode
@@ -21,6 +22,7 @@ import collections
 import ctypes
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -36,6 +38,7 @@ from .headset_bridge import Bridge, BridgeOptions
 from .tray import TrayIcon
 
 DATA = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "VHMD"
+FROZEN = bool(getattr(sys, "frozen", False))   # running as "VHMD Link.exe" (PyInstaller)
 SETTINGS = DATA / "link_settings.json"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_NAME = "VHMD Link"
@@ -108,11 +111,9 @@ def save_settings(s: Dict[str, object]) -> None:
     SETTINGS.write_text(json.dumps(s, indent=1), encoding="utf-8")
 
 
-def make_icon() -> Optional[Path]:
-    """The app icon (a blue rounded square with "V"), drawn once with Pillow."""
-    ico = DATA / "vhmd_link.ico"
-    if ico.exists():
-        return ico
+def draw_icon(folder: Path) -> Optional[Path]:
+    """Draws the app icon (a blue rounded square with "V") into folder as
+    vhmd_link.ico and vhmd_link.png (needs Pillow)."""
     try:
         from PIL import Image, ImageDraw, ImageFont
     except ImportError:
@@ -125,14 +126,32 @@ def make_icon() -> Optional[Path]:
     except OSError:
         font = ImageFont.load_default()
     d.text((128, 132), "V", fill=(255, 255, 255, 255), font=font, anchor="mm")
-    DATA.mkdir(parents=True, exist_ok=True)
+    folder.mkdir(parents=True, exist_ok=True)
+    ico = folder / "vhmd_link.ico"
     img.save(ico, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (256, 256)])
-    img.resize((64, 64)).save(DATA / "vhmd_link.png")
+    img.resize((64, 64)).save(folder / "vhmd_link.png")
     return ico
+
+
+def make_icon() -> Optional[Path]:
+    """The app icon in %LOCALAPPDATA%/VHMD (the tray needs a file): copied from
+    the exe's bundle, else drawn once."""
+    ico = DATA / "vhmd_link.ico"
+    if ico.exists():
+        return ico
+    bundle = Path(getattr(sys, "_MEIPASS", ""))
+    if FROZEN and (bundle / "vhmd_link.ico").exists():
+        DATA.mkdir(parents=True, exist_ok=True)
+        for name in ("vhmd_link.ico", "vhmd_link.png"):
+            shutil.copyfile(bundle / name, DATA / name)
+        return ico
+    return draw_icon(DATA)
 
 
 def launcher_command() -> str:
     """How Windows should start this app at sign-in (no console window)."""
+    if FROZEN:
+        return f'"{sys.executable}" --minimized'
     exe = Path(sys.executable)
     pyw = exe.with_name("pythonw.exe")
     script = Path(__file__).resolve().parent.parent / "vhmd_link.pyw"
@@ -367,6 +386,9 @@ class LinkApp:
             self.log(self.t["failed"].format(e))
 
     def fps_tool(self) -> None:
+        if FROZEN:   # the same exe runs the tool
+            subprocess.Popen([sys.executable, "--fps"])
+            return
         cwd = Path(__file__).resolve().parent.parent
         subprocess.Popen([sys.executable, "-m", "vhmd_client.fps"], cwd=str(cwd))
 
@@ -501,6 +523,11 @@ class LinkApp:
 
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "--fps":   # the exe also carries the keyboard/mouse tool
+        from . import fps
+        sys.argv = [sys.argv[0]] + sys.argv[2:]
+        fps.main()
+        return
     ap = argparse.ArgumentParser(description="VHMD Link for the PC (window and tray icon)")
     ap.add_argument("--minimized", action="store_true", help="start in the notification area")
     ap.add_argument("--dev", action="store_true", help="show the developer view")

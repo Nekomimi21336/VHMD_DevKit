@@ -23,6 +23,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+Get-Process 'VHMD Link' -ErrorAction SilentlyContinue |
+    ForEach-Object { Write-Host "Closing VHMD Link (process $($_.Id))"; Stop-Process -Id $_.Id }
 Get-Process pythonw, python -ErrorAction SilentlyContinue |
     Where-Object { $_.Path -and (Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)").CommandLine -match 'vhmd_link\.pyw|vhmd_client\.link' } |
     ForEach-Object { Write-Host "Closing VHMD Link (process $($_.Id))"; Stop-Process -Id $_.Id }

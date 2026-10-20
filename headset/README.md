@@ -119,13 +119,20 @@ python -m vhmd_client.control            # 今の状態と、送ってきてい�
    powershell -ExecutionPolicy Bypass -File tools\install_link.ps1 -Start     # -Apk dev で開発用、-Apk both で両方、-Desktop でデスクトップにも
    ```
 
-   ドライバを SteamVR に登録し、スタートメニューに「VHMD Link」を作り、USB でつながっていればヘッドセットにアプリを入れます。Python 3.9 以上(tkinter 付き)が要ります。元に戻すのは `tools\uninstall_link.ps1`。
-3. PC で「VHMD Link」を開き、ヘッドセットで VHMD Link を起動すると自動でつながります(Wi-Fi が基本、USB ケーブルでも)。Windows のファイアウォールが Python の通信を確認してきたら、プライベート ネットワークを許可します。
+   ドライバを SteamVR に登録し、スタートメニューに「VHMD Link」(zip の `VHMD Link\VHMD Link.exe`)を作り、USB でつながっていればヘッドセットにアプリを入れます。Python は要りません(exe が無いときだけ Python 3.9 以上で動かす)。元に戻すのは `tools\uninstall_link.ps1`。
+3. PC で「VHMD Link」を開き、ヘッドセットで VHMD Link を起動すると自動でつながります(Wi-Fi が基本、USB ケーブルでも)。Windows のファイアウォールが VHMD Link の通信を確認してきたら、プライベート ネットワークを許可します。
 
 ### PC のアプリ(VHMD Link)
 
 ```powershell
 python -m vhmd_client.link            # pythonw clients\python\vhmd_link.pyw ならコンソールなし。--dev で開発者向けの表示
+```
+
+単体の exe(Python の入っていない PC 向け)は PyInstaller で作ります。`dist\VHMD Link\VHMD Link.exe`(フォルダごと配る、約 34 MB)ができ、リリースの zip に入ります。キーボード・マウス操作ツールも同じ exe(`"VHMD Link.exe" --fps`)。
+
+```powershell
+python -m pip install pyinstaller pillow
+python tools/build_link_exe.py            # --onefile で 1 ファイル(起動が少し遅い)
 ```
 
 - ヘッドセットの接続(機種、Wi-Fi のアドレス / USB、アプリの版)と SteamVR の状態を表示。

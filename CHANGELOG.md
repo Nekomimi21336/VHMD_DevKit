@@ -3,6 +3,7 @@
 ## 未リリース
 
 ### 追加
+- **VHMD Link の PC アプリを単体の exe に**(`tools/build_link_exe.py`、PyInstaller): Python なしで動き、キーボード・マウス操作ツールも同じ exe(`--fps`)。`install_link.ps1` は exe があればそれをスタートメニューに登録し、リリースの zip に `VHMD Link/VHMD Link.exe` を入れる。
 - **VHMD Link: なめらかさの仕上げ**:
   - PC とヘッドセットのフレームのタイミング合わせ: ヘッドセットが表示までの待ち時間を送り(`link_timing`)、ドライバが vsync をずらして一定に保つ(`config` の `display_sync`、ダイレクトモード)。
   - ヘッドセットのアプリが Wi-Fi の低遅延ロックを持つ(映像がまとめて届くのを防ぐ)。Wi-Fi で新しい画像が 72 中 53.9 → 71.0 回/秒。

@@ -13,8 +13,9 @@ and examples, docs and licenses:
 Run tools/install_driver.(ps1|sh) inside the extracted folder; it picks up the
 bundled vhmd/ folder automatically. Output goes to dist/ with SHA256SUMS.txt.
 
-The Windows archive also carries VHMD Link: the headset apps (headset/*.apk,
-from --apk-dir, default headset/android/build) and tools/install_link.ps1,
+The Windows archive also carries VHMD Link: the PC app as "VHMD Link/VHMD Link.exe"
+(from --exe-dir, default "dist/VHMD Link", built by tools/build_link_exe.py), the
+headset apps (headset/*.apk, from --apk-dir, default headset/android/build) and tools/install_link.ps1,
 which registers the driver, adds VHMD Link to the Start menu and installs the
 headset app over USB.
 """
@@ -38,7 +39,7 @@ COMMON = [
 ]
 TOOLS = {
     "win64": ["tools/common.ps1", "tools/install_driver.ps1", "tools/uninstall_driver.ps1", "tools/verify_env.ps1",
-              "tools/install_link.ps1", "tools/uninstall_link.ps1", "headset/README.md"],
+              "tools/install_link.ps1", "tools/uninstall_link.ps1", "tools/build_link_exe.py", "headset/README.md"],
     "linux64": ["tools/common.sh", "tools/install_driver.sh", "tools/uninstall_driver.sh", "tools/verify_env.sh", "tools/vhmd_records.py"],
 }
 BINARY = {"win64": "driver_vhmd.dll", "linux64": "driver_vhmd.so"}
@@ -48,7 +49,8 @@ SKIP_PARTS = {"__pycache__", ".pytest_cache", "results"}
 APKS = ("vhmd-link.apk", "vhmd-link-dev.apk")
 
 
-def collect(platform: str, driver_dir: Path, apk_dir: Path | None = None) -> list[tuple[str, Path]]:
+def collect(platform: str, driver_dir: Path, apk_dir: Path | None = None,
+            exe_dir: Path | None = None) -> list[tuple[str, Path]]:
     """[(archive path, source file)]"""
     driver_dir = driver_dir.resolve()
     binary = driver_dir / "bin" / platform / BINARY[platform]
@@ -76,6 +78,12 @@ def collect(platform: str, driver_dir: Path, apk_dir: Path | None = None) -> lis
                 files.append((f"headset/{name}", apk_dir / name))
             else:
                 print(f"note: {apk_dir / name} not built; not in the archive")
+    if platform == "win64" and exe_dir:
+        if (exe_dir / "VHMD Link.exe").exists():
+            for s in sorted(p for p in exe_dir.rglob("*") if p.is_file()):
+                files.append((f"VHMD Link/{s.relative_to(exe_dir).as_posix()}", s))
+        else:
+            print(f"note: {exe_dir / 'VHMD Link.exe'} not built; the archive's VHMD Link needs Python")
     return files
 
 
@@ -109,6 +117,8 @@ def main() -> None:
     ap.add_argument("--linux64", type=Path, help="built Linux driver folder (contains bin/linux64/driver_vhmd.so)")
     ap.add_argument("--apk-dir", type=Path, default=ROOT / "headset" / "android" / "build",
                     help="folder with vhmd-link.apk / vhmd-link-dev.apk (Windows archive)")
+    ap.add_argument("--exe-dir", type=Path, default=ROOT / "dist" / "VHMD Link",
+                    help='folder with "VHMD Link.exe" (Windows archive)')
     ap.add_argument("--out", type=Path, default=ROOT / "dist")
     args = ap.parse_args()
 
@@ -118,7 +128,7 @@ def main() -> None:
         if folder is None:
             continue
         prefix = f"VHMD_DevKit-{args.version}-{platform}"
-        files = collect(platform, folder, args.apk_dir)
+        files = collect(platform, folder, args.apk_dir, args.exe_dir)
         out = args.out / (prefix + (".zip" if platform == "win64" else ".tar.gz"))
         (write_zip if platform == "win64" else write_tar)(out, prefix, files)
         made.append(out)

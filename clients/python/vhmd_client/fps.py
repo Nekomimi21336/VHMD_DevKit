@@ -1559,7 +1559,9 @@ class App:
             pyw = os.path.join(os.path.dirname(exe), "pythonw.exe")
             if os.path.basename(exe).lower() == "python.exe" and os.path.exists(pyw):
                 exe = pyw                       # no console window for the new instance
-            subprocess.Popen([exe, "-m", "vhmd_client.fps", *args], env=env, stdin=subprocess.DEVNULL,
+            # Inside "VHMD Link.exe" the tool is the same exe with --fps.
+            cmd = [exe, "--fps"] if getattr(sys, "frozen", False) else [exe, "-m", "vhmd_client.fps", *args]
+            subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
             self.root.destroy()
             return
