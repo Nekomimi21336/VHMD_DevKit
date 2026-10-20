@@ -214,8 +214,17 @@ SteamVR 合成器会准确遵循 1〜240 Hz 的任意值。但低于 10 Hz 时�
 
 ## 与真实 HMD 同时使用时
 
-- 本驱动的 HMD 始终会被注册，因此如果与真实 HMD 的驱动同时启用，哪一个成为活动设备取决于具体环境。
-- 在用实体设备玩之前，请先取消注册，或在 `vhmd_config.json` 中设置 `"hmd": {"enabled": false}`，切换为**仅添加控制器 / 追踪器的模式**(尚未在连接真实 HMD 的环境中验证)。
+可以在实体设备的头部和双手(例如 Pico 4 Ultra + PICO Connect)之外，再加上 VHMD 的追踪器(已用 Pico 4 Ultra 确认)。
+
+```json
+"hmd":         { "enabled": false },
+"controllers": { "enabled": false }
+```
+
+- 真实 HMD 的驱动和 VHMD 在 SteamVR 中并列运行(彼此不直接通信)。追踪器的姿态由 PC 上的发送程序通过 UDP 发送。
+- 无需更改 `activateMultipleDrivers`，VHMD 的设备即可与真实 HMD 一起启用。
+- 即使 `hmd.enabled` 保持为 `true`，只要有真实 HMD，SteamVR 就会使用它(`Using existing HMD`)。VHMD 的控制器会以没有左右角色的状态留下，因此建议设置 `controllers.enabled: false`。
+- 姿态请按真实 HMD 的原始坐标(`TrackingUniverseRawAndUncalibrated`)发送：可以在发送程序中读取真实 HMD 的姿态来计算，也可以用 VMT 兼容 OSC 的 Joint / Follow 以真实 HMD(`HMD`)为父设备。让追踪器持续位于真实 HMD 下方 50 cm 时，即使头部移动，误差中位数也只有 0.7 mm。
 - 也可以在 SteamVR 的“启动/关闭 → 管理加载项”中禁用 `vhmd`。
 
 ## 测试
@@ -281,7 +290,7 @@ third_party/            OpenVR SDK(子模块 v2.15.6)、nlohmann/json 3.11.3
 | Linux 编译器 | gcc 13.3(Ubuntu 24.04 / WSL2)、gcc 15.2(Ubuntu 26.04)、CMake 3.28 / 4.2 |
 | Python | 3.12(3.10 及以上)、验证用 pyopenvr 2.12 |
 
-详细结果：[docs/verification.md](docs/verification.md)(日文)。在 Linux 版 SteamVR 上，v0.3.0 的直接模式已在真实 GPU(NVIDIA RTX 4000 Ada)上确认：合成器以 90 fps 渲染、集成测试 28/28 通过、在有 Steam 客户端并启用 SteamVR Home 的环境中正常退出、通过 Proton 运行的 VRChat 可渲染并跟随控制器。在 GTX 1050 上 SteamVR 合成器会在启动后不久因 GPU 异常停止([docs/zh-CN/linux.md](docs/zh-CN/linux.md))。在登录 VRChat 的状态下，已在 Windows(控制器)和 Linux(手部模式)上确认虚拟形象跟随、手指、移动、菜单操作和全身校准。与实体 HMD 并用、带真实显示器的 Linux 桌面、Linux 上预览的开始/停止(轻量化之后)尚未验证。变更历史：[CHANGELOG.md](CHANGELOG.md)(日文)
+详细结果：[docs/verification.md](docs/verification.md)(日文)。在 Linux 版 SteamVR 上，v0.3.0 的直接模式已在真实 GPU(NVIDIA RTX 4000 Ada)上确认：合成器以 90 fps 渲染、集成测试 28/28 通过、在有 Steam 客户端并启用 SteamVR Home 的环境中正常退出、通过 Proton 运行的 VRChat 可渲染并跟随控制器。在 GTX 1050 上 SteamVR 合成器会在启动后不久因 GPU 异常停止([docs/zh-CN/linux.md](docs/zh-CN/linux.md))。在登录 VRChat 的状态下，已在 Windows(控制器)和 Linux(手部模式)上确认虚拟形象跟随、手指、移动、菜单操作和全身校准。在真实 HMD(Pico 4 Ultra + PICO Connect)上添加追踪器的配置也已确认。带真实显示器的 Linux 桌面、Linux 上预览的开始/停止(轻量化之后)尚未验证。变更历史：[CHANGELOG.md](CHANGELOG.md)(日文)
 
 ## 许可证
 

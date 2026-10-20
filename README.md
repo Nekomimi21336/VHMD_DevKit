@@ -214,8 +214,17 @@ SteamVR のコンポジタは 1〜240 Hz のどの値にも正確に従います
 
 ## 実機 HMD と併用するとき
 
-- このドライバの HMD は常に登録されるため、実 HMD のドライバと同時に有効だと、どちらがアクティブになるかは環境次第です。
-- 実機で遊ぶ前に登録解除するか、`vhmd_config.json` で `"hmd": {"enabled": false}` にして**コントローラ / トラッカーだけを追加するモード**にしてください(実 HMD 接続環境での確認は未実施)。
+実機の頭と手(例: Pico 4 Ultra + PICO Connect)に、VHMD のトラッカーを足して使えます(Pico 4 Ultra で確認済み)。
+
+```json
+"hmd":         { "enabled": false },
+"controllers": { "enabled": false }
+```
+
+- 実 HMD のドライバと VHMD は SteamVR の中で並んで動きます(互いにはつながりません)。トラッカーには PC 上の送信プログラムから UDP で姿勢を送ります。
+- `activateMultipleDrivers` を変えなくても、VHMD のデバイスは実 HMD と一緒に有効になりました。
+- `hmd.enabled` が `true` のままでも、実 HMD があれば SteamVR はそちらを使います(`Using existing HMD`)。VHMD のコントローラーは左右の役割を持たないまま残るので、`controllers.enabled: false` にしておくのがおすすめです。
+- 座標は実 HMD の生の座標(`TrackingUniverseRawAndUncalibrated`)に合わせて送ります。送信プログラムで実 HMD の姿勢を読んで計算するか、VMT 互換 OSC の Joint / Follow で実 HMD(`HMD`)を親にします。実 HMD の 50 cm 下にトラッカーを置き続けたところ、頭を動かしても誤差は中央値 0.7 mm でした。
 - SteamVR の「スタートアップ/シャットダウン → アドオンの管理」で `vhmd` を無効化することもできます。
 
 ## テスト
@@ -281,7 +290,7 @@ third_party/            OpenVR SDK(サブモジュール v2.15.6)、nlohmann/jso
 | Linux コンパイラ | gcc 13.3(Ubuntu 24.04 / WSL2)、gcc 15.2(Ubuntu 26.04)、CMake 3.28 / 4.2 |
 | Python | 3.12(3.10 以上)、検証用に pyopenvr 2.12 |
 
-結果の詳細: [docs/verification.md](docs/verification.md)。Linux 版 SteamVR では v0.3.0 のダイレクトモードで、実 GPU(NVIDIA RTX 4000 Ada)上でコンポジタが 90 fps で描画し、統合テスト 28/28、Steam クライアントあり・SteamVR Home 有効での正常終了、Proton 経由の VRChat での描画とコントローラ追従まで確認しました。GTX 1050 では SteamVR のコンポジタが起動後しばらくして GPU 例外で停止します([docs/linux.md](docs/linux.md))。VRChat にログインした状態では、アバターの追従、指、移動、メニュー操作、フルボディ較正を Windows(コントローラー)と Linux(ハンドモード)で確認しました。実 HMD との併用、実画面のある Linux デスクトップ、Linux でのプレビューの開始・停止(軽量化後)は未検証です。変更履歴: [CHANGELOG.md](CHANGELOG.md)
+結果の詳細: [docs/verification.md](docs/verification.md)。Linux 版 SteamVR では v0.3.0 のダイレクトモードで、実 GPU(NVIDIA RTX 4000 Ada)上でコンポジタが 90 fps で描画し、統合テスト 28/28、Steam クライアントあり・SteamVR Home 有効での正常終了、Proton 経由の VRChat での描画とコントローラ追従まで確認しました。GTX 1050 では SteamVR のコンポジタが起動後しばらくして GPU 例外で停止します([docs/linux.md](docs/linux.md))。VRChat にログインした状態では、アバターの追従、指、移動、メニュー操作、フルボディ較正を Windows(コントローラー)と Linux(ハンドモード)で確認しました。実 HMD(Pico 4 Ultra + PICO Connect)にトラッカーを足す構成も確認済みです。実画面のある Linux デスクトップ、Linux でのプレビューの開始・停止(軽量化後)は未検証です。変更履歴: [CHANGELOG.md](CHANGELOG.md)
 
 ## ライセンス
 

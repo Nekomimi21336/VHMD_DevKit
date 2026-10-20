@@ -214,8 +214,17 @@ Settings are loaded when SteamVR starts. Either edit the source-side files and r
 
 ## Using alongside a physical HMD
 
-- This driver's HMD is always registered, so if it is enabled at the same time as a real HMD's driver, which one becomes active depends on your environment.
-- Before playing on real hardware, either unregister the driver or set `"hmd": {"enabled": false}` in `vhmd_config.json` to switch to **a mode that only adds controllers / trackers** (not yet tested with a real HMD connected).
+You can add VHMD trackers to a real headset's head and hands (e.g. Pico 4 Ultra + PICO Connect); verified with a Pico 4 Ultra.
+
+```json
+"hmd":         { "enabled": false },
+"controllers": { "enabled": false }
+```
+
+- The real HMD's driver and VHMD run side by side inside SteamVR (they do not talk to each other). Trackers get their poses over UDP from a sender program on the PC.
+- VHMD's devices became active alongside the real HMD without changing `activateMultipleDrivers`.
+- Even with `hmd.enabled` left `true`, SteamVR uses the real HMD when one is present (`Using existing HMD`). VHMD's controllers stay around without a hand role, so `controllers.enabled: false` is recommended.
+- Send poses in the real HMD's raw coordinates (`TrackingUniverseRawAndUncalibrated`): either read the real HMD's pose in your sender and compute from it, or use VMT-compatible Joint / Follow with the real HMD (`HMD`) as the parent. Keeping a tracker 50 cm below the real HMD gave a median error of 0.7 mm while the head moved.
 - You can also disable `vhmd` in SteamVR under "Startup/Shutdown → Manage Add-ons".
 
 ## Tests
@@ -281,7 +290,7 @@ third_party/            OpenVR SDK (submodule v2.15.6), nlohmann/json 3.11.3
 | Linux compiler | gcc 13.3 (Ubuntu 24.04 / WSL2), gcc 15.2 (Ubuntu 26.04), CMake 3.28 / 4.2 |
 | Python | 3.12 (3.10 or later), pyopenvr 2.12 for verification |
 
-Detailed results: [docs/verification.md](docs/verification.md) (Japanese). On SteamVR for Linux, v0.3.0's direct mode was verified on a real GPU (NVIDIA RTX 4000 Ada): the compositor renders at 90 fps, the integration test passes 28/28, SteamVR shuts down cleanly with the Steam client and SteamVR Home, and VRChat through Proton renders and follows the controllers. On a GTX 1050 the SteamVR compositor stops on a GPU exception shortly after start ([docs/en/linux.md](docs/en/linux.md)). While logged in to VRChat, avatar tracking, fingers, locomotion, menu operation and full-body calibration were confirmed on Windows (controllers) and Linux (hand mode). Use alongside a real HMD, a Linux desktop with a physical display, and starting/stopping the preview on Linux (after the load reduction) have not been verified. Changelog: [CHANGELOG.md](CHANGELOG.md) (Japanese)
+Detailed results: [docs/verification.md](docs/verification.md) (Japanese). On SteamVR for Linux, v0.3.0's direct mode was verified on a real GPU (NVIDIA RTX 4000 Ada): the compositor renders at 90 fps, the integration test passes 28/28, SteamVR shuts down cleanly with the Steam client and SteamVR Home, and VRChat through Proton renders and follows the controllers. On a GTX 1050 the SteamVR compositor stops on a GPU exception shortly after start ([docs/en/linux.md](docs/en/linux.md)). While logged in to VRChat, avatar tracking, fingers, locomotion, menu operation and full-body calibration were confirmed on Windows (controllers) and Linux (hand mode). Adding trackers to a real HMD (Pico 4 Ultra + PICO Connect) was also verified. A Linux desktop with a physical display, and starting/stopping the preview on Linux (after the load reduction) have not been verified. Changelog: [CHANGELOG.md](CHANGELOG.md) (Japanese)
 
 ## License
 

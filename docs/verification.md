@@ -11,7 +11,7 @@
 | コンパイラ | MSVC 14.44 (VS 2022 Build Tools 17.14), CMake 4.3.0-rc2 |
 | Python / pyopenvr | 3.12.7 / openvr 2.12.1401 |
 | GPU | AMD Radeon RX 7900 XTX |
-| 実 HMD | PICO 4S のドライバが登録済みだが検証中は未接続 |
+| 実 HMD | Pico 4 Ultra(PICO Connect)。2026-10-20 の併用確認以外は未接続 |
 
 ## 1. 自動検証(要件 10.1)
 
@@ -396,6 +396,21 @@ SteamVR が受け付ける機能のうち、Windows の検証環境だけで確�
 - **HMD の装着センサーには、レガシーバインディング(`/user/head/proximity` → `head_proximity`)が必要。** SteamVR 同梱の Rift のプロファイルと同じ形にした。
 - pyopenvr の `getActionOrigins` は `byref()` に整数を渡して落ち、`getOriginLocalizedName` はサイズ問い合わせ(バッファなし)で SteamVR 側がアクセス違反になる。テストでは関数テーブルを直接呼んだ。SteamVR はこの名前を日本語 Windows では ANSI コードページで返した。
 - **仮想カメラ(`IVRCameraComponent`)は動かなかったため取り下げた。** SteamVR はカメラコンポーネントを取得し `GetCameraFrameBounds` まで呼ぶが、`AcquireVideoStreamingService` は `OperationFailed` で、フレームバッファの設定や `StartVideoStream` は一度も呼ばれない。vrcompositor.txt には `Error connecting to camera block queue` → `D3D11 Camera Initialization failure`。カメラ関連のプロパティを足しても、SteamVR のカメラ設定を有効にして再起動しても、アプリの種類を変えても同じ。実機カメラ(Lighthouse の HMD など)向けの経路と判断した。確認のため一時的に有効にした SteamVR のカメラ設定は元(無効)に戻した。
+
+### 実機 HMD との併用(2026-10-20、Windows 11、Pico 4 Ultra + PICO Connect、SteamVR 2.17.10)
+
+PICO Connect で SteamVR につないだ Pico 4 Ultra に、VHMD のデバイスを足して確認した。
+
+| 構成 | 結果 |
+|---|---|
+| VHMD 既定の設定(HMD・コントローラー有効)のまま | PICO の HMD が index 0(`Using existing HMD pico.PICO_HMD`)で、VHMD の HMD は追加されない。VHMD のコントローラーは接続中になるが左右の役割は無く(role 0)、手の役割は PICO のコントローラーが持つ |
+| `activateMultipleDrivers` | 無効(既定)のままで、VHMD のデバイスは有効になった |
+| トラッカーのみ(`hmd.enabled: false`、`controllers.enabled: false`) | PICO の HMD・両手 + VHMD のトラッカー(オンデマンドで追加)だけになる。`registered 0 devices, 8 more on demand` |
+| ユニバース ID | PICO は `0xC`、VHMD は `0x56484D44` で異なるが、立位・着座・生の座標のどれでも位置関係は一致。較正状態 OK、プレイエリアは PICO の 1 × 1 m |
+| 実 HMD の 50 cm 下にトラッカーを置く(生の座標で計算して送信) | 静止時: 立位・着座・生のどれでも 0.499 m 下。5 秒間、頭を動かしながら(合計 28 cm)毎フレーム送ると、誤差は中央値 0.7 mm、p95 1.4 mm、最大 2.3 mm |
+
+- SteamVR を PICO Connect から起動しているときは、テストツールの `stop_steamvr` では SteamVR を止められなかった(vrserver が残った)。今回は確認のうえ vrserver などを強制終了し、`vrstartup` で起動し直した。PICO Connect は SteamVR を自動では再起動しなかったが、起動し直すとすぐに PICO の HMD がつながった。
+- 未確認: 実 HMD と併用したまま VRChat でフルボディ較正、実 HMD の姿勢を親にした VMT の Joint / Follow。
 
 ## 2. 手動検証手順(要件 10.2)
 

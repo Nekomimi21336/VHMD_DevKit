@@ -52,7 +52,7 @@
 | 空間アンカー(`IVRDriverSpatialAnchors`) | 未実装 | ドライバが対応していなくても SteamVR が汎用のアンカーを提供する。仮想の空間には固定すべき現実の場所が無く、得るものが少ない |
 | ウォッチドッグ(`IVRWatchdogProvider`) | 未実装 | SteamVR が閉じているあいだに SteamVR を自動起動する仕組みで、開発用ツールで有効にするには影響が大きい |
 | 表情(フェイシャルトラッキング) | 対象外。OpenVR に表情の API が無く、SteamVR の OpenXR ランタイムもフェイス系拡張を提供していないため、SteamVR との接続という本ツールの役割の外(調査: `docs/face_tracking_research.md`) | — |
-| トラッカーのみモード (`hmd.enabled=false`) | ドライバが HMD を追加しないことは確認。この PC では実ヘッドセット(PICO 4S)が未接続のため、SteamVR に HMD が無く他デバイスも有効化されない → **未検証** | 実 HMD 接続時に `docs/verification.md` の手順で確認 |
+| トラッカーのみモード (`hmd.enabled=false`) | Pico 4 Ultra + PICO Connect で確認済み(2026-10-20)。実 HMD が無いときは SteamVR に HMD が無く、VHMD のデバイスも有効にならない | — |
 | VMT の Joint / Follow / Skeleton / ルーム行列 | 未実装(破棄してログ) | `protocol/osc.cpp` に追加 |
 | 実行時のデバイス削除 | OpenVR にはデバイス削除 API が無い。追加は最初のパケットで行う(オンデマンド)。使わなくなったデバイスは切断として報告する | — |
 | Linux の表示経路 | v0.2.0 を Linux 版 SteamVR 2.17.10(Arch、KDE Wayland)で試した結果、ドライバは読み込まれ HMD も認識されたが、コンポジタが `CannotDRMLeaseDisplay` で起動しなかった(null ドライバも同じ。Valve issue #889)。`IVRVirtualDisplay` は Linux で壊れている(issue #409)。**v0.3.0 で `IVRDriverDirectModeComponent` を実装**(ALVR の Linux ドライバと同じ方式。共有 Vulkan イメージを `IVRIPCResourceManagerClient` で確保し、vsync はドライバが通知)。実 GPU(RTX 4000 Ada)の Linux 版 SteamVR 2.17.10 で 90 fps の描画と統合テスト合格を確認。GTX 1050 ではコンポジタが GPU 例外で止まる | 実画面のある Linux デスクトップと、プレビューの開始・停止(軽量化後)の実 GPU での動作は未確認 |

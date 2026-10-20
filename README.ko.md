@@ -214,8 +214,17 @@ SteamVR 컴포지터는 1~240 Hz의 어떤 값에도 정확히 따릅니다. 다
 
 ## 실제 HMD와 함께 사용할 때
 
-- 이 드라이버의 HMD는 항상 등록되므로, 실제 HMD의 드라이버와 동시에 활성화되어 있으면 어느 쪽이 활성 HMD가 될지는 환경에 따라 다릅니다.
-- 실제 장비로 플레이하기 전에 등록을 해제하거나, `vhmd_config.json`에서 `"hmd": {"enabled": false}`로 설정해 **컨트롤러 / 트래커만 추가하는 모드**로 사용하십시오(실제 HMD가 연결된 환경에서의 확인은 미실시).
+실제 장비의 머리와 양손(예: Pico 4 Ultra + PICO Connect)에 VHMD의 트래커를 더해 사용할 수 있습니다(Pico 4 Ultra로 확인).
+
+```json
+"hmd":         { "enabled": false },
+"controllers": { "enabled": false }
+```
+
+- 실제 HMD의 드라이버와 VHMD는 SteamVR 안에서 나란히 동작합니다(서로 직접 통신하지 않음). 트래커의 자세는 PC의 송신 프로그램에서 UDP로 보냅니다.
+- `activateMultipleDrivers`를 바꾸지 않아도 VHMD의 디바이스가 실제 HMD와 함께 활성화되었습니다.
+- `hmd.enabled`가 `true`인 채로도 실제 HMD가 있으면 SteamVR은 그쪽을 사용합니다(`Using existing HMD`). VHMD의 컨트롤러는 좌우 역할 없이 남으므로 `controllers.enabled: false`를 권장합니다.
+- 자세는 실제 HMD의 원시 좌표(`TrackingUniverseRawAndUncalibrated`)에 맞춰 보냅니다. 송신 프로그램에서 실제 HMD의 자세를 읽어 계산하거나, VMT 호환 OSC의 Joint / Follow로 실제 HMD(`HMD`)를 부모로 지정합니다. 트래커를 실제 HMD 아래 50 cm에 계속 두었을 때 머리를 움직여도 오차 중앙값은 0.7 mm였습니다.
 - SteamVR의 "시작/종료 → 애드온 관리"에서 `vhmd`를 비활성화할 수도 있습니다.
 
 ## 테스트
@@ -281,7 +290,7 @@ third_party/            OpenVR SDK(서브모듈 v2.15.6), nlohmann/json 3.11.3
 | Linux 컴파일러 | gcc 13.3(Ubuntu 24.04 / WSL2), gcc 15.2(Ubuntu 26.04), CMake 3.28 / 4.2 |
 | Python | 3.12(3.10 이상), 검증용으로 pyopenvr 2.12 |
 
-결과 상세: [docs/verification.md](docs/verification.md) (일본어). Linux판 SteamVR에서는 v0.3.0의 다이렉트 모드로 실제 GPU(NVIDIA RTX 4000 Ada)에서 컴포지터의 90 fps 렌더링, 통합 테스트 28/28, Steam 클라이언트와 SteamVR Home이 있는 환경에서의 정상 종료, Proton을 통한 VRChat의 렌더링과 컨트롤러 추종까지 확인했습니다. GTX 1050에서는 SteamVR 컴포지터가 시작 후 잠시 뒤 GPU 예외로 멈춥니다([docs/ko/linux.md](docs/ko/linux.md)). VRChat에 로그인한 상태에서는 아바타 추종, 손가락, 이동, 메뉴 조작, 풀바디 보정을 Windows(컨트롤러)와 Linux(핸드 모드)에서 확인했습니다. 실제 HMD와의 병용, 실제 화면이 있는 Linux 데스크톱, Linux에서의 프리뷰 시작·정지(경량화 이후)는 미검증입니다. 변경 이력: [CHANGELOG.md](CHANGELOG.md) (일본어)
+결과 상세: [docs/verification.md](docs/verification.md) (일본어). Linux판 SteamVR에서는 v0.3.0의 다이렉트 모드로 실제 GPU(NVIDIA RTX 4000 Ada)에서 컴포지터의 90 fps 렌더링, 통합 테스트 28/28, Steam 클라이언트와 SteamVR Home이 있는 환경에서의 정상 종료, Proton을 통한 VRChat의 렌더링과 컨트롤러 추종까지 확인했습니다. GTX 1050에서는 SteamVR 컴포지터가 시작 후 잠시 뒤 GPU 예외로 멈춥니다([docs/ko/linux.md](docs/ko/linux.md)). VRChat에 로그인한 상태에서는 아바타 추종, 손가락, 이동, 메뉴 조작, 풀바디 보정을 Windows(컨트롤러)와 Linux(핸드 모드)에서 확인했습니다. 실제 HMD(Pico 4 Ultra + PICO Connect)에 트래커를 더하는 구성도 확인했습니다. 실제 화면이 있는 Linux 데스크톱, Linux에서의 프리뷰 시작·정지(경량화 이후)는 미검증입니다. 변경 이력: [CHANGELOG.md](CHANGELOG.md) (일본어)
 
 ## 라이선스
 
