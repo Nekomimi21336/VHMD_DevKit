@@ -216,12 +216,15 @@ class PreviewReader:
         return None
 
     def read_scaled(self, max_w: int, max_h: int, eye: str = "left", skip_index: int = -1,
-                    pixel_format: str = "rgb", retries: int = 50) -> Optional[Tuple[int, int, int, bytes]]:
-        """One eye shrunk by an integer factor to fit max_w x max_h:
-        (width, height, frame_index, pixels). pixel_format "rgb" (3 bytes per
-        pixel) or "bgrx" (4 bytes, the layout of a 32-bit Windows DIB). Copies
-        only the rows and pixels it needs, so it is cheap enough for a live view.
-        Returns None when there is no frame or the latest one is still skip_index."""
+                    pixel_format: str = "rgb", aspect: Optional[float] = None,
+                    retries: int = 50) -> Optional[Tuple[int, int, int, bytes]]:
+        """An eye ("left" / "right") or both eyes side by side ("both"), shrunk by
+        an integer factor to fit max_w x max_h: (width, height, frame_index,
+        pixels). aspect (width / height, e.g. 16 / 9) crops the center to that
+        shape first. pixel_format "rgb" (3 bytes per pixel) or "bgrx" (4 bytes,
+        the layout of a 32-bit Windows DIB). Copies only the rows and pixels it
+        needs, so it is cheap enough for a live view. Returns None when there is
+        no frame or the latest one is still skip_index."""
         for _ in range(retries):
             if not self._map():
                 return None
@@ -239,15 +242,24 @@ class PreviewReader:
             if header_size + stride * height > self._size:
                 self.close()
                 continue
-            ew = eye_w or width
-            x0 = ew if eye == "right" else 0
-            k = max(1, math.ceil(ew / max_w), math.ceil(height / max_h))
-            ow, oh = len(range(0, ew, k)), len(range(0, height, k))
+            ew = width if eye == "both" else (eye_w or width)
+            x0 = (eye_w or width) if eye == "right" else 0
+            y0, ch = 0, height
+            if aspect:
+                if ew / height > aspect:               # too wide: crop the sides
+                    cw = max(1, round(height * aspect))
+                    x0 += (ew - cw) // 2
+                    ew = cw
+                else:                                  # too tall: crop top and bottom
+                    ch = max(1, round(ew / aspect))
+                    y0 = (height - ch) // 2
+            k = max(1, math.ceil(ew / max_w), math.ceil(ch / max_h))
+            ow, oh = len(range(0, ew, k)), len(range(0, ch, k))
             bpp = 4 if pixel_format == "bgrx" else 3
             r, b = (2, 0) if bpp == 4 else (0, 2)          # BGRX swaps red and blue
             out = bytearray(ow * oh * bpp)
             step, o, n = 4 * k, 0, ow * bpp
-            for y in range(0, height, k):
+            for y in range(y0, y0 + ch, k):
                 start = header_size + y * stride + x0 * 4
                 row = mm[start:start + ew * 4]
                 out[o + r:o + n:bpp] = row[0::step]

@@ -82,3 +82,17 @@ def test_read_scaled(tmp_path):
         w, h, _, bgrx = r.read_scaled(8, 8, eye="right", pixel_format="bgrx")
         assert (w, h) == (8, 8) and bgrx[:3] == bytes((50, 100, 200))   # blue, green, red
         assert r.read_scaled(4, 4, skip_index=7) is None              # unchanged frame
+
+
+def test_read_scaled_both_eyes_and_aspect(tmp_path):
+    p = tmp_path / "prev"
+    write_preview(p, 32, 18, left=(10, 20, 30, 255), right=(200, 100, 50, 255))   # 16x18 eyes
+    with PreviewReader(str(p)) as r:
+        w, h, _, rgb = r.read_scaled(32, 18, eye="both")
+        assert (w, h) == (32, 18)
+        assert rgb[:3] == bytes((10, 20, 30)) and rgb[(w - 1) * 3:w * 3] == bytes((200, 100, 50))
+        w, h, _, rgb = r.read_scaled(16, 18, aspect=16 / 9)       # 16x18 eye -> 16x9 center
+        assert (w, h) == (16, 9)
+        w, h, _, rgb = r.read_scaled(8, 8, eye="both", aspect=1.0)  # 32x18 -> 18x18 -> /3
+        assert (w, h) == (6, 6)
+        assert rgb[:3] == bytes((10, 20, 30)) and rgb[-3:] == bytes((200, 100, 50))

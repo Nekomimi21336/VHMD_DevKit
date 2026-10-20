@@ -178,6 +178,9 @@ Drive the HMD and controllers by hand like an FPS game: the mouse looks around a
 | Frame | Hands default to "head" (follow the head), trackers to "body" (follow the head's floor position and yaw); "fixed" stays put |
 | Pause / Take over from SteamVR | Stop sending so an automation program can drive / resume manual control from the poses SteamVR has now |
 | Copy as Python | Copy the current poses as `c.pose(...)` lines |
+| Raw mouse | On (default): ignores Windows pointer acceleration and turns the view by the mouse's own counts |
+| Motion prediction | On (default): velocities are sent too and SteamVR interpolates between packets. Turn it off if motion feels like it has inertia |
+| HMD view | One eye 16:9 (default) / both eyes / one eye (whole) |
 
 - The "SteamVR reports" column and the rings on the map are the poses apps actually see (needs pyopenvr: `pip install openvr`). Devices of other drivers, such as a physical HMD, are drawn in gray.
 - With the VHMD HMD disabled next to a physical HMD, the head is the physical HMD and the trackers follow the person wearing it.

@@ -74,7 +74,9 @@ TEXT = {
         "target": "Mouse moves", "speed": "Speed", "sens": "Sensitivity",
         "loco": "WASD", "loco_move": "moves the head", "loco_stick": "left joystick",
         "map": "Top view (drag devices, wheel = zoom)", "forward": "-Z (forward)",
-        "view": "HMD view (left eye)",
+        "view": "HMD view",
+        "view_modes": {"both": "both eyes", "eye169": "one eye 16:9", "eye": "one eye"},
+        "raw": "Raw mouse (no Windows acceleration)", "predict": "Motion prediction",
         "view_window": "The HMD view is shown here in direct mode\n(display.mode = \"direct\" in vhmd_config.json).\nIn window mode SteamVR shows it in its own window.",
         "view_wait": "waiting for the first frame...",
         "view_none": "No VHMD HMD in use.",
@@ -101,7 +103,9 @@ TEXT = {
         "target": "マウスで動かす", "speed": "速度", "sens": "感度",
         "loco": "WASD", "loco_move": "頭を移動", "loco_stick": "左スティック",
         "map": "上から見た図(ドラッグで移動、ホイールで拡大縮小)", "forward": "-Z(前)",
-        "view": "HMD の視点(左目)",
+        "view": "HMD の視点",
+        "view_modes": {"both": "両目", "eye169": "片目 16:9", "eye": "片目"},
+        "raw": "Raw マウス入力(Windows の加速なし)", "predict": "動きの予測",
         "view_window": "ダイレクトモードではここに HMD の視点が出ます\n(vhmd_config.json の display.mode = \"direct\")。\nウィンドウモードでは SteamVR のウィンドウに表示されます。",
         "view_wait": "最初のフレームを待っています...",
         "view_none": "VHMD の HMD は使われていません。",
@@ -133,7 +137,8 @@ TRACKER_SPOT = {
 COLORS = {"hmd": "#2b6cb0", "left_hand": "#c05621", "right_hand": "#2f855a"}
 TRACKER_COLOR = "#6b46c1"
 OTHER_COLOR = "#888888"
-VIEW_W, VIEW_H = 540, 600        # HMD view area (pixels)
+VIEW_MODES = ("eye169", "both", "eye")
+VIEW_SIZES = {"both": (720, 400), "eye169": (640, 360), "eye": (540, 600)}   # view area (pixels)
 UI_HZ = 30                       # table / map / view refresh
 
 
@@ -163,6 +168,100 @@ def decompose(fpos: Sequence[float], frot: Sequence[float], wpos: Sequence[float
     inv = math3d.conjugate(frot)
     lpos = math3d.rotate(inv, (wpos[0] - fpos[0], wpos[1] - fpos[1], wpos[2] - fpos[2]))
     return lpos, math3d.normalize(math3d.multiply(inv, wrot))
+
+
+class RAWINPUTDEVICE(ctypes.Structure):
+    _fields_ = [("usUsagePage", ctypes.c_ushort), ("usUsage", ctypes.c_ushort), ("dwFlags", ctypes.c_uint32),
+                ("hwndTarget", ctypes.c_void_p)]
+
+
+class RAWINPUTHEADER(ctypes.Structure):
+    _fields_ = [("dwType", ctypes.c_uint32), ("dwSize", ctypes.c_uint32), ("hDevice", ctypes.c_void_p),
+                ("wParam", ctypes.c_void_p)]
+
+
+class RAWMOUSE(ctypes.Structure):
+    _fields_ = [("usFlags", ctypes.c_ushort), ("ulButtons", ctypes.c_uint32), ("ulRawButtons", ctypes.c_uint32),
+                ("lLastX", ctypes.c_long), ("lLastY", ctypes.c_long), ("ulExtraInformation", ctypes.c_uint32)]
+
+
+class RAWINPUT_MOUSE(ctypes.Structure):
+    _fields_ = [("header", RAWINPUTHEADER), ("mouse", RAWMOUSE)]
+
+
+WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t)
+
+
+class WNDCLASSW(ctypes.Structure):
+    _fields_ = [("style", ctypes.c_uint), ("lpfnWndProc", WNDPROC), ("cbClsExtra", ctypes.c_int),
+                ("cbWndExtra", ctypes.c_int), ("hInstance", ctypes.c_void_p), ("hIcon", ctypes.c_void_p),
+                ("hCursor", ctypes.c_void_p), ("hbrBackground", ctypes.c_void_p),
+                ("lpszMenuName", ctypes.c_wchar_p), ("lpszClassName", ctypes.c_wchar_p)]
+
+
+class RawMouse:
+    """Relative mouse motion from Raw Input (WM_INPUT): the counts the mouse
+    reports, without the Windows pointer acceleration that cursor positions
+    include. A message-only window on its own thread receives them."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.dx = self.dy = 0
+        self.ok = False
+        self._ready = threading.Event()
+        threading.Thread(target=self._run, name="vhmd-fps-rawmouse", daemon=True).start()
+        self._ready.wait(2.0)
+
+    def take(self) -> Tuple[int, int]:
+        with self.lock:
+            d = (self.dx, self.dy)
+            self.dx = self.dy = 0
+        return d
+
+    def _run(self) -> None:
+        u32 = ctypes.WinDLL("user32")      # own argtypes, separate from the module's user32
+        k32 = ctypes.WinDLL("kernel32")
+        u32.DefWindowProcW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
+        u32.DefWindowProcW.restype = ctypes.c_ssize_t
+        u32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASSW)]
+        u32.RegisterClassW.restype = ctypes.c_ushort
+        u32.CreateWindowExW.argtypes = [ctypes.c_uint32, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32,
+                                        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+        u32.CreateWindowExW.restype = ctypes.c_void_p
+        u32.RegisterRawInputDevices.argtypes = [ctypes.POINTER(RAWINPUTDEVICE), ctypes.c_uint, ctypes.c_uint]
+        u32.GetRawInputData.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p,
+                                        ctypes.POINTER(ctypes.c_uint), ctypes.c_uint]
+        u32.GetRawInputData.restype = ctypes.c_uint
+        u32.GetMessageW.argtypes = [ctypes.POINTER(ctypes.wintypes.MSG), ctypes.c_void_p, ctypes.c_uint, ctypes.c_uint]
+        u32.DispatchMessageW.argtypes = [ctypes.POINTER(ctypes.wintypes.MSG)]
+        k32.GetModuleHandleW.restype = ctypes.c_void_p
+        buf = RAWINPUT_MOUSE()
+
+        def proc(hwnd, msg, wparam, lparam):
+            if msg == 0x00FF:                                       # WM_INPUT
+                size = ctypes.c_uint(ctypes.sizeof(buf))
+                got = u32.GetRawInputData(ctypes.c_void_p(lparam), 0x10000003,   # RID_INPUT
+                                          ctypes.byref(buf), ctypes.byref(size), ctypes.sizeof(RAWINPUTHEADER))
+                if got != 0xFFFFFFFF and buf.header.dwType == 0 and not buf.mouse.usFlags & 1:  # relative mouse
+                    with self.lock:
+                        self.dx += buf.mouse.lLastX
+                        self.dy += buf.mouse.lLastY
+            return u32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+        self._proc = WNDPROC(proc)                                  # keep alive
+        hinst = k32.GetModuleHandleW(None)
+        wc = WNDCLASSW(0, self._proc, 0, 0, hinst, None, None, None, None, "VHMDRawMouse")
+        u32.RegisterClassW(ctypes.byref(wc))
+        hwnd = u32.CreateWindowExW(0, "VHMDRawMouse", None, 0, 0, 0, 0, 0, ctypes.c_void_p(-3), None, hinst, None)
+        dev = RAWINPUTDEVICE(1, 2, 0x100, hwnd)                     # generic desktop / mouse, RIDEV_INPUTSINK
+        self.ok = bool(hwnd) and bool(u32.RegisterRawInputDevices(ctypes.byref(dev), 1, ctypes.sizeof(dev)))
+        self._ready.set()
+        if not self.ok:
+            return
+        msg = ctypes.wintypes.MSG()
+        while u32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            u32.DispatchMessageW(ctypes.byref(msg))
 
 
 class BITMAPINFOHEADER(ctypes.Structure):
@@ -250,6 +349,14 @@ class App:
         self.speed = tk.DoubleVar(value=1.5)
         self.sens = tk.DoubleVar(value=0.15)
         self.speed_v, self.sens_v = 1.5, 0.15   # thread-safe copies of the two above
+        self.raw_var = tk.BooleanVar(value=True)
+        self.predict_var = tk.BooleanVar(value=True)
+        self.raw_v = self.predict_v = True
+        self.raw_var.trace_add("write", lambda *a: setattr(self, "raw_v", bool(self.raw_var.get())))
+        self.predict_var.trace_add("write", lambda *a: setattr(self, "predict_v", bool(self.predict_var.get())))
+        self.raw: Optional[RawMouse] = None
+        self.view_mode = VIEW_MODES[0]
+        self.view_box = VIEW_SIZES[self.view_mode]
         self.speed.trace_add("write", lambda *a: self._copy_var("speed_v", self.speed))
         self.sens.trace_add("write", lambda *a: self._copy_var("sens_v", self.sens))
         self.warp = (0, 0)
@@ -362,6 +469,8 @@ class App:
         ttk.Spinbox(opts, from_=0.1, to=10, increment=0.1, width=5, textvariable=self.speed).pack(side="left")
         ttk.Label(opts, text=t["sens"] + " (deg/px)").pack(side="left", padx=(10, 2))
         ttk.Spinbox(opts, from_=0.02, to=1, increment=0.01, width=5, textvariable=self.sens).pack(side="left")
+        ttk.Checkbutton(opts, text=t["raw"], variable=self.raw_var).pack(side="left", padx=(10, 0))
+        ttk.Checkbutton(opts, text=t["predict"], variable=self.predict_var).pack(side="left", padx=(10, 0))
 
         body = ttk.Frame(r, padding=6)
         body.pack(fill="both", expand=True)
@@ -388,9 +497,16 @@ class App:
 
         right = ttk.Frame(body)
         right.pack(side="left", anchor="n", padx=(10, 0))
-        ttk.Label(right, text=t["view"]).pack(anchor="w")
+        head = ttk.Frame(right)
+        head.pack(anchor="w", fill="x")
+        ttk.Label(head, text=t["view"]).pack(side="left")
+        self.mode_box = ttk.Combobox(head, width=12, state="readonly",
+                                     values=[t["view_modes"][m] for m in VIEW_MODES])
+        self.mode_box.current(0)
+        self.mode_box.bind("<<ComboboxSelected>>", lambda e: self.set_view_mode(VIEW_MODES[self.mode_box.current()]))
+        self.mode_box.pack(side="left", padx=6)
         # The preview thread paints this frame directly with GDI.
-        self.view = tk.Frame(right, width=VIEW_W, height=VIEW_H, bg="#111")
+        self.view = tk.Frame(right, width=self.view_box[0], height=self.view_box[1], bg="#111")
         self.view.pack(anchor="w")
         self.view_text = tk.Label(self.view, bg="#111", fg="#ddd", justify="center",
                                   text=t["view_wait"] if self.display_mode == "direct" and self.hmd_active
@@ -585,6 +701,9 @@ class App:
         if self.captured:
             return
         self.cache_window()
+        if self.raw is None:
+            self.raw = RawMouse()
+        self.raw.take()                   # drop motion from before the capture
         self.banner.focus_set()           # keys must not go into an entry
         self.root.config(cursor="none")
         self.banner.config(cursor="none")
@@ -704,7 +823,11 @@ class App:
         user32.GetCursorPos(ctypes.byref(pt))
         dx, dy = pt.x - cx, pt.y - cy
         if dx or dy:
-            user32.SetCursorPos(cx, cy)
+            user32.SetCursorPos(cx, cy)     # keep the hidden cursor inside the window
+        if self.raw_v and self.raw and self.raw.ok:
+            dx, dy = self.raw.take()
+        elif self.raw:
+            self.raw.take()
         if self.target == "hmd":
             s = self.sens_v
             h.yaw = (h.yaw - dx * s + 180.0) % 360.0 - 180.0
@@ -752,6 +875,11 @@ class App:
         if prev is None or now - prev[0] <= 0:
             self.vel[dev_id] = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
             return self.vel[dev_id]
+        if tuple(pos) == tuple(prev[1]) and tuple(rot) == tuple(prev[2]):
+            # Stopped: no leftover (smoothed) velocity, or SteamVR would keep
+            # extrapolating past where the device stopped.
+            self.vel[dev_id] = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+            return self.vel[dev_id]
         dt = now - prev[0]
         v = tuple((pos[i] - prev[1][i]) / dt for i in range(3))
         w = angular_velocity(prev[2], rot, dt)
@@ -771,9 +899,12 @@ class App:
                     if dev_id == "hmd" and not self.hmd_active:
                         continue
                     v, w = self.velocities(dev_id, pos, rot, now)
-                    # age=0: the driver ages the sample itself, so SteamVR extrapolates
-                    # with the velocity between our packets.
-                    self.c.pose(dev_id, pos, rot, vel=v, angvel=w, age=0.0)
+                    if self.predict_v:
+                        # age=0: the driver ages the sample itself, so SteamVR
+                        # extrapolates with the velocity between our packets.
+                        self.c.pose(dev_id, pos, rot, vel=v, angvel=w, age=0.0)
+                    else:
+                        self.c.pose(dev_id, pos, rot)
                 for dev_id, values in inputs.items():
                     if dev_id in self.devices:
                         self.c.inputs(dev_id, values)
@@ -866,20 +997,26 @@ class App:
             return
         reader = PreviewReader()
         last_index = -1
+        shown = None
         n, t0 = 0, time.perf_counter()
         try:
             while self.running:
                 try:
-                    r = reader.read_scaled(VIEW_W, VIEW_H, skip_index=last_index, pixel_format="bgrx")
+                    mode, (bw, bh) = self.view_mode, self.view_box
+                    eye = "both" if mode == "both" else "left"
+                    aspect = 16 / 9 if mode == "eye169" else None
+                    r = reader.read_scaled(bw, bh, eye=eye, aspect=aspect, pixel_format="bgrx",
+                                           skip_index=last_index if shown == mode else -1)
                 except OSError:
                     r = None
                 if r is None:
                     time.sleep(0.005)
                     continue
                 w, h, last_index, pixels = r
+                shown = mode
                 self.view_started = True
                 if self.view_hwnd:
-                    blit_bgrx(self.view_hwnd, VIEW_W, VIEW_H, w, h, pixels)
+                    blit_bgrx(self.view_hwnd, bw, bh, w, h, pixels)
                 n += 1
                 if time.perf_counter() - t0 >= 1.0:
                     self.view_fps = n / (time.perf_counter() - t0)
@@ -887,6 +1024,11 @@ class App:
                 time.sleep(1.0 / 60)       # the panel does not need more
         finally:
             reader.close()
+
+    def set_view_mode(self, mode: str) -> None:
+        self.view_box = VIEW_SIZES[mode]
+        self.view.config(width=self.view_box[0], height=self.view_box[1])
+        self.view_mode = mode
 
     def show_view(self) -> None:
         if self.view_started and self.view_text.winfo_ismapped():
