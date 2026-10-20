@@ -37,7 +37,7 @@ import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import font as tkfont, messagebox, ttk
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import math3d
@@ -66,66 +66,90 @@ TEXT = {
     "en": {
         "title": "VHMD FPS control",
         "capture": "Start FPS control (F1)",
-        "captured": "FPS control: mouse = look, Esc = release",
+        "captured": "FPS control  ·  mouse = look  ·  Esc = release",
         "send_on": "Sending", "send_off": "Paused (not sending)",
         "pause": "Pause", "resume": "Resume",
         "takeover": "Take over from SteamVR",
-        "reset": "Reset", "copy": "Copy as Python", "add": "Add",
+        "reset": "Reset", "copy": "Copy as Python", "add": "Add tracker",
+        "devices": "Devices", "controls": "Controls", "keys": "Keys",
         "device": "Device", "frame": "Frame", "steamvr": "SteamVR reports",
+        "pos": "Position (m)", "ang": "Angle (°)",
         "frames": {"head": "head", "body": "body", "fixed": "fixed"},
-        "target": "Mouse moves", "speed": "Speed", "sens": "Sensitivity",
+        "target": "Mouse moves", "speed": "Speed (m/s)", "sens": "Sensitivity (°/count)",
+        "targets": {"hmd": "Head", "left_hand": "Left hand", "right_hand": "Right hand"},
         "loco": "WASD", "loco_move": "moves the head", "loco_stick": "left joystick",
-        "map": "Top view (drag devices, wheel = zoom)", "forward": "-Z (forward)",
+        "map": "Top view", "map_hint": "drag a device · wheel = zoom", "forward": "-Z forward",
+        "legend_ours": "VHMD (sent)", "legend_steamvr": "in SteamVR", "legend_other": "other drivers",
         "view": "HMD view",
         "view_modes": {"both": "both eyes", "eye169": "one eye 16:9", "eye": "one eye"},
         "raw": "Raw mouse (no Windows acceleration)", "predict": "Motion prediction",
         "view_window": "The HMD view is shown here in direct mode\n(display.mode = \"direct\" in vhmd_config.json).\nIn window mode SteamVR shows it in its own window.",
         "view_wait": "waiting for the first frame...",
-        "view_none": "No VHMD HMD in use.",
+        "view_none": "No VHMD HMD in use (Pico mode).\nThe head follows the physical HMD.",
         "no_openvr": "pyopenvr not installed: SteamVR column and take over disabled",
         "no_driver": "driver not answering on {}:{}",
         "copied": "copied {} lines", "absent": "not in SteamVR", "invalid": "not tracked",
+        "mode_vhmd": "VHMD mode", "mode_pico": "Pico mode",
         "to_pico": "Switch to Pico", "to_vhmd": "Switch to VHMD",
         "switch_confirm": "Restart SteamVR in {} mode?\nRunning VR apps will close.",
         "switching": "Switching to {}: {}", "switch_failed": "Switch failed: {}",
-        "help": (
-            "Mouse: look  |  WASD: move  Space/C: up/down  Shift: fast  Alt: slow  Q/E: roll  R: level\n"
-            "F1 head  F2 left hand  F3 right hand  (mouse moves the selected one, wheel = depth)  L: WASD as joystick\n"
-            "LMB: right trigger  RMB: left trigger  MMB: right grip  G: both grips  1/2: A/B  3/4: X/Y  M: menu\n"
-            "Arrows: right joystick  Z/X: left/right joystick click  P: pause  Esc: release mouse"
-        ),
+        "names": {"hmd": "HMD", "left_hand": "Left hand", "right_hand": "Right hand"},
+        "roles": {},
+        "key_list": [
+            ("Mouse", "look"), ("W A S D", "move"), ("Space / C", "up / down"),
+            ("Shift / Alt", "fast / slow"), ("Q / E", "tilt the head"), ("R", "level the head"),
+            ("F1 F2 F3", "move head / left / right hand"), ("Wheel", "hand depth · speed"),
+            ("L", "WASD as left joystick"), ("Arrows", "right joystick"),
+            ("Left click", "right trigger"), ("Right click", "left trigger"),
+            ("Middle click", "right grip"), ("G", "both grips"),
+            ("1 2 / 3 4", "A B / X Y"), ("M", "menu"),
+            ("Z / X", "joystick click"), ("P / Esc", "pause / release mouse"),
+        ],
     },
     "ja": {
         "title": "VHMD FPS 操作",
         "capture": "FPS 操作を開始 (F1)",
-        "captured": "FPS 操作中: マウスで視点、Esc で解除",
+        "captured": "FPS 操作中  ·  マウスで視点  ·  Esc で解除",
         "send_on": "送信中", "send_off": "一時停止中(送信していません)",
         "pause": "一時停止", "resume": "再開",
         "takeover": "SteamVR の姿勢を引き継ぐ",
-        "reset": "初期位置", "copy": "Python としてコピー", "add": "追加",
+        "reset": "初期位置", "copy": "Python としてコピー", "add": "トラッカーを追加",
+        "devices": "デバイス", "controls": "操作", "keys": "キー操作",
         "device": "デバイス", "frame": "基準", "steamvr": "SteamVR 上の値",
+        "pos": "位置 (m)", "ang": "角度 (°)",
         "frames": {"head": "頭", "body": "体", "fixed": "固定"},
-        "target": "マウスで動かす", "speed": "速度", "sens": "感度",
+        "target": "マウスで動かす", "speed": "速度 (m/s)", "sens": "感度 (°/カウント)",
+        "targets": {"hmd": "頭", "left_hand": "左手", "right_hand": "右手"},
         "loco": "WASD", "loco_move": "頭を移動", "loco_stick": "左スティック",
-        "map": "上から見た図(ドラッグで移動、ホイールで拡大縮小)", "forward": "-Z(前)",
+        "map": "上から見た図", "map_hint": "ドラッグで移動 · ホイールで拡大縮小", "forward": "-Z 前",
+        "legend_ours": "VHMD(送信値)", "legend_steamvr": "SteamVR 上の位置", "legend_other": "ほかのドライバ",
         "view": "HMD の視点",
         "view_modes": {"both": "両目", "eye169": "片目 16:9", "eye": "片目"},
         "raw": "Raw マウス入力(Windows の加速なし)", "predict": "動きの予測",
         "view_window": "ダイレクトモードではここに HMD の視点が出ます\n(vhmd_config.json の display.mode = \"direct\")。\nウィンドウモードでは SteamVR のウィンドウに表示されます。",
         "view_wait": "最初のフレームを待っています...",
-        "view_none": "VHMD の HMD は使われていません。",
+        "view_none": "VHMD の HMD は使われていません(Pico モード)。\n頭は実機 HMD の姿勢に追従します。",
         "no_openvr": "pyopenvr が無いため、SteamVR 上の値と引き継ぎは使えません",
         "no_driver": "{}:{} のドライバが応答しません",
         "copied": "{} 行をコピーしました", "absent": "SteamVR に無い", "invalid": "トラッキングなし",
+        "mode_vhmd": "VHMD モード", "mode_pico": "Pico モード",
         "to_pico": "Pico に切り替え", "to_vhmd": "VHMD に切り替え",
         "switch_confirm": "SteamVR を再起動して {} モードにします。\n実行中の VR アプリは終了します。よろしいですか?",
         "switching": "{} に切り替え中: {}", "switch_failed": "切り替えに失敗しました: {}",
-        "help": (
-            "マウス: 視点  |  WASD: 移動  Space/C: 上下  Shift: 速く  Alt: ゆっくり  Q/E: 首をかしげる  R: 水平に戻す\n"
-            "F1 頭  F2 左手  F3 右手(選んだものをマウスで動かす、ホイールで前後)  L: WASD をスティックとして送る\n"
-            "左クリック: 右トリガー  右クリック: 左トリガー  中クリック: 右グリップ  G: 両グリップ  1/2: A/B  3/4: X/Y  M: メニュー\n"
-            "矢印: 右スティック  Z/X: 左/右スティック押し込み  P: 一時停止  Esc: マウス解除"
-        ),
+        "names": {"hmd": "HMD", "left_hand": "左手", "right_hand": "右手"},
+        "roles": {"waist": "腰", "chest": "胸", "left_foot": "左足", "right_foot": "右足",
+                  "left_knee": "左ひざ", "right_knee": "右ひざ", "left_elbow": "左ひじ", "right_elbow": "右ひじ",
+                  "left_shoulder": "左肩", "right_shoulder": "右肩", "camera": "カメラ", "keyboard": "キーボード"},
+        "key_list": [
+            ("マウス", "視点"), ("W A S D", "移動"), ("Space / C", "上 / 下"),
+            ("Shift / Alt", "速く / ゆっくり"), ("Q / E", "首をかしげる"), ("R", "水平に戻す"),
+            ("F1 F2 F3", "頭 / 左手 / 右手 を動かす"), ("ホイール", "手の前後 · 速度"),
+            ("L", "WASD を左スティックに"), ("矢印", "右スティック"),
+            ("左クリック", "右トリガー"), ("右クリック", "左トリガー"),
+            ("中クリック", "右グリップ"), ("G", "両グリップ"),
+            ("1 2 / 3 4", "A B / X Y"), ("M", "メニュー"),
+            ("Z / X", "スティック押し込み"), ("P / Esc", "一時停止 / マウス解除"),
+        ],
     },
 }
 
@@ -142,12 +166,80 @@ TRACKER_SPOT = {
     "left_elbow": (-0.30, 1.10, 0.05), "right_elbow": (0.30, 1.10, 0.05),
     "left_shoulder": (-0.18, 1.42, 0.05), "right_shoulder": (0.18, 1.42, 0.05),
 }
-COLORS = {"hmd": "#2b6cb0", "left_hand": "#c05621", "right_hand": "#2f855a"}
-TRACKER_COLOR = "#6b46c1"
-OTHER_COLOR = "#888888"
+# Device colors read well on both the light and the dark palette.
+COLORS = {"hmd": "#4c8dff", "left_hand": "#f59e0b", "right_hand": "#22c55e"}
+TRACKER_COLOR = "#a78bfa"
+OTHER_COLOR = "#8b949e"
+PALETTES = {
+    "dark": dict(bg="#16171a", card="#212328", card2="#2b2e34", border="#363a41", fg="#e8eaed", muted="#9aa1aa",
+                 accent="#4c8dff", accent_fg="#ffffff", accent_hover="#3a74d8", entry="#17181c", sel="#2f5fbf",
+                 ok="#173d2c", ok_fg="#9ff0c4", warn="#4a3a10", warn_fg="#ffe08a", bad="#4a1d24", bad_fg="#ffb3bd",
+                 map_bg="#1a1b1f", grid="#26282d", axis="#474c55", view_bg="#0c0d0f", key_bg="#30343b"),
+    "light": dict(bg="#eceef2", card="#ffffff", card2="#f3f4f7", border="#dde1e7", fg="#1c2026", muted="#68707b",
+                  accent="#2f6fed", accent_fg="#ffffff", accent_hover="#255ccc", entry="#ffffff", sel="#cddfff",
+                  ok="#ddf5e9", ok_fg="#12603a", warn="#fff1c4", warn_fg="#7a5300", bad="#fde1e4", bad_fg="#8f1d2c",
+                  map_bg="#fbfcfd", grid="#eceef2", axis="#c2c8d0", view_bg="#101114", key_bg="#eef0f4"),
+}
 VIEW_MODES = ("eye169", "both", "eye")
 VIEW_START = (640, 400)          # initial view area (pixels); it then follows the window
 UI_HZ = 30                       # table / map / view refresh
+
+
+def windows_theme() -> str:
+    """'dark' or 'light', following Windows' app theme setting."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
+            return "light" if winreg.QueryValueEx(k, "AppsUseLightTheme")[0] else "dark"
+    except OSError:
+        return "light"
+
+
+def setup_style(root: tk.Tk, pal: Dict[str, str], fonts: Dict[str, tuple]) -> None:
+    st = ttk.Style(root)
+    st.theme_use("clam")
+    root.configure(bg=pal["bg"])
+    ui, small, head = fonts["ui"], fonts["small"], fonts["head"]
+    st.configure(".", background=pal["bg"], foreground=pal["fg"], font=ui, bordercolor=pal["border"],
+                 lightcolor=pal["card2"], darkcolor=pal["card2"], troughcolor=pal["card2"],
+                 fieldbackground=pal["entry"], insertcolor=pal["fg"], selectbackground=pal["sel"],
+                 selectforeground=pal["fg"], focuscolor=pal["accent"])
+    st.configure("Card.TFrame", background=pal["card"])
+    st.configure("Card.TLabel", background=pal["card"], foreground=pal["fg"])
+    st.configure("CardMuted.TLabel", background=pal["card"], foreground=pal["muted"], font=small)
+    st.configure("CardHead.TLabel", background=pal["card"], foreground=pal["fg"], font=head)
+    st.configure("CardGroup.TLabel", background=pal["card"], foreground=pal["muted"], font=small)
+    st.configure("Muted.TLabel", background=pal["bg"], foreground=pal["muted"], font=small)
+    st.configure("Error.TLabel", background=pal["bg"], foreground=pal["bad_fg"], font=small)
+    st.configure("TButton", background=pal["card"], foreground=pal["fg"], padding=(12, 6), borderwidth=1,
+                 bordercolor=pal["border"], lightcolor=pal["card"], darkcolor=pal["card"], relief="flat")
+    st.map("TButton", background=[("disabled", pal["bg"]), ("pressed", pal["border"]), ("active", pal["card2"])],
+           foreground=[("disabled", pal["muted"])])
+    st.configure("Accent.TButton", background=pal["accent"], foreground=pal["accent_fg"], bordercolor=pal["accent"],
+                 lightcolor=pal["accent"], darkcolor=pal["accent"])
+    st.map("Accent.TButton", background=[("pressed", pal["accent_hover"]), ("active", pal["accent_hover"])],
+           foreground=[("disabled", pal["muted"])])
+    for name in ("TEntry", "TSpinbox", "TCombobox"):
+        st.configure(name, fieldbackground=pal["entry"], foreground=pal["fg"], background=pal["card2"],
+                     bordercolor=pal["border"], lightcolor=pal["border"], darkcolor=pal["border"],
+                     arrowcolor=pal["fg"], padding=(5, 3))
+        st.map(name, bordercolor=[("focus", pal["accent"])], lightcolor=[("focus", pal["accent"])],
+               darkcolor=[("focus", pal["accent"])])
+    st.map("TCombobox", fieldbackground=[("readonly", pal["entry"])], foreground=[("readonly", pal["fg"])],
+           selectbackground=[("readonly", pal["entry"])], selectforeground=[("readonly", pal["fg"])],
+           background=[("active", pal["card2"]), ("readonly", pal["card2"])])
+    root.option_add("*TCombobox*Listbox.background", pal["card"])
+    root.option_add("*TCombobox*Listbox.foreground", pal["fg"])
+    root.option_add("*TCombobox*Listbox.selectBackground", pal["sel"])
+    root.option_add("*TCombobox*Listbox.selectForeground", pal["fg"])
+    root.option_add("*TCombobox*Listbox.font", ui)
+    for name in ("Card.TCheckbutton", "Card.TRadiobutton"):
+        st.configure(name, background=pal["card"], foreground=pal["fg"], indicatorbackground=pal["entry"],
+                     indicatorforeground=pal["accent_fg"], indicatorcolor=pal["entry"], padding=(2, 2))
+        st.map(name, background=[("active", pal["card"])],
+               indicatorcolor=[("selected", pal["accent"]), ("pressed", pal["card2"])],
+               indicatorbackground=[("selected", pal["accent"])])
 
 
 def ui_language() -> str:
@@ -353,8 +445,15 @@ class Device:
 
 class App:
     def __init__(self, root: tk.Tk, client: VHMDClient, rate: float, lang: str,
-                 start_threads: bool = True) -> None:
+                 start_threads: bool = True, theme: str = "auto") -> None:
         self.root, self.c, self.rate, self.t = root, client, rate, TEXT[lang]
+        self.pal = PALETTES[theme if theme in PALETTES else windows_theme()]
+        family = "Yu Gothic UI" if lang == "ja" else "Segoe UI"
+        self.fonts = {"ui": (family, 10), "small": (family, 9), "small_bold": (family, 9, "bold"),
+                      "head": (family, 11, "bold"), "title": (family, 15, "bold"),
+                      "mono": ("Consolas", 10), "mono_small": ("Consolas", 9)}
+        setup_style(root, self.pal, self.fonts)
+        self.small_font = tkfont.Font(root=root, font=self.fonts["small"])
         # The sender thread and the Tk thread share the pose state below.
         self.lock = threading.RLock()
         self.head = Head()
@@ -382,8 +481,10 @@ class App:
         self.speed.trace_add("write", lambda *a: self._copy_var("speed_v", self.speed))
         self.sens.trace_add("write", lambda *a: self._copy_var("sens_v", self.sens))
         self.warp = (0, 0)
+        self.warp_seen = (0, 0)
         self.my_hwnd = 0
-        self.scale = 80.0            # map pixels per meter
+        self.scale = 200.0           # map pixels per meter
+        self.map_center = (0.0, 0.0)  # world x, z at the map's center: follows the head
         self.drag: Optional[str] = None
         self.reported: Dict[str, Tuple[Tuple[float, float, float], tuple, bool]] = {}
         self.others: List[Tuple[str, Tuple[float, float, float], tuple]] = []
@@ -462,87 +563,142 @@ class App:
             self.message.set(f"SteamVR: {e}")
 
     # -- UI -------------------------------------------------------------------
+    def card(self, parent, title: str, hint: str = "") -> Tuple[ttk.Frame, ttk.Frame, ttk.Frame]:
+        """A titled panel: returns (outer, header, body). The header's right side
+        is free for controls."""
+        outer = ttk.Frame(parent, style="Card.TFrame", padding=(14, 10, 14, 12))
+        head = ttk.Frame(outer, style="Card.TFrame")
+        head.pack(fill="x", pady=(0, 8))
+        ttk.Label(head, text=title, style="CardHead.TLabel").pack(side="left")
+        if hint:
+            ttk.Label(head, text=hint, style="CardMuted.TLabel").pack(side="left", padx=(10, 0), pady=(3, 0))
+        body = ttk.Frame(outer, style="Card.TFrame")
+        body.pack(fill="both", expand=True)
+        return outer, head, body
+
     def build_ui(self) -> None:
-        t = self.t
-        r = self.root
+        t, r, pal, f = self.t, self.root, self.pal, self.fonts
         r.title(t["title"])
-        top = ttk.Frame(r, padding=6)
-        top.pack(fill="x")
-        self.capture_btn = ttk.Button(top, text=t["capture"], command=self.start_capture)
-        self.capture_btn.pack(side="left")
-        self.pause_btn = ttk.Button(top, text=t["pause"], command=self.toggle_send)
-        self.pause_btn.pack(side="left", padx=4)
-        self.take_btn = ttk.Button(top, text=t["takeover"], command=self.take_over,
-                                   state="normal" if self.vr else "disabled")
-        self.take_btn.pack(side="left")
-        ttk.Button(top, text=t["reset"], command=self.reset_all).pack(side="left", padx=4)
-        ttk.Button(top, text=t["copy"], command=self.copy_python).pack(side="left")
-        self.switch_target = "vhmd" if not self.hmd_active else "pico"
-        self.switch_btn = ttk.Button(top, text=t["to_" + self.switch_target], command=self.switch_mode)
-        self.switch_btn.pack(side="left", padx=(16, 0))
-        self.rate_lbl = ttk.Label(top, foreground="#666")
+        r.minsize(1100, 700)
+
+        # Header: title, mode, status, rates.
+        header = tk.Frame(r, bg=pal["card"], padx=16, pady=10)
+        header.pack(fill="x")
+        self.header = header           # its center is the mouse warp point while capturing
+        tk.Label(header, text="VHMD", bg=pal["card"], fg=pal["fg"], font=f["title"]).pack(side="left")
+        tk.Label(header, text=t["mode_vhmd" if self.hmd_active else "mode_pico"], bg=pal["accent"],
+                 fg=pal["accent_fg"], font=f["small_bold"], padx=10, pady=3).pack(side="left", padx=(12, 0))
+        # Status pill; also takes the keyboard focus while capturing.
+        self.banner = tk.Label(header, text="", font=f["small_bold"], padx=12, pady=3)
+        self.banner.pack(side="left", padx=(10, 0))
+        self.rate_lbl = tk.Label(header, text="", bg=pal["card"], fg=pal["muted"], font=f["small"])
         self.rate_lbl.pack(side="right")
+        tk.Frame(r, bg=pal["border"], height=1).pack(fill="x")
 
-        self.banner = tk.Label(r, text=t["send_on"], anchor="w", padx=8, pady=4, bg="#e6fffa")
-        self.banner.pack(fill="x")
+        # Toolbar.
+        bar = ttk.Frame(r, padding=(16, 10, 16, 0))
+        bar.pack(fill="x")
+        self.capture_btn = ttk.Button(bar, text=t["capture"], style="Accent.TButton", command=self.start_capture)
+        self.capture_btn.pack(side="left")
+        self.pause_btn = ttk.Button(bar, text=t["pause"], command=self.toggle_send)
+        self.pause_btn.pack(side="left", padx=(8, 0))
+        ttk.Button(bar, text=t["reset"], command=self.reset_all).pack(side="left", padx=(8, 0))
+        self.take_btn = ttk.Button(bar, text=t["takeover"], command=self.take_over,
+                                   state="normal" if self.vr else "disabled")
+        self.take_btn.pack(side="left", padx=(8, 0))
+        ttk.Button(bar, text=t["copy"], command=self.copy_python).pack(side="left", padx=(8, 0))
+        self.switch_target = "vhmd" if not self.hmd_active else "pico"
+        self.switch_btn = ttk.Button(bar, text=t["to_" + self.switch_target], command=self.switch_mode)
+        self.switch_btn.pack(side="right")
+        ttk.Label(bar, textvariable=self.message, style="Error.TLabel").pack(side="right", padx=(0, 12))
 
-        opts = ttk.Frame(r, padding=(6, 2))
-        opts.pack(fill="x")
-        ttk.Label(opts, text=t["target"]).pack(side="left")
-        self.target_lbl = ttk.Label(opts, width=12)
-        self.target_lbl.pack(side="left")
-        ttk.Label(opts, text=t["loco"]).pack(side="left", padx=(10, 2))
-        self.loco_lbl = ttk.Label(opts, width=12)
-        self.loco_lbl.pack(side="left")
-        ttk.Label(opts, text=t["speed"] + " (m/s)").pack(side="left", padx=(10, 2))
-        ttk.Spinbox(opts, from_=0.1, to=10, increment=0.1, width=5, textvariable=self.speed).pack(side="left")
-        ttk.Label(opts, text=t["sens"] + " (deg/px)").pack(side="left", padx=(10, 2))
-        ttk.Spinbox(opts, from_=0.02, to=1, increment=0.01, width=5, textvariable=self.sens).pack(side="left")
-        ttk.Checkbutton(opts, text=t["raw"], variable=self.raw_var).pack(side="left", padx=(10, 0))
-        ttk.Checkbutton(opts, text=t["predict"], variable=self.predict_var).pack(side="left", padx=(10, 0))
-
-        body = ttk.Frame(r, padding=6)
+        body = ttk.Frame(r, padding=(16, 10, 16, 16))
         body.pack(fill="both", expand=True)
         left = ttk.Frame(body)
-        left.pack(side="left", anchor="n", fill="y")
-        self.table = ttk.Frame(left)
-        self.table.pack(anchor="nw")
-        add = ttk.Frame(left, padding=(0, 8))
-        add.pack(anchor="w")
-        self.add_box = ttk.Combobox(add, width=24, state="readonly", values=self.tracker_choices())
+        left.pack(side="left", fill="y")
+        right = ttk.Frame(body)
+        right.pack(side="left", fill="both", expand=True, padx=(12, 0))
+
+        # Devices.
+        dev, _, dev_body = self.card(left, t["devices"])
+        dev.pack(fill="x")
+        self.table = ttk.Frame(dev_body, style="Card.TFrame")
+        self.table.pack(anchor="nw", fill="x")
+        add = ttk.Frame(dev_body, style="Card.TFrame")
+        add.pack(anchor="w", pady=(10, 0))
+        self.add_box = ttk.Combobox(add, width=26, state="readonly", values=self.tracker_choices())
         self.add_box.pack(side="left")
         if self.add_box["values"]:
             self.add_box.current(0)
-        ttk.Button(add, text=t["add"], command=self.add_tracker).pack(side="left", padx=4)
-        ttk.Label(left, textvariable=self.message, foreground="#a33", wraplength=560).pack(anchor="w")
-        ttk.Label(left, text=t["map"]).pack(anchor="w")
-        self.canvas = tk.Canvas(left, width=600, height=340, bg="white", highlightthickness=1,
-                                highlightbackground="#ccc")
+        ttk.Button(add, text=t["add"], command=self.add_tracker).pack(side="left", padx=(8, 0))
+
+        # Controls.
+        ctl, _, cb = self.card(left, t["controls"])
+        ctl.pack(fill="x", pady=(12, 0))
+        self.target_var = tk.StringVar(value=self.target)
+        self.loco_var = tk.BooleanVar(value=self.loco_stick)
+        ttk.Label(cb, text=t["target"], style="CardMuted.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10))
+        tgt = ttk.Frame(cb, style="Card.TFrame")
+        tgt.grid(row=0, column=1, columnspan=3, sticky="w")
+        for dev_id in ["hmd"] + [d for d in ("left_hand", "right_hand") if d in self.devices]:
+            ttk.Radiobutton(tgt, text=t["targets"][dev_id], value=dev_id, variable=self.target_var,
+                            style="Card.TRadiobutton", command=lambda: self.select_target(self.target_var.get())
+                            ).pack(side="left", padx=(0, 12))
+        ttk.Label(cb, text=t["loco"], style="CardMuted.TLabel").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        loco = ttk.Frame(cb, style="Card.TFrame")
+        loco.grid(row=1, column=1, columnspan=3, sticky="w", pady=(6, 0))
+        for value, label in ((False, t["loco_move"]), (True, t["loco_stick"])):
+            ttk.Radiobutton(loco, text=label, value=value, variable=self.loco_var, style="Card.TRadiobutton",
+                            command=lambda: self.set_loco(self.loco_var.get())).pack(side="left", padx=(0, 12))
+        ttk.Label(cb, text=t["speed"], style="CardMuted.TLabel").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        ttk.Spinbox(cb, from_=0.1, to=10, increment=0.1, width=6, textvariable=self.speed
+                    ).grid(row=2, column=1, sticky="w", pady=(8, 0))
+        ttk.Label(cb, text=t["sens"], style="CardMuted.TLabel").grid(row=2, column=2, sticky="w", padx=(18, 10),
+                                                                      pady=(8, 0))
+        ttk.Spinbox(cb, from_=0.02, to=1, increment=0.01, width=6, textvariable=self.sens
+                    ).grid(row=2, column=3, sticky="w", pady=(8, 0))
+        checks = ttk.Frame(cb, style="Card.TFrame")
+        checks.grid(row=3, column=0, columnspan=4, sticky="w", pady=(10, 0))
+        ttk.Checkbutton(checks, text=t["raw"], variable=self.raw_var, style="Card.TCheckbutton").pack(side="left")
+        ttk.Checkbutton(checks, text=t["predict"], variable=self.predict_var, style="Card.TCheckbutton"
+                        ).pack(side="left", padx=(18, 0))
+
+        # Top view.
+        mp, _, mb = self.card(left, t["map"], t["map_hint"])
+        mp.pack(fill="both", expand=True, pady=(12, 0))
+        self.canvas = tk.Canvas(mb, width=600, height=300, bg=pal["map_bg"], highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<ButtonPress-1>", self.map_press)
         self.canvas.bind("<B1-Motion>", self.map_drag)
         self.canvas.bind("<ButtonRelease-1>", lambda e: setattr(self, "drag", None))
-        ttk.Label(left, text=t["help"], justify="left", foreground="#444").pack(anchor="w", pady=(6, 0))
 
-        right = ttk.Frame(body)
-        right.pack(side="left", fill="both", expand=True, padx=(10, 0))
-        head = ttk.Frame(right)
-        head.pack(anchor="w", fill="x")
-        ttk.Label(head, text=t["view"]).pack(side="left")
-        self.mode_box = ttk.Combobox(head, width=12, state="readonly",
-                                     values=[t["view_modes"][m] for m in VIEW_MODES])
+        # HMD view.
+        vw, vh, vb = self.card(right, t["view"])
+        vw.pack(fill="both", expand=True)
+        self.mode_box = ttk.Combobox(vh, width=12, state="readonly", values=[t["view_modes"][m] for m in VIEW_MODES])
         self.mode_box.current(0)
         self.mode_box.bind("<<ComboboxSelected>>", lambda e: self.set_view_mode(VIEW_MODES[self.mode_box.current()]))
-        self.mode_box.pack(side="left", padx=6)
-        # The preview thread paints this frame directly with GDI.
-        self.view = tk.Frame(right, width=self.view_box[0], height=self.view_box[1], bg="#111")
+        self.mode_box.pack(side="right")
+        # The preview thread paints this frame directly with GDI and scales each
+        # frame to whatever size it has.
+        self.view = tk.Frame(vb, width=self.view_box[0], height=self.view_box[1], bg=pal["view_bg"])
         self.view.pack(fill="both", expand=True)
-        # The preview thread scales each frame to whatever size this area has.
         self.view.bind("<Configure>", lambda e: setattr(self, "view_box", (max(1, e.width), max(1, e.height))))
-        self.view_text = tk.Label(self.view, bg="#111", fg="#ddd", justify="center",
+        self.view_text = tk.Label(self.view, bg=pal["view_bg"], fg="#c9cdd3", justify="center", font=f["ui"],
                                   text=t["view_wait"] if self.display_mode == "direct" and self.hmd_active
                                   else t["view_window"] if self.hmd_active else t["view_none"])
         self.view_text.place(relx=0.5, rely=0.5, anchor="center")
+
+        # Keys.
+        ky, _, kb = self.card(right, t["keys"])
+        ky.pack(fill="x", pady=(12, 0))
+        keys = t["key_list"]
+        per_col = (len(keys) + 1) // 2
+        for i, (k, desc) in enumerate(keys):
+            col, row = divmod(i, per_col)
+            tk.Label(kb, text=k, bg=pal["key_bg"], fg=pal["fg"], font=f["mono_small"], padx=6, pady=1
+                     ).grid(row=row, column=col * 2, sticky="w", padx=(0 if col == 0 else 18, 8), pady=2)
+            ttk.Label(kb, text=desc, style="Card.TLabel", font=f["small"]).grid(row=row, column=col * 2 + 1, sticky="w")
 
         r.bind_all("<F1>", lambda e: self.select_target("hmd", capture=True))
         r.bind_all("<F2>", lambda e: self.select_target("left_hand", capture=True))
@@ -554,13 +710,23 @@ class App:
         r.bind("<Configure>", lambda e: self.cache_window())
         r.protocol("WM_DELETE_WINDOW", self.close)
         self.rebuild_table()
+        self.update_banner()
+        if self.pal is PALETTES["dark"]:
+            try:                               # dark title bar to match (Windows 10 20H1+)
+                r.update_idletasks()
+                value = ctypes.c_int(1)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(ctypes.c_void_p(int(r.wm_frame(), 16)), 20,
+                                                           ctypes.byref(value), ctypes.sizeof(value))
+            except Exception:
+                pass
 
     def cache_window(self) -> None:
         """Window handles and mouse warp point, for the worker threads."""
         try:
             self.my_hwnd = int(self.root.wm_frame(), 16)
             self.view_hwnd = self.view.winfo_id()
-            b = self.banner
+            # The header keeps its size when the status text changes.
+            b = self.header
             self.warp = (b.winfo_rootx() + b.winfo_width() // 2, b.winfo_rooty() + b.winfo_height() // 2)
         except tk.TclError:
             pass
@@ -569,37 +735,51 @@ class App:
         out = []
         for d in self.status_devices.values():
             if d.get("kind") == "tracker" and d.get("enabled", True) and d["id"] not in self.devices:
-                out.append(f"{d['id']} ({d.get('role', '')})")
+                role = d.get("role", "")
+                out.append(f"{d['id']} ({self.t['roles'].get(role, role)})")
         return out
 
-    def label_of(self, dev_id: str) -> str:
+    def display_name(self, dev_id: str) -> str:
         d = self.devices.get(dev_id)
-        return f"{dev_id} ({d.role})" if d and d.kind == "tracker" and d.role else dev_id
+        if d and d.kind == "tracker":
+            return self.t["roles"].get(d.role, d.role) or dev_id
+        return self.t["names"].get(dev_id, dev_id)
 
     def rebuild_table(self) -> None:
-        for w in self.table.winfo_children():
+        pal, f, tb = self.pal, self.fonts, self.table
+        for w in tb.winfo_children():
             w.destroy()
         self.entries.clear()
         self.frame_boxes.clear()
         self.report_labels.clear()
+        ttk.Label(tb, text=self.t["pos"], style="CardGroup.TLabel").grid(row=0, column=2, columnspan=3)
+        ttk.Label(tb, text=self.t["ang"], style="CardGroup.TLabel").grid(row=0, column=5, columnspan=3)
         heads = [self.t["device"], self.t["frame"], "X", "Y", "Z", "Yaw", "Pitch", "Roll", self.t["steamvr"]]
         for col, h in enumerate(heads):
-            ttk.Label(self.table, text=h, font=("", 9, "bold")).grid(row=0, column=col, padx=2, sticky="w")
+            ttk.Label(tb, text=h, style="CardMuted.TLabel").grid(
+                row=1, column=col, padx=3, pady=(0, 4), sticky="w" if col in (0, 1, 8) else "e")
         ids = (["hmd"] if self.hmd_enabled else []) + list(self.devices)
-        for row, dev_id in enumerate(ids, start=1):
+        for row, dev_id in enumerate(ids, start=2):
             color = COLORS.get(dev_id, TRACKER_COLOR)
-            tk.Label(self.table, text=self.label_of(dev_id), fg=color, anchor="w").grid(row=row, column=0, sticky="w")
+            cell = ttk.Frame(tb, style="Card.TFrame")
+            cell.grid(row=row, column=0, sticky="w", padx=(0, 6), pady=2)
+            tk.Label(cell, text="●", fg=color, bg=pal["card"], font=f["ui"]).pack(side="left")
+            tk.Label(cell, text=self.display_name(dev_id), fg=pal["fg"], bg=pal["card"], font=f["ui"]
+                     ).pack(side="left", padx=(4, 0))
+            if dev_id.startswith("tracker_"):
+                tk.Label(cell, text=dev_id.replace("tracker_", "#"), fg=pal["muted"], bg=pal["card"],
+                         font=f["small"]).pack(side="left", padx=(4, 0))
             if dev_id != "hmd":
-                names = [self.t["frames"][f] for f in FRAMES]
-                box = ttk.Combobox(self.table, width=5, state="readonly", values=names)
+                names = [self.t["frames"][fr] for fr in FRAMES]
+                box = ttk.Combobox(tb, width=5, state="readonly", values=names)
                 box.current(FRAMES.index(self.devices[dev_id].frame))
                 box.bind("<<ComboboxSelected>>", lambda e, i=dev_id: self.change_frame(i))
-                box.grid(row=row, column=1, padx=2)
+                box.grid(row=row, column=1, padx=3)
                 self.frame_boxes[dev_id] = box
             ents = []
             for k in range(6):
-                e = ttk.Entry(self.table, width=7, justify="right")
-                e.grid(row=row, column=2 + k, padx=1, pady=1)
+                e = ttk.Entry(tb, width=8, justify="right", font=f["mono"])
+                e.grid(row=row, column=2 + k, padx=(3, 3 if k != 2 else 12), pady=2)
                 e.bind("<Return>", lambda ev, i=dev_id: self.apply_row(i))
                 e.bind("<KP_Enter>", lambda ev, i=dev_id: self.apply_row(i))
                 e.bind("<Up>", lambda ev, i=dev_id, k=k: self.nudge(i, k, +1, ev))
@@ -608,8 +788,8 @@ class App:
                 e.bind("<FocusOut>", lambda ev: self.refresh_table(force=True))
                 ents.append(e)
             self.entries[dev_id] = ents
-            lbl = ttk.Label(self.table, text="-", foreground="#666", width=34)
-            lbl.grid(row=row, column=8, padx=4, sticky="w")
+            lbl = tk.Label(tb, text="-", fg=pal["muted"], bg=pal["card"], font=f["mono_small"], anchor="w")
+            lbl.grid(row=row, column=8, padx=(8, 0), sticky="w")
             self.report_labels[dev_id] = lbl
         self.refresh_table(force=True)
 
@@ -768,15 +948,27 @@ class App:
         self.pause_btn.config(text=self.t["pause"] if self.sending else self.t["resume"])
         self.update_banner()
 
+    def set_status(self, text: str, kind: str) -> None:
+        """Status pill in the header; kind is ok / warn / bad."""
+        self.banner.config(text=text, bg=self.pal[kind], fg=self.pal[kind + "_fg"])
+
+    def set_loco(self, stick: bool) -> None:
+        self.loco_stick = bool(stick)
+        self.update_banner()
+
     def update_banner(self) -> None:
         t = self.t
-        text = t["send_on"] if self.sending else t["send_off"]
         if self.captured:
-            text = t["captured"] + "   |   " + text
-        bg = "#fefcbf" if self.captured else ("#e6fffa" if self.sending else "#fed7d7")
-        self.banner.config(text=text, bg=bg)
-        self.target_lbl.config(text=self.target)
-        self.loco_lbl.config(text=t["loco_stick"] if self.loco_stick else t["loco_move"])
+            self.set_status(f"{t['captured']}  ·  {t['targets'].get(self.target, self.target)}", "warn")
+        elif self.sending:
+            self.set_status(t["send_on"], "ok")
+        else:
+            self.set_status(t["send_off"], "bad")
+        self.pause_btn.config(text=t["pause"] if self.sending else t["resume"])
+        if self.target_var.get() != self.target:
+            self.target_var.set(self.target)
+        if self.loco_var.get() != self.loco_stick:
+            self.loco_var.set(self.loco_stick)
 
     def foreground(self) -> bool:
         fg = user32.GetForegroundWindow()
@@ -853,6 +1045,9 @@ class App:
         pt = ctypes.wintypes.POINT()
         user32.GetCursorPos(ctypes.byref(pt))
         dx, dy = pt.x - cx, pt.y - cy
+        if self.warp != self.warp_seen:      # window moved or resized: not a mouse motion
+            self.warp_seen = self.warp
+            dx = dy = 0
         if dx or dy:
             user32.SetCursorPos(cx, cy)     # keep the hidden cursor inside the window
         if self.raw_v and self.raw and self.raw.ok:
@@ -991,15 +1186,18 @@ class App:
         for dev_id, lbl in self.report_labels.items():
             r = reported.get(dev_id)
             if not self.vr:
-                text = "-"
+                text, fg = "-", self.pal["muted"]
             elif r is None:
-                text = self.t["absent"]
+                text, fg = self.t["absent"], self.pal["muted"]
             else:
                 pos, rot, valid = r
                 yaw, pitch, roll = math3d.to_euler(rot)
-                text = (f"{pos[0]:6.3f} {pos[1]:6.3f} {pos[2]:6.3f} | {yaw:6.1f} {pitch:5.1f} {roll:6.1f}"
-                        if valid else self.t["invalid"])
-            lbl.config(text=text)
+                if valid:
+                    text = f"{pos[0]:7.3f} {pos[1]:6.3f} {pos[2]:7.3f}  {yaw:6.1f} {pitch:5.1f} {roll:6.1f}"
+                    fg = self.pal["muted"]
+                else:
+                    text, fg = self.t["invalid"], self.pal["bad_fg"]
+            lbl.config(text=text, fg=fg)
 
     def take_over(self) -> None:
         if not self.vr:
@@ -1102,61 +1300,122 @@ class App:
     # -- map ------------------------------------------------------------------
     def to_screen(self, x: float, z: float) -> Tuple[float, float]:
         w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
-        return w / 2 + x * self.scale, h / 2 + z * self.scale
+        cx, cz = self.map_center
+        return w / 2 + (x - cx) * self.scale, h / 2 + (z - cz) * self.scale
 
     def to_world(self, sx: float, sy: float) -> Tuple[float, float]:
         w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
-        return (sx - w / 2) / self.scale, (sy - h / 2) / self.scale
+        cx, cz = self.map_center
+        return cx + (sx - w / 2) / self.scale, cz + (sy - h / 2) / self.scale
 
     def draw_map(self) -> None:
-        cv = self.canvas
+        cv, pal, f = self.canvas, self.pal, self.fonts
         cv.delete("all")
         w, h = cv.winfo_width(), cv.winfo_height()
-        step = 0.5 if self.scale >= 40 else 1.0 if self.scale >= 20 else 2.0
+        if self.drag is None:                 # a fixed center while dragging keeps the mapping stable
+            with self.lock:
+                self.map_center = (self.head.pos[0], self.head.pos[2])
+        step = 0.25 if self.scale >= 160 else 0.5 if self.scale >= 40 else 1.0 if self.scale >= 20 else 2.0
         x0, z0 = self.to_world(0, 0)
         x1, z1 = self.to_world(w, h)
         k = math.floor(x0 / step)
         while k * step <= x1:
             sx = self.to_screen(k * step, 0)[0]
-            cv.create_line(sx, 0, sx, h, fill="#bbb" if k * step == 0 else "#eee")
+            cv.create_line(sx, 0, sx, h, fill=pal["axis"] if k == 0 else pal["grid"])
             k += 1
         k = math.floor(z0 / step)
         while k * step <= z1:
             sy = self.to_screen(0, k * step)[1]
-            cv.create_line(0, sy, w, sy, fill="#bbb" if k * step == 0 else "#eee")
+            cv.create_line(0, sy, w, sy, fill=pal["axis"] if k == 0 else pal["grid"])
             k += 1
-        cv.create_text(w - 6, h / 2 - 8, text="+X", anchor="e", fill="#888")
-        cv.create_text(w / 2 + 6, 8, text=self.t["forward"], anchor="nw", fill="#888")
-        cv.create_text(6, h - 6, text=f"grid {step:g} m", anchor="sw", fill="#888")
+        cv.create_text(w - 8, h / 2 - 9, text="+X →", anchor="e", fill=pal["muted"], font=f["small"])
+        cv.create_text(w / 2 + 8, 8, text="↑ " + self.t["forward"], anchor="nw", fill=pal["muted"], font=f["small"])
+        # Scale bar.
+        bar = step * self.scale
+        cv.create_line(12, h - 14, 12 + bar, h - 14, fill=pal["muted"], width=2)
+        cv.create_line(12, h - 18, 12, h - 10, fill=pal["muted"], width=2)
+        cv.create_line(12 + bar, h - 18, 12 + bar, h - 10, fill=pal["muted"], width=2)
+        cv.create_text(18 + bar, h - 14, text=f"{step:g} m", anchor="w", fill=pal["muted"], font=f["small"])
+
+        # Markers first, then labels placed around them so nothing overlaps.
+        placed: List[Tuple[float, float, float, float]] = []
+        labels: List[Tuple[float, float, str, str]] = []
+
+        def obstacle(sx: float, sy: float, r: float = 9) -> None:
+            placed.append((sx - r, sy - r, sx + r, sy + r))
+
+        def label(x: float, y: float, text: str, color: str) -> None:
+            labels.append((x, y, text, color))
+
+        def place_labels() -> None:
+            lh = self.small_font.metrics("linespace") + 2
+            for x, y, text, color in labels:
+                tw = self.small_font.measure(text) + 4
+                for dy in [0, lh, -lh, 2 * lh, -2 * lh, 3 * lh, -3 * lh, 4 * lh, 5 * lh, 6 * lh]:
+                    box = (x, y + dy - lh / 2, x + tw, y + dy + lh / 2)
+                    if not any(box[0] < b[2] and b[0] < box[2] and box[1] < b[3] and b[1] < box[3] for b in placed):
+                        break
+                placed.append(box)
+                cv.create_text(x, (box[1] + box[3]) / 2, text=text, anchor="w", fill=color, font=f["small"])
+
+        def heading(pos, rot, length: float):
+            sx, sy = self.to_screen(pos[0], pos[2])
+            fw = math3d.rotate(rot, (0.0, 0.0, -1.0))
+            n = math.hypot(fw[0], fw[2]) or 1.0
+            return sx, sy, fw[0] / n, fw[2] / n
+
+        def fov(sx, sy, dx, dy, color, dash=None) -> None:
+            ang = math.degrees(math.atan2(-dy, dx))           # Tk arcs: degrees counter-clockwise
+            cv.create_arc(sx - 46, sy - 46, sx + 46, sy + 46, start=ang - 50, extent=100, style="pieslice",
+                          outline=color, dash=dash)
 
         for serial, pos, rot in self.others:      # e.g. a real HMD and its controllers
-            sx, sy = self.to_screen(pos[0], pos[2])
-            cv.create_oval(sx - 5, sy - 5, sx + 5, sy + 5, outline=OTHER_COLOR, dash=(2, 2))
-            cv.create_text(sx + 8, sy, text=f"{serial} y={pos[1]:.2f}", anchor="w", fill=OTHER_COLOR,
-                           font=("", 8))
+            sx, sy, dx, dy = heading(pos, rot, 16)
+            is_hmd = "HMD" in serial.upper()
+            if is_hmd:
+                fov(sx, sy, dx, dy, OTHER_COLOR, dash=(3, 3))
+            cv.create_oval(sx - 6, sy - 6, sx + 6, sy + 6, outline=OTHER_COLOR, dash=(2, 2), width=2)
+            obstacle(sx, sy)
+            cv.create_line(sx, sy, sx + dx * 16, sy + dy * 16, fill=OTHER_COLOR, dash=(2, 2))
+            label(sx + 10, sy + 10, f"{serial}  y {pos[1]:.2f}", OTHER_COLOR)
         for dev_id, (pos, rot, valid) in self.reported.items():   # where SteamVR has ours
             if valid:
                 sx, sy = self.to_screen(pos[0], pos[2])
-                cv.create_oval(sx - 9, sy - 9, sx + 9, sy + 9, outline=COLORS.get(dev_id, TRACKER_COLOR))
+                cv.create_oval(sx - 10, sy - 10, sx + 10, sy + 10, outline=COLORS.get(dev_id, TRACKER_COLOR))
 
         with self.lock:
-            ids = list(self.devices) + (["hmd"] if self.hmd_enabled else [])
+            ids = list(self.devices) + (["hmd"] if self.hmd_enabled and self.hmd_active else [])
             items = [(dev_id, *self.world(dev_id)) for dev_id in ids]
         for dev_id, pos, rot in items:
             color = COLORS.get(dev_id, TRACKER_COLOR)
-            sx, sy = self.to_screen(pos[0], pos[2])
-            f = math3d.rotate(rot, (0.0, 0.0, -1.0))
-            n = math.hypot(f[0], f[2]) or 1.0
-            ex, ey = sx + f[0] / n * 22, sy + f[2] / n * 22
+            sx, sy, dx, dy = heading(pos, rot, 22)
             if dev_id == "hmd":
-                cv.create_oval(sx - 7, sy - 7, sx + 7, sy + 7, fill=color, outline="")
-                cv.create_line(sx, sy, ex, ey, fill=color, width=3, arrow="last")
+                fov(sx, sy, dx, dy, color)
+                cv.create_oval(sx - 8, sy - 8, sx + 8, sy + 8, fill=color, outline="")
+                cv.create_line(sx, sy, sx + dx * 24, sy + dy * 24, fill=color, width=3, arrow="last")
             elif self.devices[dev_id].kind == "controller":
-                cv.create_line(sx, sy, ex, ey, fill=color, width=2)
-                cv.create_oval(sx - 5, sy - 5, sx + 5, sy + 5, fill=color, outline="")
+                cv.create_line(sx, sy, sx + dx * 20, sy + dy * 20, fill=color, width=2)
+                cv.create_oval(sx - 6, sy - 6, sx + 6, sy + 6, fill=color, outline="")
             else:
-                cv.create_rectangle(sx - 5, sy - 5, sx + 5, sy + 5, fill=color, outline="")
-            cv.create_text(sx + 9, sy - 9, text=f"{dev_id} y={pos[1]:.2f}", anchor="w", fill=color, font=("", 8))
+                cv.create_rectangle(sx - 6, sy - 6, sx + 6, sy + 6, fill=color, outline="")
+            obstacle(sx, sy)
+            label(sx + 11, sy - 11, f"{self.display_name(dev_id)}  y {pos[1]:.2f}", color)
+        place_labels()
+
+        # Legend.
+        lx, ly = 12, 12
+        for kind, text in (("ours", self.t["legend_ours"]), ("steamvr", self.t["legend_steamvr"]),
+                           ("other", self.t["legend_other"])):
+            if kind == "other" and not self.others:
+                continue
+            if kind == "ours":
+                cv.create_oval(lx, ly - 4, lx + 8, ly + 4, fill=pal["muted"], outline="")
+            elif kind == "steamvr":
+                cv.create_oval(lx - 1, ly - 5, lx + 9, ly + 5, outline=pal["muted"])
+            else:
+                cv.create_oval(lx, ly - 4, lx + 8, ly + 4, outline=OTHER_COLOR, dash=(2, 2))
+            cv.create_text(lx + 14, ly, text=text, anchor="w", fill=pal["muted"], font=f["small"])
+            ly += 16
 
     def map_press(self, ev) -> None:
         if self.captured:
@@ -1219,7 +1478,7 @@ class App:
     def poll_switch(self, target: str) -> None:
         st = self.switch_state
         if st["error"]:
-            self.banner.config(text=self.t["switch_failed"].format(st["error"]), bg="#fed7d7")
+            self.set_status(self.t["switch_failed"].format(st["error"]), "bad")
             return
         if st["done"]:
             # The package's parent on the path, however this instance was started.
@@ -1234,7 +1493,7 @@ class App:
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
             self.root.destroy()
             return
-        self.banner.config(text=self.t["switching"].format(target.upper(), st["text"]), bg="#fefcbf")
+        self.set_status(self.t["switching"].format(target.upper(), st["text"]), "warn")
         self.root.after(200, lambda: self.poll_switch(target))
 
     def stop_workers(self) -> None:
@@ -1266,6 +1525,7 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--rate", type=float, default=120.0, help="poses sent per second")
     ap.add_argument("--lang", choices=("en", "ja"), default=None)
+    ap.add_argument("--theme", choices=("auto", "dark", "light"), default="auto", help="auto follows Windows")
     args = ap.parse_args()
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)   # cursor and window in the same pixels
@@ -1277,7 +1537,7 @@ def main() -> None:
     w, h = min(1700, int(sw * 0.9)), min(1000, int(sh * 0.85))
     root.geometry(f"{w}x{h}+{(sw - w) // 2}+{max(0, (sh - h) // 3)}")
     with VHMDClient(args.host, args.port) as c:
-        App(root, c, args.rate, args.lang or ui_language())
+        App(root, c, args.rate, args.lang or ui_language(), theme=args.theme)
         root.mainloop()
 
 
