@@ -1,6 +1,6 @@
 # 変更履歴
 
-## 未リリース
+## v0.5.0(2026-10-20)
 
 ### 追加
 - **HMD の装着センサー**: `input` の `proximity`(既定は装着中、設定 `hmd.proximity`)。アプリには `k_EButton_ProximitySensor`、`/user/head/proximity`、OpenXR の `XR_EXT_user_presence` として届く。
