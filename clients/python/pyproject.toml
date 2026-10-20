@@ -14,5 +14,8 @@ dependencies = []
 verify = ["openvr>=1.26"]   # pyopenvr, used by tests/integration
 gamepad = ["pygame>=2.5"]
 
+[project.scripts]
+vhmd-fps = "vhmd_client.fps:main"   # Windows only
+
 [tool.setuptools]
 packages = ["vhmd_client"]

@@ -49,6 +49,17 @@ def test_matrix_roundtrip():
     assert math.degrees(math3d.angle_between(q, q2)) < 1e-6
 
 
+def test_euler_roundtrip():
+    for yaw, pitch, roll in ((0, 0, 0), (30, -20, 10), (-170, 45, -90), (90, 89, 0), (179, -60, 120)):
+        q = math3d.from_euler(yaw, pitch, roll)
+        back = math3d.to_euler(q)
+        assert math3d.angle_between(q, math3d.from_euler(*back)) < 1e-6
+        assert back == pytest.approx((yaw, pitch, roll), abs=1e-6)
+    # Gimbal lock: the orientation still round-trips.
+    q = math3d.from_euler(40, 90, 25)
+    assert math3d.angle_between(q, math3d.from_euler(*math3d.to_euler(q))) < 1e-6
+
+
 def test_pose_message_format(server):
     with VHMDClient(port=server.getsockname()[1]) as c:
         c.pose("hmd", (0, 1.7, 0), (1, 0, 0, 0), vel=(0, 0, 0))

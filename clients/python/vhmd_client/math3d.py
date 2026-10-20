@@ -49,6 +49,34 @@ def from_euler(yaw: float = 0.0, pitch: float = 0.0, roll: float = 0.0, degrees:
     return multiply(q, from_axis_angle((0, 0, 1), roll))
 
 
+def to_euler(q: Sequence[float], degrees: bool = True) -> Vec3:
+    """Inverse of from_euler: (yaw, pitch, roll). Near pitch = +-90 degrees yaw
+    and roll are not unique; roll is then reported as 0."""
+    w, x, y, z = normalize(q)
+    r02 = 2 * (x * z + w * y)
+    r12 = 2 * (y * z - w * x)
+    r22 = 1 - 2 * (x * x + y * y)
+    r10 = 2 * (x * y + w * z)
+    r11 = 1 - 2 * (x * x + z * z)
+    pitch = math.asin(max(-1.0, min(1.0, -r12)))
+    if abs(r12) < 0.999999:
+        yaw = math.atan2(r02, r22)
+        roll = math.atan2(r10, r11)
+    else:
+        r00 = 1 - 2 * (y * y + z * z)
+        r20 = 2 * (x * z - w * y)
+        yaw = math.atan2(-r20, r00)
+        roll = 0.0
+    if degrees:
+        return (math.degrees(yaw), math.degrees(pitch), math.degrees(roll))
+    return (yaw, pitch, roll)
+
+
+def conjugate(q: Sequence[float]) -> Quat:
+    """Inverse of a unit quaternion."""
+    return (q[0], -q[1], -q[2], -q[3])
+
+
 def rotate(q: Sequence[float], v: Sequence[float]) -> Vec3:
     w, x, y, z = q
     p = (0.0, v[0], v[1], v[2])

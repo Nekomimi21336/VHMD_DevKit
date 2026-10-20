@@ -2,6 +2,10 @@
 
 ## 未リリース
 
+### 追加
+- **キーボードとマウスでの操作(Windows)**: `python -m vhmd_client.fps`。マウスで視点、WASD で移動、マウスボタンとキーでコントローラーの入力。各デバイスの位置・角度の表示と数値入力、上から見た図でのドラッグ、SteamVR 上の実際の姿勢の表示(pyopenvr がある場合)、送信の一時停止と SteamVR の姿勢からの引き継ぎ、今の姿勢を Python のコードとしてコピー。
+- `math3d.to_euler`(`from_euler` の逆変換)と `math3d.conjugate`。
+
 ### 修正
 - VMT の Joint / Follow で親を持つトラッカーが 0.5 秒で無効になる問題。親を持つ姿勢はタイムアウトしないようにした(VMT と同じ)。
 

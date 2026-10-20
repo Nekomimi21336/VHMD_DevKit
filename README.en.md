@@ -19,6 +19,7 @@ No hardware needed: poses and inputs sent from an external process over UDP/JSON
 - [Getting started (prebuilt binaries)](#getting-started-prebuilt-binaries)
 - [Building from source](#building-from-source)
 - [Usage (Python)](#usage-python)
+- [Keyboard and mouse control (Windows)](#keyboard-and-mouse-control-windows)
 - [Running without a window / lowering the frame rate (Windows)](#running-without-a-window--lowering-the-frame-rate-windows)
 - [Configuration](#configuration)
 - [Using alongside a physical HMD](#using-alongside-a-physical-hmd)
@@ -157,6 +158,29 @@ From other languages, just send JSON over UDP.
 - The coordinate system follows SteamVR (right-handed, +Y up, -Z forward, meters); rotations are `[w, x, y, z]`.
 - Invalid values (NaN, out of range, wrong type, etc.) are discarded, and the driver keeps running.
 - Full specification: [docs/en/protocol.md](docs/en/protocol.md)
+
+## Keyboard and mouse control (Windows)
+
+```powershell
+python -m vhmd_client.fps        # run in clients/python, or pip install -e clients/python
+```
+
+Drive the HMD and controllers by hand like an FPS game: the mouse looks around and WASD moves. A table shows and edits every device's position and angles, and a top view lets you drag devices around.
+
+| Control | Effect |
+|---|---|
+| F1 / button | Capture the mouse and start (Esc releases) |
+| Mouse / WASD / Space, C | Look / move / up, down (Shift fast, Alt slow, Q/E tilt the head) |
+| F2 / F3 | Move the left / right hand with the mouse (wheel = depth) |
+| Left / right / middle click | Right trigger / left trigger / right grip (G both grips, 1-4 A/B/X/Y, M menu, arrows right joystick) |
+| L | Send WASD as the left joystick (in-app locomotion) |
+| Table | Type a value and press Enter; Up/Down or the wheel nudge by 1 cm / 1 degree (Shift x10) |
+| Frame | Hands default to "head" (follow the head), trackers to "body" (follow the head's floor position and yaw); "fixed" stays put |
+| Pause / Take over from SteamVR | Stop sending so an automation program can drive / resume manual control from the poses SteamVR has now |
+| Copy as Python | Copy the current poses as `c.pose(...)` lines |
+
+- The "SteamVR reports" column and the rings on the map are the poses apps actually see (needs pyopenvr: `pip install openvr`). Devices of other drivers, such as a physical HMD, are drawn in gray.
+- With the VHMD HMD disabled next to a physical HMD, the head is the physical HMD and the trackers follow the person wearing it.
 
 ## Running without a window / lowering the frame rate (Windows)
 
