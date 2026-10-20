@@ -1,8 +1,8 @@
 """First-person (FPS-style) keyboard and mouse control of the VHMD devices, with
-a panel that shows and edits every device's position and angles and a top-down
-map. Windows only.
+a panel that shows and edits every device's position and angles, a top-down
+map and the HMD's view. Windows only.
 
-    python -m vhmd_client.fps [--host 127.0.0.1] [--port 39570] [--rate 90]
+    python -m vhmd_client.fps [--host 127.0.0.1] [--port 39570] [--rate 120]
 
 F1 (or the button) captures the mouse: the mouse turns the head, WASD moves it,
 the mouse buttons and number keys drive the controllers. Esc releases the mouse;
@@ -14,6 +14,11 @@ position and rotation, like the hands in an FPS), "body" (the head's floor
 position and yaw, for trackers) or "fixed" (the play space). The table always
 shows world coordinates (SteamVR standing space: meters, +Y up, -Z forward;
 degrees: yaw left-positive, pitch up-positive).
+
+Poses are sent from their own thread at a steady rate, with velocities, so
+SteamVR extrapolates between packets instead of stepping. The HMD's view is
+shown when the driver runs in direct mode (display.mode = direct), from the
+same preview preview_viewer.py uses.
 
 Pause stops sending so another program (automation) can drive the devices;
 "Take over" adopts the poses SteamVR currently reports (needs pyopenvr) so
@@ -27,6 +32,7 @@ import ctypes
 import ctypes.wintypes
 import math
 import sys
+import threading
 import time
 import tkinter as tk
 from tkinter import ttk
@@ -39,6 +45,14 @@ if sys.platform != "win32":
     raise SystemExit("vhmd_client.fps is Windows only")
 
 user32 = ctypes.windll.user32
+gdi32 = ctypes.windll.gdi32
+user32.GetDC.restype = ctypes.c_void_p
+user32.GetDC.argtypes = [ctypes.c_void_p]
+user32.ReleaseDC.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+gdi32.SetStretchBltMode.argtypes = [ctypes.c_void_p, ctypes.c_int]
+gdi32.SetBrushOrgEx.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+gdi32.StretchDIBits.argtypes = [ctypes.c_void_p] + [ctypes.c_int] * 8 + [ctypes.c_void_p, ctypes.c_void_p,
+                                                                          ctypes.c_uint, ctypes.c_uint]
 VK = {
     "W": 0x57, "A": 0x41, "S": 0x53, "D": 0x44, "C": 0x43, "Q": 0x51, "E": 0x45, "R": 0x52, "G": 0x47,
     "M": 0x4D, "1": 0x31, "2": 0x32, "3": 0x33, "4": 0x34, "SPACE": 0x20, "SHIFT": 0x10, "ALT": 0x12,
@@ -60,6 +74,10 @@ TEXT = {
         "target": "Mouse moves", "speed": "Speed", "sens": "Sensitivity",
         "loco": "WASD", "loco_move": "moves the head", "loco_stick": "left joystick",
         "map": "Top view (drag devices, wheel = zoom)", "forward": "-Z (forward)",
+        "view": "HMD view (left eye)",
+        "view_window": "The HMD view is shown here in direct mode\n(display.mode = \"direct\" in vhmd_config.json).\nIn window mode SteamVR shows it in its own window.",
+        "view_wait": "waiting for the first frame...",
+        "view_none": "No VHMD HMD in use.",
         "no_openvr": "pyopenvr not installed: SteamVR column and take over disabled",
         "no_driver": "driver not answering on {}:{}",
         "copied": "copied {} lines", "absent": "not in SteamVR", "invalid": "not tracked",
@@ -83,6 +101,10 @@ TEXT = {
         "target": "マウスで動かす", "speed": "速度", "sens": "感度",
         "loco": "WASD", "loco_move": "頭を移動", "loco_stick": "左スティック",
         "map": "上から見た図(ドラッグで移動、ホイールで拡大縮小)", "forward": "-Z(前)",
+        "view": "HMD の視点(左目)",
+        "view_window": "ダイレクトモードではここに HMD の視点が出ます\n(vhmd_config.json の display.mode = \"direct\")。\nウィンドウモードでは SteamVR のウィンドウに表示されます。",
+        "view_wait": "最初のフレームを待っています...",
+        "view_none": "VHMD の HMD は使われていません。",
         "no_openvr": "pyopenvr が無いため、SteamVR 上の値と引き継ぎは使えません",
         "no_driver": "{}:{} のドライバが応答しません",
         "copied": "{} 行をコピーしました", "absent": "SteamVR に無い", "invalid": "トラッキングなし",
@@ -111,6 +133,8 @@ TRACKER_SPOT = {
 COLORS = {"hmd": "#2b6cb0", "left_hand": "#c05621", "right_hand": "#2f855a"}
 TRACKER_COLOR = "#6b46c1"
 OTHER_COLOR = "#888888"
+VIEW_W, VIEW_H = 540, 600        # HMD view area (pixels)
+UI_HZ = 30                       # table / map / view refresh
 
 
 def ui_language() -> str:
@@ -141,6 +165,45 @@ def decompose(fpos: Sequence[float], frot: Sequence[float], wpos: Sequence[float
     return lpos, math3d.normalize(math3d.multiply(inv, wrot))
 
 
+class BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [("biSize", ctypes.c_uint32), ("biWidth", ctypes.c_int32), ("biHeight", ctypes.c_int32),
+                ("biPlanes", ctypes.c_uint16), ("biBitCount", ctypes.c_uint16), ("biCompression", ctypes.c_uint32),
+                ("biSizeImage", ctypes.c_uint32), ("biXPelsPerMeter", ctypes.c_int32),
+                ("biYPelsPerMeter", ctypes.c_int32), ("biClrUsed", ctypes.c_uint32), ("biClrImportant", ctypes.c_uint32)]
+
+
+def blit_bgrx(hwnd: int, box_w: int, box_h: int, w: int, h: int, pixels: bytes) -> None:
+    """Draws a top-down 32-bit BGRX image into a window, scaled to fit the box
+    (aspect kept, centered). Plain GDI from any thread: drawing a live image
+    through a Tk PhotoImage costs ~15 ms of the Tk thread per frame."""
+    bmi = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), w, -h, 1, 32, 0, 0, 0, 0, 0, 0)
+    s = min(box_w / w, box_h / h)
+    dw, dh = int(w * s), int(h * s)
+    hdc = user32.GetDC(hwnd)
+    if not hdc:
+        return
+    try:
+        gdi32.SetStretchBltMode(hdc, 4)                # HALFTONE: smooth scaling
+        gdi32.SetBrushOrgEx(hdc, 0, 0, None)
+        gdi32.StretchDIBits(hdc, (box_w - dw) // 2, (box_h - dh) // 2, dw, dh, 0, 0, w, h,
+                            pixels, ctypes.byref(bmi), 0, 0x00CC0020)   # DIB_RGB_COLORS, SRCCOPY
+    finally:
+        user32.ReleaseDC(hwnd, hdc)
+
+
+def angular_velocity(q0: Sequence[float], q1: Sequence[float], dt: float) -> Tuple[float, float, float]:
+    """World-space angular velocity (rad/s, axis * rate) turning q0 into q1 in dt."""
+    d = math3d.multiply(q1, math3d.conjugate(q0))
+    if d[0] < 0:
+        d = (-d[0], -d[1], -d[2], -d[3])
+    s = math.sqrt(d[1] * d[1] + d[2] * d[2] + d[3] * d[3])
+    if s < 1e-9 or dt <= 0:
+        return (0.0, 0.0, 0.0)
+    angle = 2.0 * math.atan2(s, d[0])
+    k = angle / s / dt
+    return (d[1] * k, d[2] * k, d[3] * k)
+
+
 class Head:
     def __init__(self) -> None:
         self.reset()
@@ -168,18 +231,29 @@ class Device:
 
 
 class App:
-    def __init__(self, root: tk.Tk, client: VHMDClient, rate: float, lang: str) -> None:
+    def __init__(self, root: tk.Tk, client: VHMDClient, rate: float, lang: str,
+                 start_threads: bool = True) -> None:
         self.root, self.c, self.rate, self.t = root, client, rate, TEXT[lang]
+        # The sender thread and the Tk thread share the pose state below.
+        self.lock = threading.RLock()
         self.head = Head()
         self.devices: Dict[str, Device] = {}
         self.status_devices: Dict[str, dict] = {}
         self.hmd_enabled = True
+        self.hmd_active = True
+        self.display_mode = ""
         self.sending = True
         self.captured = False
+        self.want_release = False    # set by the sender thread, acted on by Tk
         self.target = "hmd"          # what mouse movement drives
         self.loco_stick = False      # WASD -> left joystick instead of moving the head
         self.speed = tk.DoubleVar(value=1.5)
         self.sens = tk.DoubleVar(value=0.15)
+        self.speed_v, self.sens_v = 1.5, 0.15   # thread-safe copies of the two above
+        self.speed.trace_add("write", lambda *a: self._copy_var("speed_v", self.speed))
+        self.sens.trace_add("write", lambda *a: self._copy_var("sens_v", self.sens))
+        self.warp = (0, 0)
+        self.my_hwnd = 0
         self.scale = 80.0            # map pixels per meter
         self.drag: Optional[str] = None
         self.reported: Dict[str, Tuple[Tuple[float, float, float], tuple, bool]] = {}
@@ -187,20 +261,41 @@ class App:
         self.entries: Dict[str, List[ttk.Entry]] = {}
         self.frame_boxes: Dict[str, ttk.Combobox] = {}
         self.report_labels: Dict[str, ttk.Label] = {}
-        self.last = self.next_t = time.perf_counter()
-        ctypes.windll.winmm.timeBeginPeriod(1)   # Tk timers are otherwise ~15.6 ms apart
+        self.prev: Dict[str, Tuple[float, tuple, tuple]] = {}
+        self.vel: Dict[str, Tuple[tuple, tuple]] = {}
         self.vr = None
         self.vr_index: Dict[str, int] = {}
-        self.vr_next_scan = 0.0
         self.vr_names: Dict[int, str] = {}
-        self.real_hmd = None         # another driver's HMD (e.g. PICO) when ours is disabled
+        self.vr_next_scan = 0.0
+        self.real_hmd = None         # another driver's HMD (e.g. PICO) when ours is not active
         self.message = tk.StringVar()
+        self.running = True
+        self.sent = 0
+        self.view_hwnd = 0
+        self.view_started = False
+        self.view_fps = 0.0
+        self.preview_on = False
+        self.ui_count = 0
+        self.rate_t0 = time.perf_counter()
+        self.thread_message = ""     # set by worker threads, shown by Tk
 
         self.load_devices()
         self.init_openvr()
         self.build_ui()
         self.reset_all()
-        self.tick()
+        self.root.update_idletasks()
+        self.cache_window()
+        self.ui_tick()
+        if start_threads:
+            threading.Thread(target=self.sender_loop, name="vhmd-fps-sender", daemon=True).start()
+            if self.display_mode == "direct" and self.hmd_active:
+                threading.Thread(target=self.preview_loop, name="vhmd-fps-preview", daemon=True).start()
+
+    def _copy_var(self, attr: str, var: tk.DoubleVar) -> None:
+        try:
+            setattr(self, attr, float(var.get()))
+        except (tk.TclError, ValueError):
+            pass
 
     # -- setup ----------------------------------------------------------------
     def load_devices(self) -> None:
@@ -211,10 +306,13 @@ class App:
             st = {"devices": [{"id": "hmd", "kind": "hmd", "enabled": True},
                               {"id": "left_hand", "kind": "controller", "enabled": True},
                               {"id": "right_hand", "kind": "controller", "enabled": True}]}
+        self.display_mode = st.get("display", {}).get("mode", "")
         for d in st.get("devices", []):
             self.status_devices[d["id"]] = d
             if d["id"] == "hmd":
                 self.hmd_enabled = d.get("enabled", True)
+                # Registered but not SteamVR's HMD (another driver's HMD won).
+                self.hmd_active = self.hmd_enabled and d.get("index", 0) != -1
             elif d.get("kind") == "controller" and d.get("enabled", True):
                 self.devices[d["id"]] = Device(d["id"], "controller", d.get("role", ""))
 
@@ -246,6 +344,8 @@ class App:
         self.take_btn.pack(side="left")
         ttk.Button(top, text=t["reset"], command=self.reset_all).pack(side="left", padx=4)
         ttk.Button(top, text=t["copy"], command=self.copy_python).pack(side="left")
+        self.rate_lbl = ttk.Label(top, foreground="#666")
+        self.rate_lbl.pack(side="right")
 
         self.banner = tk.Label(r, text=t["send_on"], anchor="w", padx=8, pady=4, bg="#e6fffa")
         self.banner.pack(fill="x")
@@ -265,28 +365,37 @@ class App:
 
         body = ttk.Frame(r, padding=6)
         body.pack(fill="both", expand=True)
-        self.table = ttk.Frame(body)
-        self.table.pack(side="left", anchor="n", fill="y")
-        right = ttk.Frame(body)
-        right.pack(side="left", fill="both", expand=True, padx=(10, 0))
-        ttk.Label(right, text=t["map"]).pack(anchor="w")
-        self.canvas = tk.Canvas(right, width=440, height=440, bg="white", highlightthickness=1,
-                                highlightbackground="#ccc")
-        self.canvas.pack(fill="both", expand=True)
-        self.canvas.bind("<ButtonPress-1>", self.map_press)
-        self.canvas.bind("<B1-Motion>", self.map_drag)
-        self.canvas.bind("<ButtonRelease-1>", lambda e: setattr(self, "drag", None))
-
-        add = ttk.Frame(r, padding=(6, 0))
-        add.pack(fill="x")
+        left = ttk.Frame(body)
+        left.pack(side="left", anchor="n", fill="y")
+        self.table = ttk.Frame(left)
+        self.table.pack(anchor="nw")
+        add = ttk.Frame(left, padding=(0, 8))
+        add.pack(anchor="w")
         self.add_box = ttk.Combobox(add, width=24, state="readonly", values=self.tracker_choices())
         self.add_box.pack(side="left")
         if self.add_box["values"]:
             self.add_box.current(0)
         ttk.Button(add, text=t["add"], command=self.add_tracker).pack(side="left", padx=4)
-        ttk.Label(add, textvariable=self.message, foreground="#a33").pack(side="left", padx=8)
+        ttk.Label(left, textvariable=self.message, foreground="#a33", wraplength=560).pack(anchor="w")
+        ttk.Label(left, text=t["map"]).pack(anchor="w")
+        self.canvas = tk.Canvas(left, width=600, height=340, bg="white", highlightthickness=1,
+                                highlightbackground="#ccc")
+        self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<ButtonPress-1>", self.map_press)
+        self.canvas.bind("<B1-Motion>", self.map_drag)
+        self.canvas.bind("<ButtonRelease-1>", lambda e: setattr(self, "drag", None))
+        ttk.Label(left, text=t["help"], justify="left", foreground="#444").pack(anchor="w", pady=(6, 0))
 
-        ttk.Label(r, text=t["help"], padding=6, justify="left", foreground="#444").pack(fill="x")
+        right = ttk.Frame(body)
+        right.pack(side="left", anchor="n", padx=(10, 0))
+        ttk.Label(right, text=t["view"]).pack(anchor="w")
+        # The preview thread paints this frame directly with GDI.
+        self.view = tk.Frame(right, width=VIEW_W, height=VIEW_H, bg="#111")
+        self.view.pack(anchor="w")
+        self.view_text = tk.Label(self.view, bg="#111", fg="#ddd", justify="center",
+                                  text=t["view_wait"] if self.display_mode == "direct" and self.hmd_active
+                                  else t["view_window"] if self.hmd_active else t["view_none"])
+        self.view_text.place(relx=0.5, rely=0.5, anchor="center")
 
         r.bind_all("<F1>", lambda e: self.select_target("hmd", capture=True))
         r.bind_all("<F2>", lambda e: self.select_target("left_hand", capture=True))
@@ -295,8 +404,19 @@ class App:
         r.bind_all("<MouseWheel>", self.wheel)
         r.bind_all("<KeyPress-l>", lambda e: self.captured and self.toggle_loco())
         r.bind_all("<KeyPress-p>", lambda e: self.captured and self.toggle_send())
+        r.bind("<Configure>", lambda e: self.cache_window())
         r.protocol("WM_DELETE_WINDOW", self.close)
         self.rebuild_table()
+
+    def cache_window(self) -> None:
+        """Window handles and mouse warp point, for the worker threads."""
+        try:
+            self.my_hwnd = int(self.root.wm_frame(), 16)
+            self.view_hwnd = self.view.winfo_id()
+            b = self.banner
+            self.warp = (b.winfo_rootx() + b.winfo_width() // 2, b.winfo_rooty() + b.winfo_height() // 2)
+        except tk.TclError:
+            pass
 
     def tracker_choices(self) -> List[str]:
         out = []
@@ -346,7 +466,7 @@ class App:
             self.report_labels[dev_id] = lbl
         self.refresh_table(force=True)
 
-    # -- poses ----------------------------------------------------------------
+    # -- poses (call with self.lock held when other threads may run) -----------
     def frame_of(self, name: str):
         if name == "head":
             return tuple(self.head.pos), self.head.rot
@@ -361,12 +481,13 @@ class App:
         return compose(*self.frame_of(d.frame), d.lpos, d.lrot)
 
     def set_world(self, dev_id: str, pos, rot) -> None:
-        if dev_id == "hmd":
-            self.head.pos = list(pos)
-            self.head.set_rot(rot)
-            return
-        d = self.devices[dev_id]
-        d.lpos, d.lrot = decompose(*self.frame_of(d.frame), pos, rot)
+        with self.lock:
+            if dev_id == "hmd":
+                self.head.pos = list(pos)
+                self.head.set_rot(rot)
+                return
+            d = self.devices[dev_id]
+            d.lpos, d.lrot = decompose(*self.frame_of(d.frame), pos, rot)
 
     def reset_device(self, d: Device) -> None:
         if d.kind == "controller":
@@ -376,18 +497,20 @@ class App:
         d.lrot = math3d.IDENTITY
 
     def reset_all(self) -> None:
-        self.head.reset()
-        for d in self.devices.values():
-            self.reset_device(d)
+        with self.lock:
+            self.head.reset()
+            for d in self.devices.values():
+                self.reset_device(d)
         for dev_id, box in self.frame_boxes.items():
             box.current(FRAMES.index(self.devices[dev_id].frame))
         self.refresh_table(force=True)
 
     def change_frame(self, dev_id: str) -> None:
-        d = self.devices[dev_id]
-        pos, rot = self.world(dev_id)        # keep the device where it is
-        d.frame = FRAMES[self.frame_boxes[dev_id].current()]
-        self.set_world(dev_id, pos, rot)
+        with self.lock:
+            d = self.devices[dev_id]
+            pos, rot = self.world(dev_id)        # keep the device where it is
+            d.frame = FRAMES[self.frame_boxes[dev_id].current()]
+            self.set_world(dev_id, pos, rot)
 
     def add_tracker(self) -> None:
         sel = self.add_box.get()
@@ -397,18 +520,20 @@ class App:
         info = self.status_devices.get(dev_id, {})
         d = Device(dev_id, "tracker", info.get("role", ""))
         self.reset_device(d)
-        self.devices[dev_id] = d
+        with self.lock:
+            self.devices[dev_id] = d
         self.add_box["values"] = self.tracker_choices()
         self.add_box.set(self.add_box["values"][0] if self.add_box["values"] else "")
         self.rebuild_table()
 
     # -- table ----------------------------------------------------------------
     def row_values(self, dev_id: str) -> List[float]:
-        pos, rot = self.world(dev_id)
-        if dev_id == "hmd":
-            ang = (self.head.yaw, self.head.pitch, self.head.roll)
-        else:
-            ang = math3d.to_euler(rot)
+        with self.lock:
+            pos, rot = self.world(dev_id)
+            if dev_id == "hmd":
+                ang = (self.head.yaw, self.head.pitch, self.head.roll)
+            else:
+                ang = math3d.to_euler(rot)
         return [*pos, *ang]
 
     def refresh_table(self, force: bool = False) -> None:
@@ -434,11 +559,12 @@ class App:
         if v is None:
             self.refresh_table(force=True)
             return
-        if dev_id == "hmd":
-            self.head.pos = v[:3]
-            self.head.yaw, self.head.pitch, self.head.roll = v[3], max(-89.9, min(89.9, v[4])), v[5]
-        else:
-            self.set_world(dev_id, v[:3], math3d.from_euler(*v[3:]))
+        with self.lock:
+            if dev_id == "hmd":
+                self.head.pos = v[:3]
+                self.head.yaw, self.head.pitch, self.head.roll = v[3], max(-89.9, min(89.9, v[4])), v[5]
+            else:
+                self.set_world(dev_id, v[:3], math3d.from_euler(*v[3:]))
         self.refresh_table(force=True)
 
     def nudge(self, dev_id: str, k: int, sign: int, ev) -> str:
@@ -455,24 +581,19 @@ class App:
         return "break"
 
     # -- capture --------------------------------------------------------------
-    def hwnd(self) -> int:
-        return int(self.root.wm_frame(), 16)
-
-    def warp_point(self) -> Tuple[int, int]:
-        b = self.banner
-        return b.winfo_rootx() + b.winfo_width() // 2, b.winfo_rooty() + b.winfo_height() // 2
-
     def start_capture(self) -> None:
         if self.captured:
             return
-        self.captured = True
+        self.cache_window()
         self.banner.focus_set()           # keys must not go into an entry
         self.root.config(cursor="none")
         self.banner.config(cursor="none")
-        user32.SetCursorPos(*self.warp_point())
+        user32.SetCursorPos(*self.warp)
+        self.captured = True
         self.update_banner()
 
     def release_capture(self) -> None:
+        self.want_release = False
         if not self.captured:
             return
         self.captured = False
@@ -509,68 +630,89 @@ class App:
 
     def foreground(self) -> bool:
         fg = user32.GetForegroundWindow()
-        return fg == self.hwnd() or user32.GetAncestor(fg, 2) == self.hwnd()  # GA_ROOT
+        return fg == self.my_hwnd or user32.GetAncestor(fg, 2) == self.my_hwnd  # GA_ROOT
 
     def wheel(self, ev) -> None:
         step = 1 if ev.delta > 0 else -1
         if self.captured:
             if self.target == "hmd":
-                self.speed.set(round(max(0.1, min(10.0, self.speed.get() * (1.25 ** step))), 2))
+                self.speed.set(round(max(0.1, min(10.0, self.speed_v * (1.25 ** step))), 2))
             else:
-                d = self.devices[self.target]
-                self.move_local(d, (0.0, 0.0, -0.02 * step))
+                with self.lock:
+                    self.move_local(self.devices[self.target], (0.0, 0.0, -0.02 * step))
         elif ev.widget is self.canvas:
             self.scale = max(15.0, min(600.0, self.scale * (1.15 ** step)))
 
     def move_local(self, d: Device, delta) -> None:
-        """Moves a device by delta given in the head's frame."""
+        """Moves a device by delta given in the head's frame (lock held)."""
         pos, rot = self.world(d.id)
         dw = math3d.rotate(self.head.rot, delta)
         self.set_world(d.id, (pos[0] + dw[0], pos[1] + dw[1], pos[2] + dw[2]), rot)
 
-    # -- per frame ------------------------------------------------------------
-    def tick(self) -> None:
-        now = time.perf_counter()
-        dt = min(0.1, now - self.last)
-        self.last = now
+    # -- sender thread --------------------------------------------------------
+    def sender_loop(self) -> None:
+        ctypes.windll.winmm.timeBeginPeriod(1)
+        period = 1.0 / self.rate
+        last = next_t = time.perf_counter()
+        try:
+            while self.running:
+                now = time.perf_counter()
+                self.step(min(0.1, now - last), now)
+                last = now
+                next_t += period
+                if next_t < time.perf_counter() - 0.1:     # fell far behind: do not catch up
+                    next_t = time.perf_counter()
+                # Plain sleep (1 ms timer resolution): spinning would hold the GIL and
+                # stall the Tk thread; the velocities hide the remaining jitter.
+                left = next_t - time.perf_counter()
+                if left > 0:
+                    time.sleep(left)
+        finally:
+            ctypes.windll.winmm.timeEndPeriod(1)
+
+    def step(self, dt: float, now: float) -> None:
+        """One control + send step (sender thread)."""
         inputs: Dict[str, Dict[str, object]] = {}
-        if self.captured and not self.foreground():
-            self.release_capture()
-        if self.captured:
-            self.control(dt, inputs)
         if self.vr:
             self.read_steamvr(now)
-            if not self.hmd_enabled and self.real_hmd:
+        with self.lock:
+            if not self.hmd_active and self.real_hmd:
                 # Without our HMD the head is the real one: trackers in the "body"
                 # frame and hands in the "head" frame follow the person wearing it.
                 self.head.pos = list(self.real_hmd[0])
                 self.head.set_rot(self.real_hmd[1])
+            if self.captured:
+                if self.foreground():
+                    self.control(dt, inputs)
+                else:
+                    self.want_release = True
+            poses = {}
+            if self.hmd_enabled:
+                poses["hmd"] = self.world("hmd")
+            for dev_id in self.devices:
+                poses[dev_id] = self.world(dev_id)
         if self.sending:
-            self.send(inputs)
-        if int(now * 10) != int((now - dt) * 10):   # 10 Hz is enough for the panel
-            self.refresh_table()
-            self.refresh_reports()
-            self.draw_map()
-        self.next_t += 1.0 / self.rate
-        if self.next_t < time.perf_counter() - 0.1:   # fell far behind: do not catch up
-            self.next_t = time.perf_counter()
-        self.root.after(max(1, round((self.next_t - time.perf_counter()) * 1000)), self.tick)
+            self.send(poses, inputs, now)
+            self.sent += 1
+        else:
+            self.prev.clear()
 
     def control(self, dt: float, inputs: Dict[str, Dict[str, object]]) -> None:
         h = self.head
-        cx, cy = self.warp_point()
+        cx, cy = self.warp
         pt = ctypes.wintypes.POINT()
         user32.GetCursorPos(ctypes.byref(pt))
         dx, dy = pt.x - cx, pt.y - cy
-        user32.SetCursorPos(cx, cy)
+        if dx or dy:
+            user32.SetCursorPos(cx, cy)
         if self.target == "hmd":
-            s = self.sens.get()
+            s = self.sens_v
             h.yaw = (h.yaw - dx * s + 180.0) % 360.0 - 180.0
             h.pitch = max(-89.0, min(89.0, h.pitch - dy * s))
         else:
             self.move_local(self.devices[self.target], (dx * 0.001, -dy * 0.001, 0.0))
 
-        speed = self.speed.get() * (3.0 if key("SHIFT") else 1.0) * (0.25 if key("ALT") else 1.0)
+        speed = self.speed_v * (3.0 if key("SHIFT") else 1.0) * (0.25 if key("ALT") else 1.0)
         fwd = (key("W") - key("S"))
         side = (key("D") - key("A"))
         if self.loco_stick:
@@ -602,22 +744,43 @@ class App:
         if not self.loco_stick:
             left.update(joystick_x=0.0, joystick_y=0.0, joystick_touch=False)
 
-    def send(self, inputs: Dict[str, Dict[str, object]]) -> None:
+    def velocities(self, dev_id: str, pos, rot, now: float):
+        """Smoothed linear and angular velocity from the previous sent pose. A
+        jump (table edit, drag, take over) is not treated as motion."""
+        prev = self.prev.get(dev_id)
+        self.prev[dev_id] = (now, pos, rot)
+        if prev is None or now - prev[0] <= 0:
+            self.vel[dev_id] = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+            return self.vel[dev_id]
+        dt = now - prev[0]
+        v = tuple((pos[i] - prev[1][i]) / dt for i in range(3))
+        w = angular_velocity(prev[2], rot, dt)
+        if math.hypot(*v) > 20.0 or math.hypot(*w) > 40.0:
+            v, w = (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+        ov, ow = self.vel.get(dev_id, (v, w))
+        a = 0.5
+        v = tuple(ov[i] + a * (v[i] - ov[i]) for i in range(3))
+        w = tuple(ow[i] + a * (w[i] - ow[i]) for i in range(3))
+        self.vel[dev_id] = (v, w)
+        return v, w
+
+    def send(self, poses, inputs: Dict[str, Dict[str, object]], now: float) -> None:
         try:
             with self.c.batch():
-                if self.hmd_enabled:
-                    pos, rot = self.world("hmd")
-                    self.c.pose("hmd", pos, rot)
-                for dev_id in self.devices:
-                    pos, rot = self.world(dev_id)
-                    self.c.pose(dev_id, pos, rot)
+                for dev_id, (pos, rot) in poses.items():
+                    if dev_id == "hmd" and not self.hmd_active:
+                        continue
+                    v, w = self.velocities(dev_id, pos, rot, now)
+                    # age=0: the driver ages the sample itself, so SteamVR extrapolates
+                    # with the velocity between our packets.
+                    self.c.pose(dev_id, pos, rot, vel=v, angvel=w, age=0.0)
                 for dev_id, values in inputs.items():
                     if dev_id in self.devices:
                         self.c.inputs(dev_id, values)
         except OSError:
             pass
 
-    # -- SteamVR readback -----------------------------------------------------
+    # -- SteamVR readback (sender thread) -------------------------------------
     def read_steamvr(self, now: float) -> None:
         ovr = self.openvr
         try:
@@ -626,8 +789,8 @@ class App:
             return
         if now >= self.vr_next_scan:          # serials of devices that appeared since
             self.vr_next_scan = now + 2.0
-            self.vr_index.clear()
-            self.vr_names = {}
+            index: Dict[str, int] = {}
+            names: Dict[int, str] = {}
             for i in range(ovr.k_unMaxTrackedDeviceCount):
                 if not self.vr.isTrackedDeviceConnected(i):
                     continue
@@ -635,33 +798,36 @@ class App:
                     serial = self.vr.getStringTrackedDeviceProperty(i, ovr.Prop_SerialNumber_String)
                 except Exception:
                     continue
-                self.vr_names[i] = serial
+                names[i] = serial
                 for dev_id, info in self.status_devices.items():
                     if info.get("serial") == serial:
-                        self.vr_index[dev_id] = i
+                        index[dev_id] = i
                 if serial in ("VHMD-HAND-L", "VHMD-HAND-R"):
-                    self.vr_index["left_hand" if serial.endswith("L") else "right_hand"] = i
-        self.reported.clear()
-        self.others = []
+                    index["left_hand" if serial.endswith("L") else "right_hand"] = i
+            self.vr_index, self.vr_names = index, names
+        reported = {}
+        others = []
+        real_hmd = None
         ours = set(self.vr_index.values())
-        self.real_hmd = None
         for i, serial in self.vr_names.items():
-            p = poses[i]
-            pos, rot = math3d.from_matrix34(p.mDeviceToAbsoluteTracking)
             if i in ours:
                 continue
+            p = poses[i]
             if p.bPoseIsValid:
-                self.others.append((serial, pos, rot))
+                pos, rot = math3d.from_matrix34(p.mDeviceToAbsoluteTracking)
+                others.append((serial, pos, rot))
                 if i == ovr.k_unTrackedDeviceIndex_Hmd:
-                    self.real_hmd = (pos, rot)
+                    real_hmd = (pos, rot)
         for dev_id, i in self.vr_index.items():
             p = poses[i]
             pos, rot = math3d.from_matrix34(p.mDeviceToAbsoluteTracking)
-            self.reported[dev_id] = (pos, rot, bool(p.bPoseIsValid))
+            reported[dev_id] = (pos, rot, bool(p.bPoseIsValid))
+        self.reported, self.others, self.real_hmd = reported, others, real_hmd
 
     def refresh_reports(self) -> None:
+        reported = self.reported
         for dev_id, lbl in self.report_labels.items():
-            r = self.reported.get(dev_id)
+            r = reported.get(dev_id)
             if not self.vr:
                 text = "-"
             elif r is None:
@@ -676,18 +842,80 @@ class App:
     def take_over(self) -> None:
         if not self.vr:
             return
-        self.read_steamvr(time.perf_counter())
-        for dev_id, (pos, rot, valid) in list(self.reported.items()):
-            if not valid:
-                continue
-            if dev_id == "hmd" and self.hmd_enabled:
-                self.head.pos = list(pos)
-                yaw, pitch, roll = math3d.to_euler(rot)
+        reported = dict(self.reported)
+        with self.lock:
+            r = reported.get("hmd")
+            if r and r[2] and self.hmd_active:
+                self.head.pos = list(r[0])
+                yaw, pitch, roll = math3d.to_euler(r[1])
                 self.head.yaw, self.head.pitch, self.head.roll = yaw, max(-89.0, min(89.0, pitch)), roll
-        for dev_id, (pos, rot, valid) in list(self.reported.items()):
-            if valid and dev_id in self.devices:
-                self.set_world(dev_id, pos, rot)   # relative to the head adopted above
+            for dev_id, (pos, rot, valid) in reported.items():
+                if valid and dev_id in self.devices:
+                    self.set_world(dev_id, pos, rot)   # relative to the head adopted above
+            self.prev.clear()
         self.refresh_table(force=True)
+
+    # -- HMD view (preview thread) --------------------------------------------
+    def preview_loop(self) -> None:
+        from .preview import PreviewReader
+        try:
+            self.c.preview(True)
+            self.preview_on = True
+        except Exception as e:
+            self.thread_message = f"preview: {e}"
+            return
+        reader = PreviewReader()
+        last_index = -1
+        n, t0 = 0, time.perf_counter()
+        try:
+            while self.running:
+                try:
+                    r = reader.read_scaled(VIEW_W, VIEW_H, skip_index=last_index, pixel_format="bgrx")
+                except OSError:
+                    r = None
+                if r is None:
+                    time.sleep(0.005)
+                    continue
+                w, h, last_index, pixels = r
+                self.view_started = True
+                if self.view_hwnd:
+                    blit_bgrx(self.view_hwnd, VIEW_W, VIEW_H, w, h, pixels)
+                n += 1
+                if time.perf_counter() - t0 >= 1.0:
+                    self.view_fps = n / (time.perf_counter() - t0)
+                    n, t0 = 0, time.perf_counter()
+                time.sleep(1.0 / 60)       # the panel does not need more
+        finally:
+            reader.close()
+
+    def show_view(self) -> None:
+        if self.view_started and self.view_text.winfo_ismapped():
+            self.view_text.place_forget()
+
+    # -- Tk loop --------------------------------------------------------------
+    def ui_tick(self) -> None:
+        if not self.running:
+            return
+        if self.want_release:
+            self.release_capture()
+        if self.thread_message:
+            self.message.set(self.thread_message)
+            self.thread_message = ""
+        self.show_view()
+        self.draw_map()
+        self.ui_count += 1
+        if self.ui_count % 3 == 0:      # numbers at 10 Hz are easier to read
+            self.refresh_table()
+            self.refresh_reports()
+        now = time.perf_counter()
+        if now - self.rate_t0 >= 1.0:
+            text = f"{self.sent / (now - self.rate_t0):.0f} poses/s"
+            self.rate_t0 = now
+            if self.view_fps:
+                text += f"  |  view {self.view_fps:.0f} fps"
+            self.rate_lbl.config(text=text)
+            self.sent = 0
+        self.root.after(1000 // UI_HZ, self.ui_tick)
 
     # -- map ------------------------------------------------------------------
     def to_screen(self, x: float, z: float) -> Tuple[float, float]:
@@ -729,17 +957,18 @@ class App:
                 sx, sy = self.to_screen(pos[0], pos[2])
                 cv.create_oval(sx - 9, sy - 9, sx + 9, sy + 9, outline=COLORS.get(dev_id, TRACKER_COLOR))
 
-        ids = list(self.devices) + (["hmd"] if self.hmd_enabled else [])
-        for dev_id in ids:
-            pos, rot = self.world(dev_id)
+        with self.lock:
+            ids = list(self.devices) + (["hmd"] if self.hmd_enabled else [])
+            items = [(dev_id, *self.world(dev_id)) for dev_id in ids]
+        for dev_id, pos, rot in items:
             color = COLORS.get(dev_id, TRACKER_COLOR)
             sx, sy = self.to_screen(pos[0], pos[2])
             f = math3d.rotate(rot, (0.0, 0.0, -1.0))
             n = math.hypot(f[0], f[2]) or 1.0
-            ex, ey = sx + f[0] / n * 18, sy + f[2] / n * 18
+            ex, ey = sx + f[0] / n * 22, sy + f[2] / n * 22
             if dev_id == "hmd":
-                cv.create_line(sx, sy, ex, ey, fill=color, width=3, arrow="last")
                 cv.create_oval(sx - 7, sy - 7, sx + 7, sy + 7, fill=color, outline="")
+                cv.create_line(sx, sy, ex, ey, fill=color, width=3, arrow="last")
             elif self.devices[dev_id].kind == "controller":
                 cv.create_line(sx, sy, ex, ey, fill=color, width=2)
                 cv.create_oval(sx - 5, sy - 5, sx + 5, sy + 5, fill=color, outline="")
@@ -752,7 +981,8 @@ class App:
             return
         best, dist = None, 12.0
         for dev_id in (["hmd"] if self.hmd_enabled else []) + list(self.devices):
-            pos, _ = self.world(dev_id)
+            with self.lock:
+                pos, _ = self.world(dev_id)
             sx, sy = self.to_screen(pos[0], pos[2])
             d = math.hypot(sx - ev.x, sy - ev.y)
             if d < dist:
@@ -763,10 +993,10 @@ class App:
         if not self.drag or self.captured:
             return
         x, z = self.to_world(ev.x, ev.y)
-        pos, rot = self.world(self.drag)
-        self.set_world(self.drag, (x, pos[1], z), rot)
+        with self.lock:
+            pos, rot = self.world(self.drag)
+            self.set_world(self.drag, (x, pos[1], z), rot)
         self.refresh_table(force=True)
-        self.draw_map()
 
     # -- misc -----------------------------------------------------------------
     def copy_python(self) -> None:
@@ -781,7 +1011,13 @@ class App:
 
     def close(self) -> None:
         self.release_capture()
-        ctypes.windll.winmm.timeEndPeriod(1)
+        self.running = False
+        time.sleep(0.05)                 # let the sender thread finish its step
+        if self.preview_on:
+            try:
+                self.c.preview(False)
+            except Exception:
+                pass
         if self.vr:
             try:
                 self.openvr.shutdown()
@@ -794,7 +1030,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="FPS-style keyboard/mouse control of the VHMD devices (Windows)")
     ap.add_argument("--host", default=DEFAULT_HOST)
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
-    ap.add_argument("--rate", type=float, default=90.0, help="poses sent per second")
+    ap.add_argument("--rate", type=float, default=120.0, help="poses sent per second")
     ap.add_argument("--lang", choices=("en", "ja"), default=None)
     args = ap.parse_args()
     try:

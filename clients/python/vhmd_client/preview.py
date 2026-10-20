@@ -14,13 +14,14 @@ Standard library only.
 
 from __future__ import annotations
 
+import math
 import mmap
 import os
 import struct
 import time
 import zlib
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
 # Linux: a file in /dev/shm. Windows (display.mode = direct): a named shared-memory mapping.
 DEFAULT_PATH = "vhmd_preview" if os.name == "nt" else "/dev/shm/vhmd_preview"
@@ -212,4 +213,48 @@ class PreviewReader:
             if stride != width * 4:
                 data = b"".join(data[y * stride:y * stride + width * 4] for y in range(height))
             return Frame(width, height, eye_w, frame_index, ts, src_fmt, bytes(data))
+        return None
+
+    def read_scaled(self, max_w: int, max_h: int, eye: str = "left", skip_index: int = -1,
+                    pixel_format: str = "rgb", retries: int = 50) -> Optional[Tuple[int, int, int, bytes]]:
+        """One eye shrunk by an integer factor to fit max_w x max_h:
+        (width, height, frame_index, pixels). pixel_format "rgb" (3 bytes per
+        pixel) or "bgrx" (4 bytes, the layout of a 32-bit Windows DIB). Copies
+        only the rows and pixels it needs, so it is cheap enough for a live view.
+        Returns None when there is no frame or the latest one is still skip_index."""
+        for _ in range(retries):
+            if not self._map():
+                return None
+            mm = self._mm
+            s1 = struct.unpack_from("<Q", mm, _SEQ_OFFSET)[0]
+            if s1 & 1:
+                time.sleep(0.0005)
+                continue
+            (magic, version, header_size, width, height, stride, fmt, _seq, frame_index, ts, eye_w, src_fmt,
+             _r0, _r1) = _HEADER.unpack_from(mm, 0)
+            if magic != MAGIC or version != 1:
+                return None
+            if frame_index == skip_index:
+                return None
+            if header_size + stride * height > self._size:
+                self.close()
+                continue
+            ew = eye_w or width
+            x0 = ew if eye == "right" else 0
+            k = max(1, math.ceil(ew / max_w), math.ceil(height / max_h))
+            ow, oh = len(range(0, ew, k)), len(range(0, height, k))
+            bpp = 4 if pixel_format == "bgrx" else 3
+            r, b = (2, 0) if bpp == 4 else (0, 2)          # BGRX swaps red and blue
+            out = bytearray(ow * oh * bpp)
+            step, o, n = 4 * k, 0, ow * bpp
+            for y in range(0, height, k):
+                start = header_size + y * stride + x0 * 4
+                row = mm[start:start + ew * 4]
+                out[o + r:o + n:bpp] = row[0::step]
+                out[o + 1:o + n:bpp] = row[1::step]
+                out[o + b:o + n:bpp] = row[2::step]
+                o += n
+            if struct.unpack_from("<Q", mm, _SEQ_OFFSET)[0] != s1:
+                continue  # torn read
+            return ow, oh, frame_index, bytes(out)
         return None

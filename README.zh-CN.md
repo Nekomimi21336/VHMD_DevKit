@@ -165,7 +165,7 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 python -m vhmd_client.fps        # 在 clients/python 中运行，或 pip install -e clients/python
 ```
 
-像 FPS 游戏一样，用鼠标控制视角、WASD 移动，手动操作 HMD 和控制器。可以在表格中查看和输入每个设备的位置与角度，并在俯视图中拖动设备。
+像 FPS 游戏一样，用鼠标控制视角、WASD 移动，手动操作 HMD 和控制器。可以在表格中查看和输入每个设备的位置与角度，并在俯视图中拖动设备。直接模式(`display.mode = "direct"`)下，工具内还会显示 HMD 的视角(想流畅显示请把 `preview.fps` 设为 30)。姿态由专用线程以每秒 120 次连同速度发送，SteamVR 会在两次发送之间插值。
 
 | 操作 | 作用 |
 |---|---|

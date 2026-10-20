@@ -70,3 +70,15 @@ def test_png_roundtrip(tmp_path):
     idat = data[data.index(b"IDAT") + 4:data.index(b"IEND") - 8]
     raw = zlib.decompress(idat)
     assert len(raw) == 4 * (1 + 8 * 4) and raw[1:5] == bytes((255, 0, 0, 255))
+
+
+def test_read_scaled(tmp_path):
+    p = tmp_path / "prev"
+    write_preview(p, 16, 8, left=(10, 20, 30, 255), right=(200, 100, 50, 255))
+    with PreviewReader(str(p)) as r:
+        w, h, idx, rgb = r.read_scaled(4, 4)                       # 8x8 eye -> factor 2
+        assert (w, h, idx) == (4, 4, 7) and len(rgb) == 4 * 4 * 3
+        assert rgb[:3] == bytes((10, 20, 30))
+        w, h, _, bgrx = r.read_scaled(8, 8, eye="right", pixel_format="bgrx")
+        assert (w, h) == (8, 8) and bgrx[:3] == bytes((50, 100, 200))   # blue, green, red
+        assert r.read_scaled(4, 4, skip_index=7) is None              # unchanged frame

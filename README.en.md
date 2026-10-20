@@ -165,7 +165,7 @@ From other languages, just send JSON over UDP.
 python -m vhmd_client.fps        # run in clients/python, or pip install -e clients/python
 ```
 
-Drive the HMD and controllers by hand like an FPS game: the mouse looks around and WASD moves. A table shows and edits every device's position and angles, and a top view lets you drag devices around.
+Drive the HMD and controllers by hand like an FPS game: the mouse looks around and WASD moves. A table shows and edits every device's position and angles, and a top view lets you drag devices around. In direct mode (`display.mode = "direct"`) the HMD's view is shown in the tool as well (set `preview.fps` to 30 for a smooth view). Poses are sent from their own thread 120 times a second with velocities, so SteamVR interpolates between packets.
 
 | Control | Effect |
 |---|---|
