@@ -8,7 +8,7 @@
 |---|---|---|---|
 | 1 | 通信方式 | UDP+JSON。VMT 互換 OSC も同じポートで実装(既定 OFF) | 実装・検証済み |
 | 2 | トラッカー台数 | 8 台(最大 16、設定で変更) | 実装・検証済み |
-| 3 | 視線の送信先 | ヘッダが `CreateEyeTrackingComponent` に対応していたので SteamVR 経由で実装 | 実装済み・アプリ側の受信は**未検証** |
+| 3 | 視線の送信先 | ヘッダが `CreateEyeTrackingComponent` に対応していたので SteamVR 経由で実装 | 実装済み。OpenVR(`IVRInput` の視線取得)と OpenXR(`XR_EXT_eye_gaze_interaction`)でアプリ側の受信を確認(2026-10-20) |
 | 4 | VRChat の GUI 操作 | 不可。手動検証手順書で代替 | `docs/verification.md` |
 | 5 | openvr のバージョン固定 | 検証時点の最新タグ v2.15.6 を固定(`VHMD_OPENVR_TAG`) | 済み |
 
@@ -21,7 +21,7 @@
 | フレームレート | ダイレクトモードではドライバの vsync が周期を決める。`refreshHz`(1〜240、既定 90)、実行中は `refresh_rate` 操作で変更し `Prop_DisplayFrequency_Float` も合わせる | コンポジタは 1〜240 Hz に正確に従う。10 Hz 未満ではアプリが 12〜15 fps より遅くならない(SteamVR の待ちの打ち切り)ことを実測 |
 | HMD の `shouldApplyHeadModel` | 既定 `false`(`hmd.headModel` で切替) | `true` だと回転時に位置が最大 93 mm ずれることを実測。プロトコルの `pos` は頭の位置と定義 |
 | 起動直後のポーズ送信 | `Activate` から 100 ms 待つ | 待たないと vrserver.txt に `PoseUpdated from driver vhmd for device index N which is owned by driver (-1)` が出ることを実測 |
-| 視線 | `CreateEyeTrackingComponent(container, "/eyetracking")` + `Prop_SupportsXrEyeGazeInteraction_Bool` | ヘッダに API あり。パス名 `/eyetracking` は SteamVR 同梱 `driver_vrlink.dll` 内の文字列で確認(公式ドキュメントでは未確認)。`VREyeTrackingData_t` の座標空間はヘッダに記載なし → HMD ローカル空間と仮定 |
+| 視線 | `CreateEyeTrackingComponent(container, "/eyetracking")` + `Prop_SupportsXrEyeGazeInteraction_Bool` | ヘッダに API あり。パス名 `/eyetracking` は SteamVR 同梱 `driver_vrlink.dll` 内の文字列で確認(公式ドキュメントでは未確認)。`VREyeTrackingData_t` の座標空間はヘッダに記載なし → **HMD ローカル空間**(origin は目の位置、target は注視点)であることを実測で確認。SteamVR が HMD の姿勢を掛けてアプリに渡す |
 | 指スケルトン | `CreateSkeletonComponent`。コントローラーは既定 `VRSkeletalTracking_Partial`、ハンド側(ハンドモード)は `Full` | VRChat は Full をハンドトラッキング(メニューはジェスチャー)、Partial をコントローラー(ボタン操作)として扱うことを実測。ボーン生成はサンプルの `hand_simulation.cpp` を third_party からそのままコンパイル |
 | コントローラー ⇄ ハンドの切り替え | 手ごとにコントローラーとハンドの 2 デバイスを持ち、片方だけを接続中として報告(`hand_mode` 操作) | OpenVR にはデバイスを外す API が無く、骨格の精度も作成後に変えられないため。SteamVR と VRChat を止めずに切り替わることを確認 |
 | スケルトンの aux ボーン | 長さ 0 のクォータニオンは単位クォータニオンに置換 | サンプルの手モデルは aux ボーン 26〜30 を 0 のまま返すことを検証中に発見 |
@@ -42,7 +42,8 @@
 | 項目 | 状態 / 理由 | 将来の案 |
 |---|---|---|
 | 実画面表示 | 対象外(ダミーディスプレイ)。Windows の既定ではデスクトップにウィンドウが開く。ウィンドウを出したくない場合は `display.mode = direct` | — |
-| 視線のアプリ側確認 | OpenVR クライアント API に視線を読む手段がなく自動検証できない | OpenXR の `XR_EXT_eye_gaze_interaction` で読むテストアプリ、または VRChat OSC のアイトラッキングパラメータ(`/tracking/eye/...`)を直接送る別ツール |
+| 表情(フェイシャルトラッキング) | 対象外。OpenVR に表情の API が無く、SteamVR の OpenXR ランタイムもフェイス系拡張を提供していないため、SteamVR との接続という本ツールの役割の外(調査: `docs/face_tracking_research.md`) | — |
+| OpenXR の LOCAL 空間 | ヘッドレスの OpenXR セッションで、LOCAL 空間が STAGE に対して Z 軸まわりに 180° 回転して見える(頭の上下が逆。STAGE と VIEW は正常、OpenVR の seated は正常)。ヘッドレス特有か、vhmd の HMD 全般かは**未確認** | 描画ありの OpenXR アプリで確認、原因(ユニバース ID 未設定など)の調査 |
 | トラッカーのみモード (`hmd.enabled=false`) | ドライバが HMD を追加しないことは確認。この PC では実ヘッドセット(PICO 4S)が未接続のため、SteamVR に HMD が無く他デバイスも有効化されない → **未検証** | 実 HMD 接続時に `docs/verification.md` の手順で確認 |
 | VMT の Joint / Follow / Skeleton / ルーム行列 | 未実装(破棄してログ) | `protocol/osc.cpp` に追加 |
 | 実行時のデバイス削除 | OpenVR にはデバイス削除 API が無い。追加は最初のパケットで行う(オンデマンド)。使わなくなったデバイスは切断として報告する | — |

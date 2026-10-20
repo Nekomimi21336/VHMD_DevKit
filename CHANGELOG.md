@@ -1,5 +1,14 @@
 # 変更履歴
 
+## 未リリース
+
+### テスト
+- 視線がアプリまで届くことを確認する統合テストを追加: OpenVR(`IVRInput` の視線取得、`eye_check.py`)と OpenXR(`XR_EXT_eye_gaze_interaction`、描画なしのセッション、`openxr_eye_check.py`)。統合テストは 42 項目に。
+
+### ドキュメント
+- 視線の座標空間を確定: ドライバに渡す origin / target は HMD ローカル空間(SteamVR が HMD の姿勢を掛けてアプリに渡す)。
+- 表情(フェイシャルトラッキング)の調査結果と、対象外とした判断を記録(`docs/face_tracking_research.md`)。
+
 ## v0.4.1(2026-10-20)
 
 ### 変更

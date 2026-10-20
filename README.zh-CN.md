@@ -225,7 +225,7 @@ SteamVR 合成器会准确遵循 1〜240 Hz 的任意值。但低于 10 Hz 时�
 | Python 单元测试 | `python -m pytest tests/python` | 14 项(客户端、预览读取) |
 | Linux 捕获自测 | `ctest`(Linux) | 用真实 Vulkan 确认共享图像 → 共享内存(无需 SteamVR) |
 | Linux 实机确认 | `python3 tests/integration/linux_check.py` | 直接模式的显示路径 + 集成测试，输出报告 |
-| SteamVR 集成测试 | `python tests/integration/run_integration.py` | 31 项(枚举、按需添加、误差、延迟、输入、骨骼、手部模式切换、非法数据包、负载、退出处理) |
+| SteamVR 集成测试 | `python tests/integration/run_integration.py` | 42 项(枚举、按需添加、误差、延迟、输入、骨骼、手部模式切换、视线(OpenVR / OpenXR)、非法数据包、负载、退出处理) |
 | 反复启动/退出 | `python tests/integration/stress_restart.py --cycles 30` | 每次都检查驱动的退出处理以及是否崩溃 |
 | 长时间稳定性 | `python tests/integration/soak_test.py --minutes 30` | 按固定间隔记录帧率、姿态误差、内存增长、警告 |
 

@@ -112,7 +112,12 @@
 { "type": "gaze", "id": "hmd", "valid": false }
 ```
 
-`IVRDriverInput::CreateEyeTrackingComponent("/eyetracking")` に `VREyeTrackingData_t`(origin, target)として渡します。座標空間は SteamVR ヘッダに明記がなく **HMD ローカル空間を想定(未検証)**。`docs/decisions.md` 参照。
+`IVRDriverInput::CreateEyeTrackingComponent("/eyetracking")` に `VREyeTrackingData_t`(origin, target)として渡します。
+
+- **座標は HMD ローカル空間**(メートル、右手系、−Z が前)。`origin` は目の位置、`target` は注視点(方向ではなく点。`dir` を送ると `origin + dir` が注視点になります)。SteamVR が HMD の姿勢を掛けてアプリに渡します(実測で確認)。
+- アプリ側での受け取り: OpenVR は `IVRInput::GetEyeTrackingDataRelativeToNow` / `GetEyeTrackingDataForNextFrame`(`eyetracking` 型のアクションを `/user/head/eyetracking` に割り当て)。OpenXR は `XR_EXT_eye_gaze_interaction`(`/user/eyes_ext/input/gaze_ext/pose`)。どちらも統合テストで確認しています。
+- `valid: false` で、OpenVR は `bValid` / `bTracked` が false、OpenXR は位置の有効フラグが 0 になります。
+- 両目まとめた 1 本の視線だけです(OpenVR の仕様。左右別やまぶたの開きはありません)。
 
 ### `config`(要求・応答)
 

@@ -225,7 +225,7 @@ SteamVR 컴포지터는 1~240 Hz의 어떤 값에도 정확히 따릅니다. 다
 | Python 단위 테스트 | `python -m pytest tests/python` | 14건(클라이언트, 프리뷰 읽기) |
 | Linux 캡처 셀프 테스트 | `ctest`(Linux) | 실제 Vulkan으로 공유 이미지 → 공유 메모리를 확인(SteamVR 불필요) |
 | Linux 실제 장비 확인 | `python3 tests/integration/linux_check.py` | 다이렉트 모드의 표시 경로 + 통합 테스트, 리포트 출력 |
-| SteamVR 통합 테스트 | `python tests/integration/run_integration.py` | 31개 항목(열거, 온디맨드 추가, 오차, 지연, 입력, 스켈레톤, 핸드 모드 전환, 잘못된 패킷, 부하, 종료 처리) |
+| SteamVR 통합 테스트 | `python tests/integration/run_integration.py` | 42개 항목(열거, 온디맨드 추가, 오차, 지연, 입력, 스켈레톤, 핸드 모드 전환, 시선(OpenVR / OpenXR), 잘못된 패킷, 부하, 종료 처리) |
 | 시작/종료 반복 | `python tests/integration/stress_restart.py --cycles 30` | 매번 드라이버의 종료 처리와 크래시 여부를 확인 |
 | 장시간 안정성 | `python tests/integration/soak_test.py --minutes 30` | 프레임 레이트, 자세 오차, 메모리 증가, 경고를 일정 간격으로 기록 |
 

@@ -1,11 +1,13 @@
 {
   "default_bindings": [
-    { "controller_type": "vhmd_controller", "binding_url": "bindings_vhmd_controller.json" }
+    { "controller_type": "vhmd_controller", "binding_url": "bindings_vhmd_controller.json" },
+    { "controller_type": "vhmd_hmd", "binding_url": "bindings_vhmd_hmd.json" }
   ],
   "actions": [
     { "name": "/actions/test/in/skeleton_left", "type": "skeleton", "skeleton": "/skeleton/hand/left" },
     { "name": "/actions/test/in/skeleton_right", "type": "skeleton", "skeleton": "/skeleton/hand/right" },
-    { "name": "/actions/test/in/trigger", "type": "vector1" }
+    { "name": "/actions/test/in/trigger", "type": "vector1" },
+    { "name": "/actions/test/in/gaze", "type": "eyetracking" }
   ],
   "action_sets": [ { "name": "/actions/test", "usage": "leftright" } ],
   "localization": []

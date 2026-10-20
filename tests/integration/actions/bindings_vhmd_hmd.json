@@ -1,0 +1,11 @@
+{
+  "controller_type": "vhmd_hmd",
+  "name": "vhmd integration test bindings (HMD)",
+  "bindings": {
+    "/actions/test": {
+      "eyetracking": [
+        { "output": "/actions/test/in/gaze", "path": "/user/head/eyetracking" }
+      ]
+    }
+  }
+}

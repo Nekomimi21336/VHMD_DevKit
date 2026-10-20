@@ -112,7 +112,12 @@ Values are numbers (-1 to 1) or booleans. A button counts as pressed at 0.5 or a
 { "type": "gaze", "id": "hmd", "valid": false }
 ```
 
-Passed to `IVRDriverInput::CreateEyeTrackingComponent("/eyetracking")` as `VREyeTrackingData_t` (origin, target). The coordinate space is not documented in the SteamVR headers; **HMD-local space is assumed (unverified)**. See `docs/decisions.md` (Japanese).
+Passed to `IVRDriverInput::CreateEyeTrackingComponent("/eyetracking")` as `VREyeTrackingData_t` (origin, target).
+
+- **Coordinates are in HMD-local space** (meters, right-handed, −Z forward). `origin` is the eye position and `target` is the fixation point (a point, not a direction; sending `dir` makes `origin + dir` the fixation point). SteamVR applies the HMD pose before apps see it (measured).
+- Reading it in apps: OpenVR uses `IVRInput::GetEyeTrackingDataRelativeToNow` / `GetEyeTrackingDataForNextFrame` (an `eyetracking` action bound to `/user/head/eyetracking`). OpenXR uses `XR_EXT_eye_gaze_interaction` (`/user/eyes_ext/input/gaze_ext/pose`). Both are covered by the integration tests.
+- With `valid: false`, OpenVR reports `bValid` / `bTracked` false and OpenXR clears the location flags.
+- It is a single combined gaze ray (an OpenVR limitation: no per-eye data or eyelid openness).
 
 ### `config` (request / response)
 

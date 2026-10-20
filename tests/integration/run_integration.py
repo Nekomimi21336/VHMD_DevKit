@@ -149,8 +149,10 @@ def main() -> int:
     # process holding that app key is connected (even as a Background app),
     # the second one never gets input focus. So this runs first, in a fresh
     # process, before this script connects (see input_check.py).
+    # eye_check.py / openxr_eye_check.py read the gaze back through SteamVR Input
+    # and through SteamVR's OpenXR runtime (XR_EXT_eye_gaze_interaction).
     input_phase = {"results": [], "info": {}}
-    for script in ("input_check.py", "skeleton_check.py"):
+    for script in ("input_check.py", "skeleton_check.py", "eye_check.py", "openxr_eye_check.py"):
         proc = subprocess.run([sys.executable, str(HERE / script), "--port", str(args.port)],
                               capture_output=True, text=True, timeout=180)
         try:

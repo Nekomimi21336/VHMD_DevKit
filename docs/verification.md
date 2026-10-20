@@ -328,6 +328,25 @@ v0.4.0 の配布アーカイブを展開したフォルダを対象に、実際�
 
 SteamVR 起動中の挙動(設定の掃除を飛ばして警告、`-Restore` は拒否)は実行していない。
 
+### 視線のアプリ側での受信と座標空間(2026-10-20、Windows 11、SteamVR 2.17.10)
+
+`gaze` メッセージがアプリまで届くか、座標空間はどう解釈されるかを、OpenVR と OpenXR の両方で確認。統合テストに `eye_check.py`(OpenVR)と `openxr_eye_check.py`(OpenXR)として追加し、`run_integration.py` は **42/42 合格**。
+
+- **OpenVR**: アクションマニフェストに `eyetracking` 型のアクションを置き、HMD(`vhmd_hmd`)のバインディングで `/user/head/eyetracking` に割り当てると、`IVRInput::GetEyeTrackingDataRelativeToNow` / `GetEyeTrackingDataForNextFrame`(`IVRInput_011`)で読める。pyopenvr はこの 2 関数を包んでいないので、C の関数テーブルを ctypes で呼んだ。
+- **OpenXR**: SteamVR の OpenXR ランタイムは vhmd の HMD に `supportsEyeGazeInteraction = true` を返す。`XR_MND_headless`(描画なし)のセッションで FOCUSED になり、`/user/eyes_ext/input/gaze_ext/pose` のポーズが取れた。
+- **座標空間**: ドライバに渡す origin / target は **HMD ローカル空間**。HMD を (1, 1.6, 2) に置いて左へ 90° 向けた状態で、ドライバ側 origin (0.03, 0, 0)・target (0.5, 0.2, −1) を送ると:
+
+| 読み方 | 結果 | 期待値(HMD の姿勢を掛けたもの) |
+|---|---|---|
+| OpenVR(立位空間) | origin (1.000, 1.600, 1.970)、target (0.000, 1.800, 1.500) | 一致 |
+| OpenXR VIEW 空間 | 位置 (0.030, 0, 0)、向き (0.419, 0.178, −0.891) | origin と target−origin の向きに一致 |
+| OpenXR STAGE 空間 | 位置 (1.000, 1.600, 1.970)、向き (−0.891, 0.178, −0.419) | 一致 |
+
+- `valid: false` で、OpenVR は `bValid` / `bTracked` が false、OpenXR は位置フラグが 0 になる。
+- OpenVR の立位・着座・未較正の 3 空間はこの環境では同じ値(着座の原点が立位と一致しているため)。
+- **別件で見つかったこと**: OpenXR の LOCAL 空間では、視線だけでなく頭(VIEW)の姿勢も Z 軸まわりに 180° 回った値になる(上方向が −Y)。STAGE と OpenVR は正常。ヘッドレスセッション特有かどうかは未確認(`docs/decisions.md` の未対応事項に記載)。
+- Linux の OpenXR 経路(`libopenxr_loader.so` + `XR_KHR_convert_timespec_time`)はコードのみで、実機では未確認。
+
 ## 2. 手動検証手順(要件 10.2)
 
 GUI 操作が必要なため未実施の項目です。結果欄に記入してください。

@@ -225,7 +225,7 @@ SteamVR のコンポジタは 1〜240 Hz のどの値にも正確に従います
 | Python 単体テスト | `python -m pytest tests/python` | 14 件(クライアント、プレビュー読み取り) |
 | Linux キャプチャセルフテスト | `ctest`(Linux) | 実際の Vulkan で共有イメージ → 共有メモリを確認(SteamVR 不要) |
 | Linux 実機確認 | `python3 tests/integration/linux_check.py` | ダイレクトモードの表示経路 + 統合テスト、レポート出力 |
-| SteamVR 統合テスト | `python tests/integration/run_integration.py` | 31 項目(列挙、オンデマンド追加、誤差、遅延、入力、スケルトン、ハンドモード切り替え、不正パケット、負荷、終了処理) |
+| SteamVR 統合テスト | `python tests/integration/run_integration.py` | 42 項目(列挙、オンデマンド追加、誤差、遅延、入力、スケルトン、ハンドモード切り替え、視線(OpenVR / OpenXR)、不正パケット、負荷、終了処理) |
 | 起動/終了の繰り返し | `python tests/integration/stress_restart.py --cycles 30` | 毎回ドライバの終了処理とクラッシュ有無を確認 |
 | 長時間の安定性 | `python tests/integration/soak_test.py --minutes 30` | フレームレート、姿勢の誤差、メモリ増加、警告を一定間隔で記録 |
 

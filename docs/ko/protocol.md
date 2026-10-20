@@ -112,7 +112,12 @@
 { "type": "gaze", "id": "hmd", "valid": false }
 ```
 
-`IVRDriverInput::CreateEyeTrackingComponent("/eyetracking")`에 `VREyeTrackingData_t`(origin, target)로 전달합니다. 좌표 공간은 SteamVR 헤더에 명시되어 있지 않아 **HMD 로컬 공간을 가정(미검증)**. `docs/decisions.md`(일본어) 참조.
+`IVRDriverInput::CreateEyeTrackingComponent("/eyetracking")`에 `VREyeTrackingData_t`(origin, target)로 전달합니다.
+
+- **좌표는 HMD 로컬 공간**(미터, 오른손 좌표계, −Z가 앞). `origin`은 눈의 위치, `target`은 주시점(방향이 아니라 점. `dir`를 보내면 `origin + dir`가 주시점). SteamVR이 HMD 자세를 곱해서 앱에 전달합니다(실측으로 확인).
+- 앱 측 수신: OpenVR은 `IVRInput::GetEyeTrackingDataRelativeToNow` / `GetEyeTrackingDataForNextFrame`(`eyetracking` 타입 액션을 `/user/head/eyetracking`에 할당). OpenXR은 `XR_EXT_eye_gaze_interaction`(`/user/eyes_ext/input/gaze_ext/pose`). 둘 다 통합 테스트로 확인합니다.
+- `valid: false`를 보내면 OpenVR은 `bValid` / `bTracked`가 false, OpenXR은 위치 유효 플래그가 0이 됩니다.
+- 양쪽 눈을 합친 시선 1개뿐입니다(OpenVR 사양. 좌우 따로의 데이터나 눈꺼풀 열림 정도는 없음).
 
 ### `config`(요청·응답)
 

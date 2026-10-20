@@ -112,7 +112,12 @@
 { "type": "gaze", "id": "hmd", "valid": false }
 ```
 
-以 `VREyeTrackingData_t`(origin, target)的形式传给 `IVRDriverInput::CreateEyeTrackingComponent("/eyetracking")`。SteamVR 头文件中未明确坐标空间，**假定为 HMD 局部空间(未验证)**。参见 `docs/decisions.md`。
+以 `VREyeTrackingData_t`(origin, target)的形式传给 `IVRDriverInput::CreateEyeTrackingComponent("/eyetracking")`。
+
+- **坐标为 HMD 局部空间**(米、右手系、−Z 为前方)。`origin` 是眼睛位置，`target` 是注视点(是点而不是方向；发送 `dir` 时注视点为 `origin + dir`)。SteamVR 会乘上 HMD 的姿态后再交给应用(已实测确认)。
+- 应用侧读取：OpenVR 使用 `IVRInput::GetEyeTrackingDataRelativeToNow` / `GetEyeTrackingDataForNextFrame`(将 `eyetracking` 类型的动作绑定到 `/user/head/eyetracking`)。OpenXR 使用 `XR_EXT_eye_gaze_interaction`(`/user/eyes_ext/input/gaze_ext/pose`)。两者均已在集成测试中确认。
+- 发送 `valid: false` 时，OpenVR 的 `bValid` / `bTracked` 为 false，OpenXR 的位置有效标志变为 0。
+- 只有双眼合并的一条视线(OpenVR 的规格，没有左右眼分别的数据或眼睑开合度)。
 
 ### `config`(请求、响应)
 

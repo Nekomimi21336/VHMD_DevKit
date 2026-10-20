@@ -225,7 +225,7 @@ Settings are loaded when SteamVR starts. Either edit the source-side files and r
 | Python unit tests | `python -m pytest tests/python` | 14 tests (client, preview reader) |
 | Linux capture self-test | `ctest` (Linux) | Checks shared image → shared memory with real Vulkan (no SteamVR needed) |
 | Linux on-hardware check | `python3 tests/integration/linux_check.py` | Direct-mode display path + integration tests, writes a report |
-| SteamVR integration tests | `python tests/integration/run_integration.py` | 31 items (enumeration, on-demand addition, error, latency, input, skeleton, hand mode switching, invalid packets, load, shutdown) |
+| SteamVR integration tests | `python tests/integration/run_integration.py` | 42 items (enumeration, on-demand addition, error, latency, input, skeleton, hand mode switching, eye gaze (OpenVR / OpenXR), invalid packets, load, shutdown) |
 | Repeated start/stop | `python tests/integration/stress_restart.py --cycles 30` | Checks the driver's shutdown and whether it crashed on every cycle |
 | Long-run stability | `python tests/integration/soak_test.py --minutes 30` | Records frame rate, pose error, memory growth and warnings at regular intervals |
 
