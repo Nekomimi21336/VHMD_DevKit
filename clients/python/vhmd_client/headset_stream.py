@@ -119,6 +119,7 @@ class VideoServer(threading.Thread):
         self.eye_width = eye_width   # 0: the headset's own (headset.json), else the source's
         self.source = source   # "auto" (driver, else ffmpeg), "driver", "ffmpeg"
         self.frames_in = self.frames_out = self.bytes_out = self.frames_dropped = 0
+        self.current: Optional[socket.socket] = None   # the headset's connection, while there is one
 
     def run(self) -> None:
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -129,12 +130,24 @@ class VideoServer(threading.Thread):
         while True:
             conn, addr = srv.accept()
             self.log(f"video: headset connected from {addr[0]}")
+            self.current = conn
             try:
                 self.stream(conn)
             except (OSError, ValueError) as e:
                 self.log(f"video: stopped ({e})")
             finally:
+                self.current = None
                 conn.close()
+
+    def restart(self) -> None:
+        """Ends the current connection; the headset reconnects and gets the
+        current settings."""
+        conn = self.current
+        if conn is not None:
+            try:
+                conn.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
 
     def stream(self, conn: socket.socket) -> None:
         if self.source in ("auto", "driver"):

@@ -3,6 +3,12 @@
 ## 未リリース
 
 ### 追加
+- **VHMD Link を PC とヘッドセットをつなぐ普通のアプリに**:
+  - 2 つのエディション: 接続用「VHMD Link」(`com.vhmd.link`)と開発用「VHMD Link Dev」(`com.vhmd.link.dev`、映像の下に統計、SteamVR のコントローラーを色付きの軸で表示)。`build_apk.py --edition`。
+  - ヘッドセットの接続画面(PC を探している / 接続した PC / SteamVR・映像を待っている、ヘッドセットの IP)と、操作権が移ったときのお知らせ。Android の文字描画を使うので日本語も表示できる。
+  - PC のアプリ `python -m vhmd_client.link`(`vhmd_link.pyw`): 接続と SteamVR の状態、ヘッドセットがつながったら SteamVR を起動、VHMD モード・ヘッドセットの画面への切り替え、画質などの設定、開発者向けの表示、通知領域に常駐、Windows の起動時に開く。
+  - インストーラー `tools/install_link.ps1`(ドライバの登録、スタートメニュー、USB でヘッドセットにアプリ)と `uninstall_link.ps1`。リリースの zip に APK を同梱。
+  - `headset_bridge` を `Bridge` クラスに分け、PC の状態(SteamVR、ドライバ、操作権)をヘッドセットに送る。ドライバへの問い合わせは姿勢と同じソケットから(振動の宛先を奪わない)。USB を後から挿しても `adb reverse` をかけ直す。
 - **VHMD Link: コントローラーの振動**。アプリの振動要求を `headset_bridge` がヘッドセットへ転送し(USB は TCP、Wi-Fi は UDP)、VHMD Link が OpenXR の振動として出す。
 - **コントローラー・トラッカーの見た目の切り替え**: 設定 `renderModels`(`labeled` / `axes`)と、SteamVR を止めずに切り替える `config` の `render_models`(`VHMDClient.render_models()`)。`axes` は開発用で、デバイスの X / Y / Z を赤・緑・青の線、前(-Z)を白い線で表示する。
 - **音: PC → ヘッドセット**。ドライバが既定の出力デバイスを WASAPI ループバックで取り込み、映像と同じ接続で 16 ビット PCM を送る。VHMD Link は AAudio(低遅延)で再生し、短いバッファで途切れと遅れを抑える。

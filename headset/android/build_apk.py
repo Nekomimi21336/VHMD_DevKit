@@ -2,8 +2,13 @@
 NDK + CMake for the native library, aapt2 / zipalign / apksigner from the
 Android SDK build-tools for the package.
 
-    python headset/android/build_apk.py              # build
-    python headset/android/build_apk.py --install    # build, adb install, start, adb reverse
+    python headset/android/build_apk.py                  # build both editions
+    python headset/android/build_apk.py --edition dev    # only VHMD Link Dev
+    python headset/android/build_apk.py --install        # build, adb install, start, adb reverse
+
+Editions: "link" (com.vhmd.link, "VHMD Link": connecting a PC) and "dev"
+(com.vhmd.link.dev, "VHMD Link Dev": adds a statistics overlay and asks the PC
+to show controllers as axes). They install side by side.
 
 Needs: Android SDK (ANDROID_HOME, or %LOCALAPPDATA%/Android/Sdk) with an NDK,
 build-tools and a platform; CMake and Ninja on PATH; the Khronos OpenXR loader
@@ -25,7 +30,12 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 CACHE = HERE.parent / ".cache"
 BUILD = HERE / "build"
-PACKAGE = "com.vhmd.link"
+VERSION = "0.6.0"
+VERSION_CODE = 6
+EDITIONS = {
+    "link": {"package": "com.vhmd.link", "label": "VHMD Link", "apk": "vhmd-link.apk", "dev": "OFF"},
+    "dev": {"package": "com.vhmd.link.dev", "label": "VHMD Link Dev", "apk": "vhmd-link-dev.apk", "dev": "ON"},
+}
 LOADER_VERSION = "1.1.63"
 LOADER_AAR = f"openxr_loader_for_android-{LOADER_VERSION}.aar"
 LOADER_SHA1 = "bb72fea1e7bdd35b381ae2a705206d912a1d5b30"
@@ -89,7 +99,8 @@ def loader(fetch: bool) -> Path:
     return out
 
 
-def build(args) -> Path:
+def build(args, edition: str) -> Path:
+    ed = EDITIONS[edition]
     sdk = sdk_dir()
     ndk = newest(sdk / "ndk")
     build_tools = newest(sdk / "build-tools")
@@ -98,16 +109,23 @@ def build(args) -> Path:
     print(f"SDK {sdk}\nNDK {ndk.name}, build-tools {build_tools.name}, {android_jar.parent.name}")
     oxr = loader(args.fetch_loader)
 
-    native = BUILD / "native"
+    native = BUILD / f"native-{edition}"
     run(["cmake", "-S", HERE, "-B", native, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
          f"-DCMAKE_TOOLCHAIN_FILE={ndk / 'build/cmake/android.toolchain.cmake'}", "-DANDROID_ABI=arm64-v8a",
-         f"-DANDROID_PLATFORM=android-{MIN_SDK}", "-DANDROID_STL=c++_static", f"-DOPENXR_DIR={oxr.as_posix()}"])
+         f"-DANDROID_PLATFORM=android-{MIN_SDK}", "-DANDROID_STL=c++_static", f"-DOPENXR_DIR={oxr.as_posix()}",
+         f"-DVHMD_DEV_EDITION={ed['dev']}", f"-DVHMD_LINK_VERSION={VERSION}"])
     run(["cmake", "--build", native])
 
+    # The manifest with this edition's package name and label.
+    manifest = BUILD / f"AndroidManifest-{edition}.xml"
+    text = (HERE / "AndroidManifest.xml").read_text(encoding="utf-8")
+    text = text.replace('package="com.vhmd.link"', f'package="{ed["package"]}"')
+    text = text.replace('android:label="VHMD Link"', f'android:label="{ed["label"]}"')
+    manifest.write_text(text, encoding="utf-8")
     base = BUILD / "base.apk"
-    run([tool(build_tools, "aapt2"), "link", "-o", base, "--manifest", HERE / "AndroidManifest.xml",
+    run([tool(build_tools, "aapt2"), "link", "-o", base, "--manifest", manifest,
          "-I", android_jar, "--min-sdk-version", MIN_SDK, "--target-sdk-version", TARGET_SDK,
-         "--version-code", "1", "--version-name", "0.1.0", "--debug-mode"])
+         "--version-code", VERSION_CODE, "--version-name", VERSION, "--debug-mode"])
     unaligned = BUILD / "unaligned.apk"
     shutil.copy(base, unaligned)
     with zipfile.ZipFile(unaligned, "a") as z:
@@ -121,27 +139,32 @@ def build(args) -> Path:
     keystore = Path.home() / ".android" / "debug.keystore"
     if not keystore.exists():
         raise SystemExit(f"no debug keystore at {keystore}")
-    apk = BUILD / "vhmd-link.apk"
+    apk = BUILD / ed["apk"]
     run([tool(build_tools, "apksigner"), "sign", "--ks", keystore, "--ks-key-alias", "androiddebugkey",
          "--ks-pass", "pass:android", "--key-pass", "pass:android", "--out", apk, aligned])
     print("built", apk, f"{apk.stat().st_size / 1024:.0f} KiB")
     return apk
 
 
-def install(apk: Path) -> None:
+def install(apk: Path, edition: str, start: bool) -> None:
     run(["adb", "install", "-r", "-g", apk])
-    run(["adb", "reverse", f"tcp:{PC_PORT}", f"tcp:{PC_PORT}"])
-    run(["adb", "shell", "am", "start", "-n", f"{PACKAGE}/android.app.NativeActivity"])
+    if start:
+        run(["adb", "reverse", f"tcp:{PC_PORT}", f"tcp:{PC_PORT}"])
+        run(["adb", "shell", "am", "start", "-n", f"{EDITIONS[edition]['package']}/android.app.NativeActivity"])
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--install", action="store_true", help="adb install, adb reverse and start the app")
     ap.add_argument("--fetch-loader", action="store_true", help=f"download {LOADER_AAR} if missing")
+    ap.add_argument("--edition", choices=("link", "dev", "both"), default="both",
+                    help="which edition to build (with --install, the first one built is started)")
     args = ap.parse_args()
-    apk = build(args)
+    editions = ["link", "dev"] if args.edition == "both" else [args.edition]
+    apks = [(e, build(args, e)) for e in editions]
     if args.install:
-        install(apk)
+        for i, (e, apk) in enumerate(apks):
+            install(apk, e, start=i == 0)
 
 
 if __name__ == "__main__":

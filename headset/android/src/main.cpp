@@ -8,7 +8,13 @@
 // else a "VHMD-DISCOVER" broadcast to UDP 39582 answered by the bridge; poses
 // then go as UDP datagrams to port 39580 (Wi-Fi). With no answer the app falls
 // back to USB: TCP to 127.0.0.1 (adb reverse), one array per line.
-// The floor grid shows the link: green Wi-Fi, cyan USB, red none.
+// The floor grid shows the link: green Wi-Fi, cyan USB, red none. Until the
+// PC's image arrives, a panel in front of the user says what the app is doing
+// (looking for the PC, waiting for SteamVR) and how to connect.
+//
+// Editions (CMake VHMD_DEV_EDITION): "VHMD Link" for using a PC's VR apps, and
+// "VHMD Link Dev" which adds a statistics overlay and tells the PC (headset
+// message "edition") to show controllers as colored axes.
 //
 // Coordinates: OpenXR's STAGE space (meters, +Y up, -Z forward, origin on the
 // floor) matches SteamVR's standing space, so poses go out unchanged.
@@ -22,6 +28,7 @@
 #include <android/hardware_buffer.h>
 #include <jni.h>
 #include <aaudio/AAudio.h>
+#include <android/configuration.h>
 #include <media/NdkImageReader.h>
 #include <media/NdkMediaCodec.h>
 
@@ -31,6 +38,8 @@
 #include <openxr/openxr_platform.h>
 
 #include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
@@ -41,6 +50,7 @@
 #include <deque>
 #include <chrono>
 #include <cmath>
+#include <cstdarg>
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
@@ -48,6 +58,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#include "text.h"
 
 #define LOG_TAG "VHMDLink"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -64,6 +76,54 @@ enum Link { kNone = 0, kUsb = 1, kWifi = 2 };
 std::atomic<uint32_t> g_pc_addr{0};
 std::atomic<int> g_link{kNone};
 uint32_t g_manual_addr = 0;   // from pc_address.txt
+std::mutex g_pc_mu;
+std::string g_pc_name;        // the PC's name from its discovery reply
+
+constexpr bool kDev = VHMD_DEV_EDITION != 0;
+bool g_ja = false;            // system language is Japanese
+const char* T(const char* ja, const char* en) { return g_ja ? ja : en; }
+
+// This headset's own IPv4 address on the LAN (for the connection screen).
+std::string OwnAddress() {
+    ifaddrs* list = nullptr;
+    if (getifaddrs(&list) != 0) return "";
+    std::string out;
+    for (ifaddrs* i = list; i; i = i->ifa_next) {
+        if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET || (i->ifa_flags & IFF_LOOPBACK)) continue;
+        if (!(i->ifa_flags & IFF_UP)) continue;
+        char b[INET_ADDRSTRLEN] = {};
+        inet_ntop(AF_INET, &reinterpret_cast<sockaddr_in*>(i->ifa_addr)->sin_addr, b, sizeof(b));
+        out = b;
+        if (strncmp(i->ifa_name, "wlan", 4) == 0) break;   // prefer Wi-Fi
+    }
+    freeifaddrs(list);
+    return out;
+}
+
+// Reads "key":"value" from a small JSON text.
+bool JsonString(const std::string& s, const char* key, std::string* out) {
+    const std::string k = std::string("\"") + key + "\"";
+    size_t p = s.find(k);
+    if (p == std::string::npos) return false;
+    p = s.find(':', p + k.size());
+    if (p == std::string::npos) return false;
+    p = s.find_first_not_of(" \t", p + 1);
+    if (p == std::string::npos || s[p] != '"') return false;
+    const size_t e = s.find('"', p + 1);
+    if (e == std::string::npos) return false;
+    *out = s.substr(p + 1, e - p - 1);
+    return true;
+}
+
+bool JsonBool(const std::string& s, const char* key, bool fallback) {
+    const std::string k = std::string("\"") + key + "\"";
+    size_t p = s.find(k);
+    if (p == std::string::npos) return fallback;
+    p = s.find(':', p + k.size());
+    if (p == std::string::npos) return fallback;
+    p = s.find_first_not_of(" \t", p + 1);
+    return p != std::string::npos && s.compare(p, 4, "true") == 0;
+}
 
 std::string AddrText(uint32_t a) {
     char b[INET_ADDRSTRLEN] = {};
@@ -92,7 +152,13 @@ uint32_t Discover() {
     close(s);
     if (n <= 0) return 0;
     buf[n] = 0;
-    return strstr(buf, "\"vhmd\"") ? from.sin_addr.s_addr : 0;
+    if (!strstr(buf, "\"vhmd\"")) return 0;
+    std::string name;
+    if (JsonString(buf, "name", &name)) {
+        std::lock_guard<std::mutex> l(g_pc_mu);
+        g_pc_name = name;
+    }
+    return from.sin_addr.s_addr;
 }
 
 bool Check(XrResult r, const char* what) {
@@ -572,6 +638,12 @@ public:
             }
         }
         if (!img) {
+            // No new image for a second: the PC stopped sending (SteamVR closed,
+            // link lost); show the app's own scene and the connection panel.
+            if (has_frame_ && now - last_new_ > std::chrono::seconds(1)) {
+                has_frame_ = false;
+                LOGI("video: no new image for 1 s");
+            }
             if (has_frame_) ++repeats_;
             return has_frame_;
         }
@@ -595,6 +667,7 @@ public:
         cur_img_ = img;
         cur_egl_ = egl;
         has_frame_ = true;
+        last_new_ = now;
         // Which frame this is: the decoder keeps our timestamp (frame index * step).
         int64_t ts_ns = 0;
         AImage_getTimestamp(img, &ts_ns);
@@ -623,11 +696,12 @@ public:
         int received, decoded, shown, repeats, dropped, buffer, rx_close, dec_close;
         int audio_packets, audio_underruns, audio_skipped;
         float wait_avg_ms, wait_p95_ms;   // decoded image waiting before it is shown
+        long long bytes;                  // received on the video connection
     };
     Stats TakeStats() {
         std::lock_guard<std::mutex> l(queue_mu_);
         Stats s{received_.exchange(0), decoded_.exchange(0), shown_, repeats_, dropped_, buffer_.load(),
-                rx_close_.exchange(0), dec_close_.exchange(0), 0, 0, 0, 0, 0};
+                rx_close_.exchange(0), dec_close_.exchange(0), 0, 0, 0, 0, 0, bytes_.exchange(0)};
         audio_.TakeStats(&s.audio_packets, &s.audio_underruns, &s.audio_skipped);
         if (!waits_ms_.empty()) {
             float sum = 0;
@@ -678,6 +752,7 @@ private:
             while (!stop_ && ReadAll(fd, &h, sizeof(h)) && memcmp(h.magic, "VHV1", 4) == 0) {
                 payload.resize(h.size);
                 if (h.size && !ReadAll(fd, payload.data(), h.size)) break;
+                bytes_ += sizeof(h) + h.size;
                 if (h.kind == kKindConfig)
                     Configure(std::string(payload.begin(), payload.end()));
                 else if (h.kind == kKindFrame && codec_) {
@@ -872,6 +947,7 @@ private:
     std::atomic<int> received_{0}, decoded_{0};
     std::chrono::steady_clock::time_point last_rx_{}, last_dec_{};
     std::atomic<int> rx_close_{0}, dec_close_{0};
+    std::atomic<long long> bytes_{0};
     int shown_ = 0;
     std::mutex pose_mu_;
     FrameRec poses_[kPoseRing];
@@ -891,6 +967,7 @@ private:
     AImage* cur_img_ = nullptr;
     EGLImageKHR cur_egl_ = EGL_NO_IMAGE_KHR;
     bool has_frame_ = false;
+    std::chrono::steady_clock::time_point last_new_{};
 };
 
 const char* kVideoVs = R"(#version 300 es
@@ -923,6 +1000,22 @@ struct Swapchain {
 
 enum Hand { kLeft = 0, kRight = 1 };
 
+// A flat panel of text shown as an OpenXR quad layer; redrawn only when its
+// text changes.
+struct Panel {
+    XrSwapchain handle = XR_NULL_HANDLE;
+    int32_t width = 0, height = 0;
+    std::vector<XrSwapchainImageOpenGLESKHR> images;
+    bool has_image = false;
+    std::string key;            // text currently shown
+    XrSpace space = XR_NULL_HANDLE;
+    XrPosef pose{{0, 0, 0, 1}, {0, 0, 0}};
+    XrExtent2Df size{1, 1};     // meters
+    bool visible = false;
+};
+
+using vhmd_link::TextLine;
+
 struct App {
     android_app* android = nullptr;
     bool resumed = false;
@@ -952,6 +1045,30 @@ struct App {
     std::chrono::steady_clock::time_point take_since{};
     bool take_holding = false, take_sent = false;
     std::string link_stats;   // {"type":"link_stats",...} for the PC, refreshed every 2 s
+
+    // What the PC says about itself ({"type":"status",...} about once a second).
+    struct PcStatus {
+        bool known = false;
+        bool steamvr = false, driver = false;
+        std::string control;    // who moves the HMD: "manual", "auto", another sender, "" = anyone
+        std::chrono::steady_clock::time_point at{};
+    } pc;
+    std::string shown_control;  // last owner announced in a notice
+
+    // Panels: the connection screen (follows the gaze lazily), a notice line
+    // and (Dev edition) the statistics overlay.
+    int64_t color_format = 0;
+    vhmd_link::TextPainter text;
+    bool text_ok = false;
+    Panel status_panel, notice_panel, hud_panel;
+    bool status_placed = false, status_moving = false;
+    std::string notice;
+    std::chrono::steady_clock::time_point notice_until{};
+    std::string own_address;
+    std::chrono::steady_clock::time_point next_address{};
+    // Last 2-second statistics, for the overlay.
+    float st_display = 0, st_received = 0, st_shown = 0, st_wait = 0, st_mbps = 0, st_audio = 0;
+    int st_underruns = 0, st_haptics = 0;
 
     XrActionSet action_set = XR_NULL_HANDLE;
     XrPath hand_paths[2] = {};
@@ -1125,6 +1242,7 @@ bool CreateSwapchains(App& app) {
     std::string list;
     for (int64_t f : formats) list += std::to_string(f) + " ";
     LOGI("swapchain formats: %s-> 0x%llx", list.c_str(), static_cast<long long>(format));
+    app.color_format = format;
 
     for (auto& vc : app.view_configs) {
         Swapchain sc;
@@ -1374,9 +1492,238 @@ void AppendHeadsetInfo(App& app, std::string& out, const std::vector<XrView>& ey
         n += snprintf(buf + n, sizeof(buf) - n, "%s[%.5f,%.5f,%.5f,%.6f,%.6f,%.6f,%.6f]", i ? "," : "", p.position.x,
                       p.position.y, p.position.z, p.orientation.w, p.orientation.x, p.orientation.y, p.orientation.z);
     }
-    snprintf(buf + n, sizeof(buf) - n, "]}");
+    snprintf(buf + n, sizeof(buf) - n, "],\"edition\":\"%s\",\"version\":\"%s\"}", kDev ? "dev" : "link",
+             VHMD_LINK_VERSION);
     if (out.size() > 1) out += ',';
     out += buf;
+}
+
+// -- panels -------------------------------------------------------------------
+bool CreatePanel(App& app, Panel& p, int32_t w, int32_t h, XrSpace space, XrExtent2Df size) {
+    XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+    ci.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+    ci.format = app.color_format;
+    ci.sampleCount = 1;
+    ci.width = static_cast<uint32_t>(w);
+    ci.height = static_cast<uint32_t>(h);
+    ci.faceCount = 1;
+    ci.arraySize = 1;
+    ci.mipCount = 1;
+    if (!Check(xrCreateSwapchain(app.session, &ci, &p.handle), "xrCreateSwapchain(panel)")) return false;
+    uint32_t ic = 0;
+    xrEnumerateSwapchainImages(p.handle, 0, &ic, nullptr);
+    p.images.assign(ic, {XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR});
+    xrEnumerateSwapchainImages(p.handle, ic, &ic, reinterpret_cast<XrSwapchainImageBaseHeader*>(p.images.data()));
+    p.width = w;
+    p.height = h;
+    p.space = space;
+    p.size = size;
+    return true;
+}
+
+// Shows `lines` on the panel (painted again only when they change).
+void SetPanel(App& app, Panel& p, uint32_t background, float margin, const std::vector<TextLine>& lines) {
+    p.visible = true;
+    if (!app.text_ok || p.handle == XR_NULL_HANDLE) {
+        p.visible = false;
+        return;
+    }
+    std::string key;
+    for (const auto& l : lines) key += l.text + '\n';
+    if (p.has_image && key == p.key) return;
+    std::vector<uint8_t> rgba;
+    if (!app.text.Paint(p.width, p.height, background, margin, lines, &rgba)) {
+        p.visible = p.has_image;
+        return;
+    }
+    uint32_t image = 0;
+    XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+    if (XR_FAILED(xrAcquireSwapchainImage(p.handle, &ai, &image))) return;
+    XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+    wi.timeout = XR_INFINITE_DURATION;
+    xrWaitSwapchainImage(p.handle, &wi);
+    glBindTexture(GL_TEXTURE_2D, p.images[image].image);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, p.width, p.height, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    glBindTexture(GL_TEXTURE_2D, 0);
+    XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    xrReleaseSwapchainImage(p.handle, &ri);
+    p.has_image = true;
+    p.key = key;
+}
+
+void AddPanelLayer(const Panel& p, std::vector<XrCompositionLayerQuad>& quads) {
+    if (!p.visible || !p.has_image) return;
+    XrCompositionLayerQuad q{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    q.space = p.space;
+    q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    q.subImage.swapchain = p.handle;
+    q.subImage.imageRect = {{0, 0}, {p.width, p.height}};
+    q.pose = p.pose;
+    q.size = p.size;
+    quads.push_back(q);
+}
+
+void CreatePanels(App& app) {
+    app.text_ok = app.text.Init(app.android->activity->vm);
+    if (!app.text_ok) {
+        LOGE("text drawing not available: no panels");
+        return;
+    }
+    CreatePanel(app, app.status_panel, 1024, 640, app.base, {0.96f, 0.6f});
+    CreatePanel(app, app.notice_panel, 1024, 112, app.head, {0.62f, 0.068f});
+    app.notice_panel.pose = {{0, 0, 0, 1}, {0, -0.16f, -1.0f}};
+    if (kDev) {
+        CreatePanel(app, app.hud_panel, 1024, 150, app.head, {0.6f, 0.088f});
+        // Below the line of sight, turned up toward the eyes.
+        const float a = -std::atan(0.3f / 1.0f);
+        app.hud_panel.pose = {{std::sin(a / 2), 0, 0, std::cos(a / 2)}, {0, -0.3f, -1.0f}};
+    }
+}
+
+// The connection screen stays where it is until the user looks more than 35
+// degrees away, then glides back in front of them (1.4 m away, facing them).
+void PlaceStatusPanel(App& app, const XrSpaceLocation& head) {
+    if (!(head.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT)) return;
+    const XrVector3f f = Rotate(head.pose.orientation, {0, 0, -1});
+    float fx = f.x, fz = f.z;
+    const float len = std::sqrt(fx * fx + fz * fz);
+    if (len < 0.2f) return;   // looking straight up or down: keep it where it is
+    fx /= len;
+    fz /= len;
+    const XrVector3f hp = head.pose.position;
+    const XrVector3f target{hp.x + fx * 1.4f, hp.y - 0.05f, hp.z + fz * 1.4f};
+    Panel& p = app.status_panel;
+    if (!app.status_placed) {
+        p.pose.position = target;
+        app.status_placed = true;
+    } else {
+        const float dx = p.pose.position.x - hp.x, dz = p.pose.position.z - hp.z;
+        const float dl = std::sqrt(dx * dx + dz * dz);
+        const float cosang = dl > 1e-3f ? (dx * fx + dz * fz) / dl : 1.0f;
+        if (cosang < std::cos(35.0f * 3.14159265f / 180.0f)) app.status_moving = true;
+        if (app.status_moving) {
+            const float k = 0.08f;
+            p.pose.position.x += (target.x - p.pose.position.x) * k;
+            p.pose.position.y += (target.y - p.pose.position.y) * k;
+            p.pose.position.z += (target.z - p.pose.position.z) * k;
+            const float ex = target.x - p.pose.position.x, ez = target.z - p.pose.position.z;
+            if (ex * ex + ez * ez < 0.02f * 0.02f) app.status_moving = false;
+        }
+    }
+    // Face the head: the quad's front (+Z) points from the panel to the head.
+    const float yaw = std::atan2(hp.x - p.pose.position.x, hp.z - p.pose.position.z);
+    p.pose.orientation = {0, std::sin(yaw / 2), 0, std::cos(yaw / 2)};
+}
+
+void Notice(App& app, const std::string& text, int seconds) {
+    app.notice = text;
+    app.notice_until = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+}
+
+std::string ControlName(const std::string& owner) {
+    if (owner == "manual") return T("マニュアル(このヘッドセット)", "manual (this headset)");
+    if (owner.empty() || owner == "any") return T("制限なし", "anyone");
+    if (owner == "auto") return T("オート", "auto");
+    return owner;
+}
+
+std::string Fmt(const char* f, ...) __attribute__((format(printf, 1, 2)));
+std::string Fmt(const char* f, ...) {
+    char b[512];
+    va_list ap;
+    va_start(ap, f);
+    vsnprintf(b, sizeof(b), f, ap);
+    va_end(ap);
+    return b;
+}
+
+// What the panels say this frame.
+void UpdatePanels(App& app, bool video, const XrSpaceLocation& head) {
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= app.next_address) {
+        app.next_address = now + std::chrono::seconds(5);
+        app.own_address = OwnAddress();
+    }
+    const bool linked = app.sender.Connected() && g_link.load() != kNone;
+    const bool pc_fresh = app.pc.known && now - app.pc.at < std::chrono::seconds(3);
+    const int link = g_link.load();
+    std::string pc_name;
+    {
+        std::lock_guard<std::mutex> l(g_pc_mu);
+        pc_name = g_pc_name;
+    }
+    const std::string where = link == kWifi ? Fmt("Wi-Fi %s", AddrText(g_pc_addr.load()).c_str())
+                                            : std::string(T("USB ケーブル", "USB cable"));
+
+    // Connection screen: whenever the PC's image is not showing.
+    app.status_panel.visible = false;
+    if (!video) {
+        PlaceStatusPanel(app, head);
+        std::vector<TextLine> l;
+        l.push_back({kDev ? "VHMD Link Dev" : "VHMD Link", 54, 0xFFFFFFFF, true});
+        if (!pc_fresh) {
+            l.push_back({T("PC を探しています…", "Looking for the PC..."), 40, 0xFFFFC857, true, 26});
+            l.push_back({T("1. PC で「VHMD Link」を起動します", "1. Start \"VHMD Link\" on the PC"), 30, 0xFFE6E6E6, false, 18});
+            l.push_back({T("2. 同じ Wi-Fi につなぐか、USB ケーブルでつなぎます", "2. Use the same Wi-Fi, or connect a USB cable"),
+                         30, 0xFFE6E6E6});
+            l.push_back({T("   自動で見つけて接続します", "   It connects by itself"), 30, 0xFFB0B0B0});
+        } else {
+            l.push_back({Fmt(T("PC「%s」に接続しました", "Connected to \"%s\""), pc_name.empty() ? "PC" : pc_name.c_str()),
+                         40, 0xFF6EE7A0, true, 26});
+            l.push_back({std::string(T("接続: ", "Link: ")) + where, 30, 0xFFE6E6E6, false, 10});
+            if (!app.pc.steamvr)
+                l.push_back({T("SteamVR を待っています(PC で起動してください)", "Waiting for SteamVR (start it on the PC)"),
+                             32, 0xFFFFC857, false, 18});
+            else if (!app.pc.driver)
+                l.push_back({T("SteamVR を準備しています…", "SteamVR is starting..."), 32, 0xFFFFC857, false, 18});
+            else
+                l.push_back({T("映像を待っています…", "Waiting for the image..."), 32, 0xFFFFC857, false, 18});
+        }
+        l.push_back({Fmt(T("このヘッドセット: %s   v%s", "This headset: %s   v%s"),
+                         app.own_address.empty() ? T("ネットワークなし", "no network") : app.own_address.c_str(),
+                         VHMD_LINK_VERSION),
+                     24, 0xFF9AA4B2, false, 30});
+        SetPanel(app, app.status_panel, 0xE0141821, 44, l);
+    }
+
+    // Who has control, announced when it changes; X + A held shows progress.
+    // Announced when the headset loses or regains control (not at the start
+    // when it has it).
+    auto headset_moves = [](const std::string& c) { return c.empty() || c == "manual" || c == "any"; };
+    if (pc_fresh && app.pc.control != app.shown_control) {
+        const bool now_ok = headset_moves(app.pc.control);
+        const bool was_ok = app.shown_control.empty() || headset_moves(app.shown_control);
+        if (!now_ok)
+            Notice(app, Fmt(T("%s が操作中 ― X + A 長押しで取り戻せます", "%s is in control - hold X + A to take it back"),
+                            ControlName(app.pc.control).c_str()), 5);
+        else if (!was_ok)
+            Notice(app, T("このヘッドセットで操作しています", "This headset is in control again"), 4);
+        app.shown_control = app.pc.control;
+    }
+    if (app.take_holding && !app.take_sent) Notice(app, T("X + A を押し続けると操作を取り戻します…", "Keep holding X + A to take control..."), 1);
+    if (!linked && !pc_fresh && app.pc.known && video) Notice(app, T("PC との接続が切れました", "Lost the connection to the PC"), 2);
+    if (now < app.notice_until && !app.notice.empty())
+        SetPanel(app, app.notice_panel, 0xD0141821, 22, {{app.notice, 34, 0xFFFFFFFF, true}});
+    else
+        app.notice_panel.visible = false;
+
+    // Dev edition: statistics under the line of sight while the image shows.
+    if (kDev && video) {
+        std::vector<TextLine> l;
+        l.push_back({Fmt(T("映像 %.0f/%.0f fps  表示 %.0f Hz  %.1f Mbit/s  待ち %.1f ms",
+                           "Video %.0f/%.0f fps  display %.0f Hz  %.1f Mbit/s  wait %.1f ms"),
+                         app.st_shown, app.st_received, app.st_display, app.st_mbps, app.st_wait),
+                     30, 0xFFFFFFFF, false});
+        l.push_back({Fmt(T("%s  音 %.0f/s 途切れ %d  振動 %d  操作 %s", "%s  audio %.0f/s underruns %d  haptics %d  control %s"),
+                         where.c_str(), app.st_audio, app.st_underruns, app.st_haptics,
+                         pc_fresh ? ControlName(app.pc.control).c_str() : "?"),
+                     26, 0xFFB8C4D6, false, 4});
+        SetPanel(app, app.hud_panel, 0xB0101418, 18, l);
+    } else {
+        app.hud_panel.visible = false;
+    }
 }
 
 void RenderEye(App& app, Swapchain& sc, uint32_t image, const XrView& view, const std::vector<Vertex>& verts,
@@ -1435,6 +1782,20 @@ void Frame(App& app) {
 
     // Vibration the PC asked for: {"type":"haptic","id":"left_hand","duration":s,"frequency":Hz,"amplitude":0..1}.
     for (const std::string& m : app.sender.TakeIncoming()) {
+        if (m.find("\"type\":\"status\"") != std::string::npos) {
+            // {"type":"status","pc":"NAME","steamvr":true,"driver":true,"control":"manual"}
+            app.pc.known = true;
+            app.pc.at = std::chrono::steady_clock::now();
+            app.pc.steamvr = JsonBool(m, "steamvr", false);
+            app.pc.driver = JsonBool(m, "driver", false);
+            JsonString(m, "control", &app.pc.control);
+            std::string name;
+            if (JsonString(m, "pc", &name)) {
+                std::lock_guard<std::mutex> l(g_pc_mu);
+                g_pc_name = name;
+            }
+            continue;
+        }
         if (m.find("\"haptic\"") == std::string::npos) continue;
         const int hand = m.find("\"left_hand\"") != std::string::npos ? kLeft : kRight;
         double duration = 0, frequency = 0, amplitude = 0;
@@ -1465,6 +1826,8 @@ void Frame(App& app) {
         } else if (!app.take_sent && t - app.take_since >= std::chrono::milliseconds(1500)) {
             app.take_sent = true;
             msg += ",{\"type\":\"config\",\"op\":\"control\",\"source\":\"manual\"}";
+            Notice(app, T("操作を取り戻しました(マニュアル)", "Control taken back (manual)"), 4);
+            app.shown_control = "manual";
             LOGI("X+A held: taking control back (manual)");
         }
     }
@@ -1495,6 +1858,8 @@ void Frame(App& app) {
     std::vector<XrCompositionLayerProjectionView> proj_views;
     XrCompositionLayerProjection layer{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
     std::vector<XrCompositionLayerBaseHeader*> layers;
+    std::vector<XrCompositionLayerQuad> quads;
+    quads.reserve(3);
     if (fs.shouldRender) {
         XrViewLocateInfo vli{XR_TYPE_VIEW_LOCATE_INFO};
         vli.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
@@ -1519,8 +1884,16 @@ void Frame(App& app) {
         }
         Line(verts, 0, 0.001f, 0, 1, 0.001f, 0, 1, 0.2f, 0.2f);    // +X
         Line(verts, 0, 0.001f, 0, 0, 0.001f, -1, 0.3f, 0.5f, 1);   // -Z (forward)
-        for (int h = 0; h < 2; ++h)
-            if (hands[h].locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) Triad(verts, hands[h].pose, 0.1f);
+        for (int h = 0; h < 2; ++h) {
+            if (!(hands[h].locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT)) continue;
+            if (kDev) {
+                Triad(verts, hands[h].pose, 0.1f);
+            } else {
+                const XrVector3f a = hands[h].pose.position;
+                const XrVector3f d = Rotate(hands[h].pose.orientation, {0, 0, -0.12f});
+                Line(verts, a.x, a.y, a.z, a.x + d.x, a.y + d.y, a.z + d.z, 0.85f, 0.88f, 0.95f);
+            }
+        }
         glBindBuffer(GL_ARRAY_BUFFER, app.vbo);
         glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(verts.size() * sizeof(Vertex)), verts.data(),
                      GL_STREAM_DRAW);
@@ -1553,6 +1926,12 @@ void Frame(App& app) {
         layer.viewCount = vc;
         layer.views = proj_views.data();
         layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&layer));
+
+        UpdatePanels(app, video, head);
+        AddPanelLayer(app.status_panel, quads);
+        AddPanelLayer(app.notice_panel, quads);
+        AddPanelLayer(app.hud_panel, quads);
+        for (auto& q : quads) layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&q));
     }
 
     static auto last_log = std::chrono::steady_clock::now();
@@ -1569,6 +1948,7 @@ void Frame(App& app) {
              xr_frames / s, v.received / s, v.decoded / s, v.shown / s, v.repeats / s, v.dropped / s, v.buffer,
              v.wait_avg_ms, v.wait_p95_ms, rep, v.rx_close / s, v.dec_close / s, v.audio_packets / s,
              v.audio_underruns, v.audio_skipped, app.haptics);
+        app.st_haptics = app.haptics;
         app.haptics = 0;
         // The same numbers for the PC: over Wi-Fi there is no logcat.
         char st[384];
@@ -1579,6 +1959,13 @@ void Frame(App& app) {
                  xr_frames / s, v.received / s, v.decoded / s, v.shown / s, v.repeats / s, v.dropped / s, v.buffer,
                  v.wait_avg_ms, v.wait_p95_ms, rep, v.audio_packets / s, v.audio_underruns);
         app.link_stats = st;
+        app.st_display = xr_frames / s;
+        app.st_received = v.received / s;
+        app.st_shown = v.shown / s;
+        app.st_wait = v.wait_avg_ms;
+        app.st_mbps = static_cast<float>(v.bytes) * 8.0f / 1e6f / s;
+        app.st_audio = v.audio_packets / s;
+        app.st_underruns = v.audio_underruns;
         app.reprojected = 0;
         xr_frames = 0;
         last_log = now;
@@ -1623,6 +2010,11 @@ void android_main(android_app* android) {
     app.android = android;
     android->userData = &app;
     android->onAppCmd = OnAppCmd;
+    {
+        char lang[3] = {};
+        AConfiguration_getLanguage(android->config, lang);
+        g_ja = lang[0] == 'j' && lang[1] == 'a';
+    }
 
     if (android->activity->externalDataPath) {
         const std::string path = std::string(android->activity->externalDataPath) + "/pc_address.txt";
@@ -1644,9 +2036,11 @@ void android_main(android_app* android) {
         ANativeActivity_finish(android->activity);
     } else {
         InitGl(app);
+        CreatePanels(app);
         app.sender.Start();
         app.video.Start();
-        LOGI("running; looking for the PC (Wi-Fi discovery on UDP %u, USB fallback)", kDiscoveryPort);
+        LOGI("VHMD Link%s %s running; looking for the PC (Wi-Fi discovery on UDP %u, USB fallback)",
+             kDev ? " Dev" : "", VHMD_LINK_VERSION, kDiscoveryPort);
     }
 
     while (!android->destroyRequested) {

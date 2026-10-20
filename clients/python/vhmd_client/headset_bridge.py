@@ -6,11 +6,16 @@ of VHMD protocol messages per UDP datagram to port 39580. USB: over
 `adb reverse` (done here unless --no-adb) the app sends the same arrays one
 per line over TCP to port 39580. Either way each array goes on to the driver
 (which only listens on this PC) as one UDP datagram. On TCP port 39581 the app
-gets VHMD's image as H.264 (headset_stream; needs ffmpeg and the driver in
-direct mode).
+gets VHMD's image and the PC's sound (headset_stream).
+
+Back to the headset go the driver's haptic events and, about once a second, the
+PC's status: {"type": "status", "pc": name, "steamvr": bool, "driver": bool,
+"control": owner of the HMD}. The headset's edition ("dev") makes the
+controllers show as axes in SteamVR.
 
     python -m vhmd_client.headset_bridge [--usb-only] [--no-adb] [--no-video]
 
+The PC app (`python -m vhmd_client.link`) runs the same Bridge with a window.
 The network ports accept any device on the LAN: use it on a trusted network,
 or --usb-only.
 """
@@ -24,6 +29,8 @@ import socket
 import subprocess
 import threading
 import time
+from dataclasses import dataclass
+from typing import Callable, Optional
 
 from . import headset_info
 from .client import DEFAULT_HOST, DEFAULT_PORT
@@ -31,6 +38,22 @@ from .headset_stream import VIDEO_PORT, VideoServer
 
 LISTEN_PORT = 39580
 DISCOVERY_PORT = 39582
+
+
+@dataclass
+class BridgeOptions:
+    driver_host: str = DEFAULT_HOST
+    driver_port: int = DEFAULT_PORT
+    port: int = LISTEN_PORT
+    adb: bool = True              # run adb reverse for USB
+    usb_only: bool = False        # listen on 127.0.0.1 only
+    video: bool = True
+    bitrate: float = 40.0         # Mbit/s
+    codec: str = "hevc"
+    eye_width: int = 0
+    video_source: str = "auto"
+    encoder: str = "h264_amf"
+    buffer: int = 0
 
 
 class Stats:
@@ -54,28 +77,9 @@ class Stats:
             return out
 
 
-def forward(data: bytes, udp: socket.socket, driver, stats: Stats) -> None:
-    """One JSON array from the app to the driver; the app's "headset" message
-    (its display: fields of view, eyes, render size, refresh rate) is kept here."""
-    if b'"type":"headset"' in data or b'"type":"link_stats"' in data:
-        try:
-            msgs = json.loads(data)
-        except ValueError:
-            msgs = []
-        rest = [m for m in msgs if m.get("type") not in ("headset", "link_stats")]
-        for m in msgs:
-            if m.get("type") == "headset":
-                headset_info.update(m, log=lambda s: print(s, flush=True))
-            elif m.get("type") == "link_stats":
-                stats.headset = m
-        data = json.dumps(rest, separators=(",", ":")).encode()
-    udp.sendto(data, driver)
-    stats.add(data)
-
-
 class HeadsetLink:
     """Where the headset is: its UDP address (Wi-Fi) or TCP connection (USB),
-    for messages the driver sends back (haptics)."""
+    for messages back to it (haptics, the PC's status)."""
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -83,6 +87,7 @@ class HeadsetLink:
         self.udp_addr = None
         self.tcp = None
         self.sent = 0
+        self.last_seen = 0.0      # time.monotonic() of the newest message from the headset
 
     def via_udp(self, sock: socket.socket, addr) -> None:
         with self.lock:
@@ -91,6 +96,14 @@ class HeadsetLink:
     def via_tcp(self, conn: socket.socket) -> None:
         with self.lock:
             self.tcp, self.udp_addr = conn, None
+
+    def kind(self) -> Optional[str]:
+        with self.lock:
+            return "usb" if self.tcp is not None else "wifi" if self.udp_addr is not None else None
+
+    def address(self) -> str:
+        with self.lock:
+            return self.udp_addr[0] if self.udp_addr else ("USB" if self.tcp is not None else "")
 
     def send(self, data: bytes) -> None:
         with self.lock:
@@ -106,57 +119,280 @@ class HeadsetLink:
                 pass
 
 
-LINK = HeadsetLink()
+class Bridge:
+    """The relay, as an object: start() it, read status() now and then."""
 
+    def __init__(self, options: BridgeOptions, log: Callable[[str], None] = print) -> None:
+        self.o = options
+        self.log = log
+        self.stats = Stats()
+        self.link = HeadsetLink()
+        self.video: Optional[VideoServer] = None
+        self.info: dict = {}            # the headset's latest "headset" message
+        self.pc_state = {"steamvr": False, "driver": False, "control": ""}
+        self.rates = {"msgs": 0, "kib": 0.0, "video_in": 0, "video_out": 0, "mbps": 0.0}
+        self.summary = ""
+        self._models_applied: Optional[str] = None   # render models set for this driver session
+        self._driver = (options.driver_host, options.driver_port)
+        self._udp: Optional[socket.socket] = None
+        self._replies: dict = {}
+        self._reply_cv = threading.Condition()
+        self._seq = 0
 
-def serve_driver_replies(udp: socket.socket) -> None:
-    """The driver answers the socket the poses come from: haptic events go on
-    to the headset (other replies are dropped)."""
-    while True:
-        try:
-            data, _ = udp.recvfrom(65536)
-        except OSError:
-            continue
-        if b'"haptic"' in data:
-            LINK.send(data)
+    # -- setup ----------------------------------------------------------------
+    def start(self) -> None:
+        o = self.o
+        if o.adb:
+            self._adb_reverse()
+        host = "127.0.0.1" if o.usb_only else "0.0.0.0"
+        if o.video:
+            self.video = VideoServer(host=host, bitrate_mbps=o.bitrate, encoder=o.encoder, buffer=o.buffer,
+                                     codec=o.codec, eye_width=o.eye_width, source=o.video_source, log=self.log)
+            self.video.start()
 
+        self._udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._udp.bind(("127.0.0.1", 0))
+        self._thread(self._serve_driver_replies)
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind((host, o.port))
+        srv.listen(2)
+        self._thread(self._accept, srv)
+        if not o.usb_only:
+            pose_udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            pose_udp.bind((host, o.port))
+            self._thread(self._serve_udp, pose_udp)
+            disc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            disc.bind((host, DISCOVERY_PORT))
+            self._thread(self._serve_discovery, disc)
+            self.log(f"network: discovery on UDP {DISCOVERY_PORT}, poses on UDP {o.port}, video on TCP {VIDEO_PORT}"
+                     " (any device on the LAN can connect)")
+        self.log(f"USB: poses on TCP 127.0.0.1:{o.port} -> driver {self._driver[0]}:{self._driver[1]}")
+        self._thread(self._monitor)
+        if o.adb:
+            self._thread(self._adb_watch)
 
-def serve_client(conn: socket.socket, udp: socket.socket, driver, stats: Stats) -> None:
-    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-    LINK.via_tcp(conn)
-    buf = b""
-    with conn:
+    def _adb_reverse(self, quiet: bool = False) -> bool:
+        """USB: lets the headset reach this PC's ports as its own 127.0.0.1."""
+        ok = True
+        for port in (self.o.port, VIDEO_PORT):
+            try:
+                r = subprocess.run(["adb", "reverse", f"tcp:{port}", f"tcp:{port}"], capture_output=True, text=True,
+                                   timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                ok = ok and r.returncode == 0
+                if not quiet:
+                    self.log(f"adb reverse {port}: " + ("ok" if r.returncode == 0 else (r.stderr.strip() or r.stdout.strip())))
+            except (OSError, subprocess.TimeoutExpired):
+                ok = False
+                if not quiet:
+                    self.log(f"adb reverse {port}: adb not available (USB not used)")
+        return ok
+
+    def _adb_watch(self) -> None:
+        """A headset plugged in later: set up adb reverse again while none is connected."""
+        was_ok = None
         while True:
-            data = conn.recv(65536)
-            if not data:
-                break
-            buf += data
-            *lines, buf = buf.split(b"\n")
-            for line in lines:
-                if line:
-                    forward(line, udp, driver, stats)
+            time.sleep(10.0)
+            if self.connected():
+                continue
+            ok = self._adb_reverse(quiet=True)
+            if ok and was_ok is False:
+                self.log("USB: headset found, adb reverse set up")
+            was_ok = ok
 
+    @staticmethod
+    def _thread(fn, *args) -> None:
+        threading.Thread(target=fn, args=args, daemon=True).start()
 
-def serve_udp(sock: socket.socket, udp: socket.socket, driver, stats: Stats) -> None:
-    """Poses over the network: one JSON array per datagram."""
-    peer = None
-    while True:
-        data, addr = sock.recvfrom(65536)
-        if addr != peer:
-            peer = addr
-            print("headset sending over the network from", addr[0], flush=True)
-            LINK.via_udp(sock, addr)
-        forward(data, udp, driver, stats)
+    def set_video(self, bitrate: Optional[float] = None, codec: Optional[str] = None,
+                  buffer: Optional[int] = None) -> None:
+        """New video settings; the headset reconnects to get them (about a second)."""
+        if bitrate is not None:
+            self.o.bitrate = bitrate
+        if codec is not None:
+            self.o.codec = codec
+        if buffer is not None:
+            self.o.buffer = buffer
+        if self.video:
+            self.video.bitrate, self.video.codec, self.video.buffer = self.o.bitrate, self.o.codec, self.o.buffer
+            self.video.restart()
 
+    def request(self, op: str, timeout: float = 0.3, **args) -> dict:
+        """A config request to the driver, sent from the socket the poses use: the
+        driver sends haptic events to whoever sent last, so asking from another
+        socket could take them away from the headset."""
+        with self._reply_cv:
+            self._seq += 1
+            seq = 900000 + self._seq
+        self._udp.sendto(json.dumps({"type": "config", "op": op, "seq": seq, **args}).encode(), self._driver)
+        with self._reply_cv:
+            if not self._reply_cv.wait_for(lambda: seq in self._replies, timeout):
+                raise TimeoutError(f"no reply to '{op}' from the driver")
+            return self._replies.pop(seq)
 
-def serve_discovery(sock: socket.socket, args) -> None:
-    """Answers the app's broadcast with this PC's ports (unicast)."""
-    reply = json.dumps({"vhmd": "pc", "name": platform.node(), "pose_port": args.port,
-                        "video_port": VIDEO_PORT}).encode()
-    while True:
-        data, addr = sock.recvfrom(1024)
-        if data.startswith(b"VHMD-DISCOVER"):
-            sock.sendto(reply, addr)
+    # -- status ---------------------------------------------------------------
+    def connected(self) -> bool:
+        return time.monotonic() - self.link.last_seen < 2.0
+
+    def status(self) -> dict:
+        return {
+            "headset": self.connected(),
+            "link": self.link.kind() if self.connected() else None,
+            "address": self.link.address(),
+            "model": self.info.get("model", ""),
+            "edition": self.info.get("edition", ""),
+            "version": self.info.get("version", ""),
+            "refresh": self.info.get("refresh", 0),
+            "render": self.info.get("render", []),
+            "video_connected": bool(self.video and self.video.current),
+            **self.pc_state,
+            **self.rates,
+            "headset_stats": dict(self.stats.headset),
+            "summary": self.summary,
+        }
+
+    # -- headset -> driver ----------------------------------------------------
+    def _forward(self, data: bytes) -> None:
+        """One JSON array from the app to the driver; the app's "headset" message
+        (its display: fields of view, eyes, render size, refresh rate, edition)
+        and statistics stay here."""
+        self.link.last_seen = time.monotonic()
+        if b'"type":"headset"' in data or b'"type":"link_stats"' in data:
+            try:
+                msgs = json.loads(data)
+            except ValueError:
+                msgs = []
+            rest = [m for m in msgs if m.get("type") not in ("headset", "link_stats")]
+            for m in msgs:
+                if m.get("type") == "headset":
+                    self.info = m
+                    headset_info.update(m, log=self.log)
+                elif m.get("type") == "link_stats":
+                    self.stats.headset = m
+            data = json.dumps(rest, separators=(",", ":")).encode()
+        self._udp.sendto(data, self._driver)
+        self.stats.add(data)
+
+    def _accept(self, srv: socket.socket) -> None:
+        while True:
+            conn, addr = srv.accept()
+            self.log(f"headset connected over USB {addr}")
+            self._thread(self._serve_client, conn)
+
+    def _serve_client(self, conn: socket.socket) -> None:
+        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self.link.via_tcp(conn)
+        buf = b""
+        with conn:
+            while True:
+                try:
+                    data = conn.recv(65536)
+                except OSError:
+                    break
+                if not data:
+                    break
+                buf += data
+                *lines, buf = buf.split(b"\n")
+                for line in lines:
+                    if line:
+                        self._forward(line)
+
+    def _serve_udp(self, sock: socket.socket) -> None:
+        """Poses over the network: one JSON array per datagram."""
+        peer = None
+        while True:
+            try:
+                data, addr = sock.recvfrom(65536)
+            except OSError:
+                continue   # Windows: ICMP "port unreachable" from an earlier send
+            if addr != peer:
+                peer = addr
+                self.log(f"headset sending over the network from {addr[0]}")
+                self.link.via_udp(sock, addr)
+            self._forward(data)
+
+    def _serve_discovery(self, sock: socket.socket) -> None:
+        """Answers the app's broadcast with this PC's ports (unicast)."""
+        reply = json.dumps({"vhmd": "pc", "name": platform.node(), "pose_port": self.o.port,
+                            "video_port": VIDEO_PORT}).encode()
+        while True:
+            try:
+                data, addr = sock.recvfrom(1024)
+            except OSError:
+                continue
+            if data.startswith(b"VHMD-DISCOVER"):
+                sock.sendto(reply, addr)
+
+    def _serve_driver_replies(self) -> None:
+        """The driver answers the socket the poses come from: haptic events go on
+        to the headset (other replies are dropped)."""
+        while True:
+            try:
+                data, _ = self._udp.recvfrom(65536)
+            except OSError:
+                continue
+            if b'"haptic"' in data:
+                self.link.send(data)
+            elif b'"seq"' in data:
+                try:
+                    reply = json.loads(data)
+                except ValueError:
+                    continue
+                with self._reply_cv:
+                    self._replies[reply.get("seq")] = reply
+                    while len(self._replies) > 32:   # unanswered leftovers
+                        self._replies.pop(next(iter(self._replies)))
+                    self._reply_cv.notify_all()
+
+    # -- once a second ----------------------------------------------------------
+    def _monitor(self) -> None:
+        from . import mode
+        last_steamvr_check = 0.0
+        while True:
+            time.sleep(1.0)
+            n, b, last = self.stats.take()
+            fin = fout = vb = 0
+            if self.video:
+                fin, fout, vb = self.video.take_stats()
+            self.rates = {"msgs": n, "kib": b / 1024, "video_in": fin, "video_out": fout, "mbps": vb * 8 / 1e6}
+            self.summary = summary(last) if n else ""
+
+            # SteamVR and the driver: is it up, who has control of the HMD.
+            now = time.monotonic()
+            if now - last_steamvr_check > 3.0:
+                last_steamvr_check = now
+                try:
+                    self.pc_state["steamvr"] = mode.steamvr_running()
+                except Exception:
+                    self.pc_state["steamvr"] = False
+            try:
+                c = self.request("control").get("control", {})
+                self.pc_state["driver"] = True
+                owner = c.get("devices", {}).get("hmd", c.get("owner", ""))
+                self.pc_state["control"] = owner or "any"
+            except (OSError, TimeoutError, ValueError):
+                self.pc_state["driver"] = False
+                self.pc_state["control"] = ""
+                self._models_applied = None
+            if self.pc_state["driver"]:
+                self.pc_state["steamvr"] = True
+
+            # Controllers as axes for the Dev edition, labelled shapes otherwise.
+            edition = self.info.get("edition")
+            if self.pc_state["driver"] and edition and self.connected():
+                want = "axes" if edition == "dev" else "labeled"
+                if self._models_applied != want:
+                    try:
+                        if not self.request("render_models", mode=want).get("ok"):
+                            raise ValueError("render_models refused")
+                        self._models_applied = want
+                        self.log(f"controllers shown as {want} (VHMD Link {edition} edition)")
+                    except (OSError, TimeoutError, ValueError):
+                        pass
+
+            if self.connected():
+                self.link.send(json.dumps({"type": "status", "pc": platform.node(), **self.pc_state},
+                                          separators=(",", ":")).encode())
 
 
 def summary(last: str) -> str:
@@ -172,6 +408,19 @@ def summary(last: str) -> str:
         if m.get("type") == "input":
             parts.append(f"{m['id'][0].upper()} trig {m['values'].get('trigger', 0):.2f}")
     return "  ".join(parts)
+
+
+def report_line(st: dict) -> str:
+    line = f"{st['msgs']:4d} msg/s  {st['kib']:6.1f} KiB/s  {st['summary']}" if st["msgs"] else ""
+    if st["video_in"] or st["video_out"]:
+        line += f"  |  video in {st['video_in']} / out {st['video_out']} fps  {st['mbps']:5.1f} Mbit/s"
+    h = st["headset_stats"]
+    if h:
+        line += (f"  |  headset: received {h.get('received', 0):.0f} decoded {h.get('decoded', 0):.0f} "
+                 f"shown {h.get('shown', 0):.0f}/s at {h.get('display', 0):.0f} Hz "
+                 f"(repeats {h.get('repeats', 0):.0f}/s, buffer {h.get('buffer', 0)}, "
+                 f"wait {h.get('wait_ms', 0):.1f} ms), {h.get('reprojected', 0):.0f}% reprojected")
+    return line
 
 
 def main() -> None:
@@ -192,66 +441,18 @@ def main() -> None:
                     help="frames the headset holds back: 0 = newest (lowest latency), 1 = smoother (+1 frame)")
     args = ap.parse_args()
 
-    if not args.no_adb:
-        for port in (args.port, VIDEO_PORT):
-            try:
-                r = subprocess.run(["adb", "reverse", f"tcp:{port}", f"tcp:{port}"], capture_output=True,
-                                   text=True, timeout=5)
-                print(f"adb reverse {port}:", "ok" if r.returncode == 0 else (r.stderr.strip() or r.stdout.strip()))
-            except (OSError, subprocess.TimeoutExpired):
-                print(f"adb reverse {port}: adb not available (USB not used)")
-    host = "127.0.0.1" if args.usb_only else "0.0.0.0"
-    video = None
-    if not args.no_video:
-        video = VideoServer(host=host, bitrate_mbps=args.bitrate, encoder=args.encoder, buffer=args.buffer,
-                            codec=args.codec, eye_width=args.eye_width, source=args.video_source,
-                            log=lambda m: print(m, flush=True))
-        video.start()
-
-    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    udp.bind(("127.0.0.1", 0))
-    threading.Thread(target=serve_driver_replies, args=(udp,), daemon=True).start()
-    driver = (args.driver_host, args.driver_port)
-    stats = Stats()
-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind((host, args.port))
-    srv.listen(2)
-    if not args.usb_only:
-        pose_udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        pose_udp.bind((host, args.port))
-        threading.Thread(target=serve_udp, args=(pose_udp, udp, driver, stats), daemon=True).start()
-        disc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        disc.bind((host, DISCOVERY_PORT))
-        threading.Thread(target=serve_discovery, args=(disc, args), daemon=True).start()
-        print(f"network: discovery on UDP {DISCOVERY_PORT}, poses on UDP {args.port}, video on TCP {VIDEO_PORT}"
-              " (any device on the LAN can connect)")
-    print(f"USB: poses on TCP 127.0.0.1:{args.port} -> driver {driver[0]}:{driver[1]}", flush=True)
-
-    def report() -> None:
-        while True:
-            time.sleep(1.0)
-            n, b, last = stats.take()
-            line = f"{n:4d} msg/s  {b / 1024:6.1f} KiB/s  {summary(last)}" if n else ""
-            if video:
-                fin, fout, vb = video.take_stats()
-                if fin or fout:
-                    line += f"  |  video in {fin} / out {fout} fps  {vb * 8 / 1e6:5.1f} Mbit/s"
-            h = stats.headset
-            if h:
-                line += (f"  |  headset: received {h.get('received', 0):.0f} decoded {h.get('decoded', 0):.0f} "
-                         f"shown {h.get('shown', 0):.0f}/s at {h.get('display', 0):.0f} Hz "
-                         f"(repeats {h.get('repeats', 0):.0f}/s, buffer {h.get('buffer', 0)}, "
-                         f"wait {h.get('wait_ms', 0):.1f} ms), {h.get('reprojected', 0):.0f}% reprojected")
-            if line:
-                print(line, flush=True)
-
-    threading.Thread(target=report, daemon=True).start()
+    bridge = Bridge(BridgeOptions(
+        driver_host=args.driver_host, driver_port=args.driver_port, port=args.port, adb=not args.no_adb,
+        usb_only=args.usb_only, video=not args.no_video, bitrate=args.bitrate, codec=args.codec,
+        eye_width=args.eye_width, video_source=args.video_source, encoder=args.encoder, buffer=args.buffer),
+        log=lambda m: print(m, flush=True))
+    bridge.start()
     try:
         while True:
-            conn, addr = srv.accept()
-            print("headset connected", addr, flush=True)
-            threading.Thread(target=serve_client, args=(conn, udp, driver, stats), daemon=True).start()
+            time.sleep(1.0)
+            line = report_line(bridge.status())
+            if line:
+                print(line, flush=True)
     except KeyboardInterrupt:
         pass
 

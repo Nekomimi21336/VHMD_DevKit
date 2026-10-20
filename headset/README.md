@@ -7,6 +7,27 @@
 | 1 | 頭・両手の姿勢と入力を VHMD に送る(Wi-Fi が基本、USB は予備) | 動作確認済み(Pico 4 Ultra、Pico OS 5.15.7) |
 | 2 | VHMD が描いた映像をヘッドセットに表示する(描画時の姿勢で補正、視野角・解像度をヘッドセットに合わせる) | 動作確認済み |
 | 3 | ドライバ側でマニュアル(ヘッドセット)とオート(自動操作)を SteamVR を止めずに切り替える | 動作確認済み |
+| 4 | PC とヘッドセットをつなぐ普通のアプリにする: 接続用と開発用の 2 つ、PC のアプリ(トレイ常駐)、インストーラー、接続画面 | 動作確認済み(インストーラーは未実行) |
+
+## 2 つのエディション
+
+同じソースから 2 つの APK を作ります。並べてインストールできます。
+
+| | VHMD Link(接続用) | VHMD Link Dev(開発用) |
+|---|---|---|
+| パッケージ / APK | `com.vhmd.link` / `vhmd-link.apk` | `com.vhmd.link.dev` / `vhmd-link-dev.apk` |
+| ヘッドセットの中 | 映像だけ。PC につながるまでは接続画面 | 映像の下に統計(表示・受信 fps、Mbit/s、待ち時間、リンク、音、振動、操作権) |
+| SteamVR のコントローラーの見た目 | 名前入りの形(`labeled`) | 色付きの軸(X 赤・Y 緑・Z 青、白い線が前) |
+| PC のアプリ | 普通の表示 | 開発者向けの表示が自動で出る |
+
+ヘッドセットがメッセージ `headset` の `edition` で名乗り、PC のアプリがドライバの見た目(`config` の `render_models`)を合わせます。
+
+## ヘッドセットの中の表示
+
+- **接続画面**: PC の映像が出ていないとき(起動直後、PC や SteamVR を待っているとき、映像が 1 秒止まったとき)は、正面に案内のパネルを出します。PC を探している / PC「名前」に接続(Wi-Fi のアドレスか USB)/ SteamVR を待っている / 映像を待っている、このヘッドセットの IP アドレスとアプリの版。パネルは視線を 35° 以上外すと正面に戻ってきます。
+- **お知らせ**: 操作権がヘッドセット以外(オートなど)に移ったとき(「X + A 長押しで取り戻せます」)、取り戻したとき、X + A を押している間。
+- 文字は Android の文字描画(JNI で `android.graphics.Canvas`)で描くので日本語も出ます。システムの言語が日本語なら日本語、それ以外は英語。パネルは OpenXR のクワッドレイヤー(文字が変わったときだけ描き直す)。
+- PC からは約 1 秒ごとに状態 `{"type":"status","pc":名前,"steamvr":…,"driver":…,"control":…}` が届きます(振動と同じ経路)。
 
 ## しくみ
 
@@ -78,22 +99,47 @@ python -m vhmd_client.control            # 今の状態と、送ってきてい�
 
 ## 使い方
 
-1. インストールのときだけ USB が要ります: ヘッドセットで開発者モードと USB デバッグを有効にし、USB でつなぐ(`adb devices` に出ること)。PC とヘッドセットは同じ LAN に。
-2. ビルドとインストール(初回は `--fetch-loader` で OpenXR ローダーを Maven Central から取得):
+### リリースの zip から(Windows)
+
+1. ヘッドセットで開発者モードと USB デバッグを有効にし、USB でつなぐ(アプリを入れるときだけ)。PC とヘッドセットは同じ LAN に。
+2. 展開したフォルダで:
 
    ```powershell
-   python headset/android/build_apk.py --fetch-loader --install
+   powershell -ExecutionPolicy Bypass -File tools\install_link.ps1 -Start     # -Apk dev で開発用、-Apk both で両方、-Desktop でデスクトップにも
    ```
 
-3. PC で中継を起動(Wi-Fi の待ち受けと、USB 用の `adb reverse` を両方行います):
+   ドライバを SteamVR に登録し、スタートメニューに「VHMD Link」を作り、USB でつながっていればヘッドセットにアプリを入れます。Python 3.9 以上(tkinter 付き)が要ります。元に戻すのは `tools\uninstall_link.ps1`。
+3. PC で「VHMD Link」を開き、ヘッドセットで VHMD Link を起動すると自動でつながります(Wi-Fi が基本、USB ケーブルでも)。Windows のファイアウォールが Python の通信を確認してきたら、プライベート ネットワークを許可します。
+
+### PC のアプリ(VHMD Link)
+
+```powershell
+python -m vhmd_client.link            # pythonw clients\python\vhmd_link.pyw ならコンソールなし。--dev で開発者向けの表示
+```
+
+- ヘッドセットの接続(機種、Wi-Fi のアドレス / USB、アプリの版)と SteamVR の状態を表示。
+- ヘッドセットがつながったら SteamVR を起動(VHMD モードのときだけ。設定で切れる)。SteamVR が実機 HMD モードなら「VHMD モードにする」、VHMD の視野角・解像度がヘッドセットと違えば「ヘッドセットの画面に合わせる」(どちらも SteamVR を再起動するので確認を出す)。
+- 画質(20 / 40 / 60 / 80 Mbit/s)、圧縮方式(HEVC / H.264)、動き(遅れを最小に / なめらか)。変えるとヘッドセットがつなぎ直して(約 1 秒)反映。
+- 開発者向けの表示: PC とヘッドセットの統計、操作権、ログ、「操作をヘッドセットに戻す」、キーボード・マウス操作ツールの起動。
+- ウィンドウを閉じても通知領域(トレイ)で動き続けます。アイコンのクリックで開く、右クリックで終了。「Windows の起動時に開く」で自分のユーザーのスタートアップに登録。
+- 設定は `%LOCALAPPDATA%\VHMD\link_settings.json`。
+- USB ケーブルを後から挿しても、10 秒以内に `adb reverse` をかけ直してつながります。
+
+### 開発中(リポジトリから)
+
+1. ビルドとインストール(初回は `--fetch-loader` で OpenXR ローダーを Maven Central から取得。既定で 2 つのエディションを作る):
+
+   ```powershell
+   python headset/android/build_apk.py --fetch-loader --install            # --edition dev / link で片方だけ
+   ```
+
+2. PC で `python -m vhmd_client.link`、またはコンソールで中継だけ:
 
    ```powershell
    python -m vhmd_client.headset_bridge            # USB を使わないなら --no-adb、Wi-Fi を使わないなら --usb-only
    ```
 
-4. SteamVR は VHMD モード(`python -m vhmd_client.mode vhmd`)にしておくと、VHMD の HMD とコントローラーがヘッドセットに合わせて動きます。
-
-- FPS 操作ツールなど、ほかに HMD・手の姿勢を送るプログラムを同時に動かすと、両方の値が混ざります(段階 3 で切り替えられるようにします)。
+3. SteamVR は VHMD モード(`python -m vhmd_client.mode vhmd`)にしておくと、VHMD の HMD とコントローラーがヘッドセットに合わせて動きます。
 
 ## ビルド
 

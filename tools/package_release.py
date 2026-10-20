@@ -12,6 +12,11 @@ and examples, docs and licenses:
 
 Run tools/install_driver.(ps1|sh) inside the extracted folder; it picks up the
 bundled vhmd/ folder automatically. Output goes to dist/ with SHA256SUMS.txt.
+
+The Windows archive also carries VHMD Link: the headset apps (headset/*.apk,
+from --apk-dir, default headset/android/build) and tools/install_link.ps1,
+which registers the driver, adds VHMD Link to the Start menu and installs the
+headset app over USB.
 """
 
 from __future__ import annotations
@@ -32,14 +37,18 @@ COMMON = [
     "tests/integration",  # linux_check.py / soak_test.py etc., so testers need no clone
 ]
 TOOLS = {
-    "win64": ["tools/common.ps1", "tools/install_driver.ps1", "tools/uninstall_driver.ps1", "tools/verify_env.ps1"],
+    "win64": ["tools/common.ps1", "tools/install_driver.ps1", "tools/uninstall_driver.ps1", "tools/verify_env.ps1",
+              "tools/install_link.ps1", "tools/uninstall_link.ps1", "headset/README.md"],
     "linux64": ["tools/common.sh", "tools/install_driver.sh", "tools/uninstall_driver.sh", "tools/verify_env.sh", "tools/vhmd_records.py"],
 }
 BINARY = {"win64": "driver_vhmd.dll", "linux64": "driver_vhmd.so"}
 SKIP_PARTS = {"__pycache__", ".pytest_cache", "results"}
 
 
-def collect(platform: str, driver_dir: Path) -> list[tuple[str, Path]]:
+APKS = ("vhmd-link.apk", "vhmd-link-dev.apk")
+
+
+def collect(platform: str, driver_dir: Path, apk_dir: Path | None = None) -> list[tuple[str, Path]]:
     """[(archive path, source file)]"""
     driver_dir = driver_dir.resolve()
     binary = driver_dir / "bin" / platform / BINARY[platform]
@@ -61,6 +70,12 @@ def collect(platform: str, driver_dir: Path) -> list[tuple[str, Path]]:
             if SKIP_PARTS & set(s.parts) or s.suffix == ".pyc":
                 continue
             files.append((s.relative_to(ROOT).as_posix(), s))
+    if platform == "win64" and apk_dir:
+        for name in APKS:
+            if (apk_dir / name).exists():
+                files.append((f"headset/{name}", apk_dir / name))
+            else:
+                print(f"note: {apk_dir / name} not built; not in the archive")
     return files
 
 
@@ -92,6 +107,8 @@ def main() -> None:
     ap.add_argument("--version", required=True)
     ap.add_argument("--win64", type=Path, help="built Windows driver folder (contains bin/win64/driver_vhmd.dll)")
     ap.add_argument("--linux64", type=Path, help="built Linux driver folder (contains bin/linux64/driver_vhmd.so)")
+    ap.add_argument("--apk-dir", type=Path, default=ROOT / "headset" / "android" / "build",
+                    help="folder with vhmd-link.apk / vhmd-link-dev.apk (Windows archive)")
     ap.add_argument("--out", type=Path, default=ROOT / "dist")
     args = ap.parse_args()
 
@@ -101,7 +118,7 @@ def main() -> None:
         if folder is None:
             continue
         prefix = f"VHMD_DevKit-{args.version}-{platform}"
-        files = collect(platform, folder)
+        files = collect(platform, folder, args.apk_dir)
         out = args.out / (prefix + (".zip" if platform == "win64" else ".tar.gz"))
         (write_zip if platform == "win64" else write_tar)(out, prefix, files)
         made.append(out)
