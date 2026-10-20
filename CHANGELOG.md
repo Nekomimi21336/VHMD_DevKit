@@ -3,6 +3,7 @@
 ## 未リリース
 
 ### 追加
+- **ヘッドセット側アプリ VHMD Link(段階 1)**: Pico 4 Ultra などの単体型ヘッドセットで動く OpenXR のネイティブアプリ(`headset/`)。頭・両手の姿勢と入力を USB(`adb reverse`)経由で送り、PC の `python -m vhmd_client.headset_bridge` が VHMD ドライバに渡す。Gradle を使わない `build_apk.py` でビルドする。
 - **VHMD と実機 HMD の切り替え(Windows)**: `python -m vhmd_client.mode pico|vhmd`、FPS 操作ツールのボタン。SteamVR の設定 `driver_pico.enable` と `driver_vhmd.configFile`(インストール済みの設定から作るプロファイル)を切り替えて SteamVR を再起動する。SnapVR などが SteamVR をすぐ起動し直す環境でも、元の SteamVR だけを止めて待つ。
 - **キーボードとマウスでの操作(Windows)**: `python -m vhmd_client.fps`。マウスで視点、WASD で移動、マウスボタンとキーでコントローラーの入力。各デバイスの位置・角度の表示と数値入力、上から見た図でのドラッグ、SteamVR 上の実際の姿勢の表示(pyopenvr がある場合)、送信の一時停止と SteamVR の姿勢からの引き継ぎ、今の姿勢を Python のコードとしてコピー。
 - FPS 操作ツールの画面を整理: Windows のライト/ダークに合わせたテーマ(`--theme`)、「デバイス」「操作」「上から見た図」「HMD の視点」「キー操作」のパネル、モードと送信状態の表示、位置・角度をまとめた表、頭を中心にした地図(視野の扇形、縮尺、凡例、重ならないラベル)。
