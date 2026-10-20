@@ -370,6 +370,22 @@ std::optional<std::string> MessageRouter::HandleConfig(const ConfigMessage& m, C
             if (!err.empty()) r["error"] = err;
         }
         if (hooks_.hand_mode) r["mode"] = hooks_.hand_mode();
+    } else if (m.op == "render_models") {
+        // {"op":"render_models","mode":"axes"|"labeled"}; no mode = query.
+        if (!hooks_.set_render_models) {
+            r["ok"] = false;
+            r["error"] = "render_models not available";
+        } else if (m.mode.empty()) {
+            r["ok"] = true;
+        } else if (m.mode != "labeled" && m.mode != "axes") {
+            r["ok"] = false;
+            r["error"] = "mode must be \"labeled\" or \"axes\"";
+        } else {
+            const std::string err = hooks_.set_render_models(m.mode);
+            r["ok"] = err.empty();
+            if (!err.empty()) r["error"] = err;
+        }
+        if (hooks_.render_models) r["mode"] = hooks_.render_models();
     } else {
         r["ok"] = false;
         r["error"] = "unknown op";

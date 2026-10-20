@@ -18,6 +18,10 @@
   // default to timeoutPolicy "disconnect" so they grey out when the sender stops.
   // false = register every enabled tracker at startup (old behaviour).
   "trackersOnDemand": true,
+  // How controllers and trackers look: "labeled" (shapes with their name) or
+  // "axes" (colored X/Y/Z bars for development). Switchable while SteamVR runs
+  // (config op "render_models").
+  "renderModels": "labeled",
   "log": { "errorsPerSecond": 5, "verbose": false },
   // HMD output. auto = "direct" on Linux (required by Linux SteamVR: the
   // compositor hands the eye images to the driver), "window" on Windows.

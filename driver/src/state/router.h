@@ -42,6 +42,9 @@ struct RouterHooks {
     std::function<std::string(const std::string& mode)> set_hand_mode;
     // Current hand mode ("controllers" / "hands"), for status.
     std::function<std::string()> hand_mode;
+    // Render models: "labeled" | "axes".
+    std::function<std::string(const std::string& mode)> set_render_models;
+    std::function<std::string()> render_models;
     // Changes the virtual display's frame rate (direct mode). Returns an error string.
     std::function<std::string(double hz)> set_refresh_rate;
     // Current frame rate, for replies.

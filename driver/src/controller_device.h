@@ -45,6 +45,11 @@ protected:
     void OnTick(Clock::time_point now) override;
     void OnBecameActive() override { derived_pushed_at_.reset(); }
 
+public:
+    void RefreshRenderModel() override;
+
+protected:
+
 private:
     struct Component {
         vr::VRInputComponentHandle_t handle = vr::k_ulInvalidInputComponentHandle;

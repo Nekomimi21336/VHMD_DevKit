@@ -87,6 +87,11 @@ protected:
 public:
     // Driver install folder (set once by the provider before devices activate).
     static void SetInstallPath(const std::string& path);
+    // Render models: false = labelled shapes (default), true = colored axes (config "renderModels": "axes").
+    static void SetAxesModels(bool axes);
+    static bool AxesModelsOn();
+    // Show the render model again (after SetAxesModels changed). Activated devices only.
+    virtual void RefreshRenderModel() {}
     // Raw pose of another device by serial ("HMD" = the active HMD), for poses
     // sent relative to a parent (VMT Joint / Follow). Set by the provider; called
     // on the update thread.
@@ -95,6 +100,8 @@ public:
 
 protected:
     DeviceState& State() { return *state_; }
+    // This device's property container, or invalid before Activate().
+    vr::PropertyContainerHandle_t Container() const;
 
 private:
     struct Frame {

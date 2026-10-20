@@ -265,6 +265,15 @@ class VHMDClient:
             raise ValueError(r.get("error", "hand_mode failed"))
         return r.get("mode", "")
 
+    def render_models(self, mode: str = "") -> str:
+        """Switch how controllers and trackers look while SteamVR runs:
+        "labeled" (shapes with their name) or "axes" (colored X/Y/Z bars, for
+        development). Without a mode, return the current one."""
+        r = self.request("render_models", mode=mode) if mode else self.request("render_models")
+        if not r.get("ok"):
+            raise ValueError(r.get("error", "render_models failed"))
+        return r.get("mode", "")
+
     def reset(self, device_id: str = "") -> Dict[str, Any]:
         return self.request("reset", id=device_id) if device_id else self.request("reset")
 

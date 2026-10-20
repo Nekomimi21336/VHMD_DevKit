@@ -113,6 +113,14 @@ std::string TrackerDevice::CurrentRole() {
     return role ? role->short_name : "none";
 }
 
+void TrackerDevice::RefreshRenderModel() {
+    {
+        std::lock_guard<std::mutex> lock(label_mu_);
+        shown_role_.clear();
+    }
+    RefreshLabel();
+}
+
 void TrackerDevice::RefreshLabel() {
     std::lock_guard<std::mutex> lock(label_mu_);
     const std::string role = CurrentRole();

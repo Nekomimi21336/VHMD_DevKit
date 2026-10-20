@@ -84,6 +84,7 @@ struct DriverConfig {
 
     bool apply_tracker_roles = true; // write roles to SteamVR "trackers" settings if unset
     bool trackers_on_demand = true;  // default for trackers without "onDemand"
+    std::string render_models = "labeled";   // "labeled" | "axes" (controllers and trackers)
     // "controllers" or "hands": which twin of each hand is connected at start
     // (switchable at runtime with config op "hand_mode").
     std::string hand_mode = "controllers";

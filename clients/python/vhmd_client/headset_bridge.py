@@ -73,8 +73,57 @@ def forward(data: bytes, udp: socket.socket, driver, stats: Stats) -> None:
     stats.add(data)
 
 
+class HeadsetLink:
+    """Where the headset is: its UDP address (Wi-Fi) or TCP connection (USB),
+    for messages the driver sends back (haptics)."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.udp_sock = None
+        self.udp_addr = None
+        self.tcp = None
+        self.sent = 0
+
+    def via_udp(self, sock: socket.socket, addr) -> None:
+        with self.lock:
+            self.udp_sock, self.udp_addr, self.tcp = sock, addr, None
+
+    def via_tcp(self, conn: socket.socket) -> None:
+        with self.lock:
+            self.tcp, self.udp_addr = conn, None
+
+    def send(self, data: bytes) -> None:
+        with self.lock:
+            try:
+                if self.tcp is not None:
+                    self.tcp.sendall(data + b"\n")
+                elif self.udp_addr is not None:
+                    self.udp_sock.sendto(data, self.udp_addr)
+                else:
+                    return
+                self.sent += 1
+            except OSError:
+                pass
+
+
+LINK = HeadsetLink()
+
+
+def serve_driver_replies(udp: socket.socket) -> None:
+    """The driver answers the socket the poses come from: haptic events go on
+    to the headset (other replies are dropped)."""
+    while True:
+        try:
+            data, _ = udp.recvfrom(65536)
+        except OSError:
+            continue
+        if b'"haptic"' in data:
+            LINK.send(data)
+
+
 def serve_client(conn: socket.socket, udp: socket.socket, driver, stats: Stats) -> None:
     conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    LINK.via_tcp(conn)
     buf = b""
     with conn:
         while True:
@@ -96,6 +145,7 @@ def serve_udp(sock: socket.socket, udp: socket.socket, driver, stats: Stats) -> 
         if addr != peer:
             peer = addr
             print("headset sending over the network from", addr[0], flush=True)
+            LINK.via_udp(sock, addr)
         forward(data, udp, driver, stats)
 
 
@@ -159,6 +209,8 @@ def main() -> None:
         video.start()
 
     udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.bind(("127.0.0.1", 0))
+    threading.Thread(target=serve_driver_replies, args=(udp,), daemon=True).start()
     driver = (args.driver_host, args.driver_port)
     stats = Stats()
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

@@ -41,4 +41,11 @@ TEST(visuals_render_models) {
     const auto c = MakeRenderModel(ModelShape::Controller, ControllerLabel(true, "left_hand"));
     CHECK(c.json.find("\"tip\"") != std::string::npos);
     CHECK(c.json.find("\"handgrip\"") != std::string::npos);
+    // Axes: 5 boxes (X, Y, Z bars, center, forward pointer) = 30 quads = 60 triangles.
+    const auto a = MakeRenderModel(ModelShape::Axes, ControllerLabel(false, "right_hand"));
+    size_t faces = 0;
+    for (size_t p = a.obj.find("\nf "); p != std::string::npos; p = a.obj.find("\nf ", p + 1)) ++faces;
+    CHECK(faces == 60);
+    CHECK(a.json.find("\"openxr_aim\"") != std::string::npos);
+    CHECK(BE(a.texture, 16) == 256);
 }

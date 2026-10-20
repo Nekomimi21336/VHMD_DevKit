@@ -151,6 +151,11 @@ std::string ControllerDevice::CanonicalInputName(const std::string& raw, bool le
     return found;
 }
 
+void ControllerDevice::RefreshRenderModel() {
+    const auto c = Container();
+    if (c != vr::k_ulInvalidPropertyContainer) SetLabel(c, ModelShape::Controller, ControllerLabel(left_, Id()));
+}
+
 void ControllerDevice::OnActivate(vr::PropertyContainerHandle_t c) {
     auto* p = vr::VRProperties();
     auto* in = vr::VRDriverInput();

@@ -308,7 +308,32 @@ RenderModelFiles MakeRenderModel(ModelShape shape, const DeviceLabel& label) {
     Image tex(kTex, kTex, kLabelBg);
     Mesh m;
 
-    if (shape == ModelShape::Tracker) {
+    if (shape == ModelShape::Axes) {
+        // Texture: four color patches (red, green, blue, white); each bar uses one.
+        tex.Fill(0, 0, kTex / 2, kTex / 2, {230, 40, 40, 255});
+        tex.Fill(kTex / 2, 0, kTex, kTex / 2, {40, 210, 70, 255});
+        tex.Fill(0, kTex / 2, kTex / 2, kTex, {50, 110, 255, 255});
+        tex.Fill(kTex / 2, kTex / 2, kTex, kTex, {235, 235, 235, 255});
+        const std::pair<double, double> red{0.25, V(64)}, green{0.75, V(64)}, blue{0.25, V(192)}, white{0.75, V(192)};
+        const double len = 0.10, t = 0.0025, c = 0.005;
+        AddBox(m, {0, -t, -t}, {len, t, t}, red);
+        AddBox(m, {-t, 0, -t}, {t, len, t}, green);
+        AddBox(m, {-t, -t, 0}, {t, t, len}, blue);
+        AddBox(m, {-c, -c, -c}, {c, c, c}, white);
+        AddBox(m, {-t * 0.6, -t * 0.6, -len * 0.6}, {t * 0.6, t * 0.6, 0}, white);   // forward (-Z)
+        out.json = R"({
+  "thumbnail": "body.png",
+  "components": {
+    "body": { "filename": "body.obj", "component_local": { "origin": [0, 0, 0], "rotate_xyz": [0, 0, 0] } },
+    "tip": { "component_local": { "origin": [0, 0, -0.06], "rotate_xyz": [0, 0, 0] } },
+    "handgrip": { "component_local": { "origin": [0, 0, 0], "rotate_xyz": [0, 0, 0] } },
+    "base": { "component_local": { "origin": [0, 0, 0], "rotate_xyz": [0, 180, 0] } },
+    "openxr_grip": { "component_local": { "origin": [0, 0, 0], "rotate_xyz": [0, 0, 0] } },
+    "openxr_aim": { "component_local": { "origin": [0, 0, -0.06], "rotate_xyz": [0, 0, 0] } }
+  }
+}
+)";
+    } else if (shape == ModelShape::Tracker) {
         // Texture: rows 0-159 top label (title + id), 160-223 side label (title), 224-255 body color.
         const std::string title = Upper(label.title), sub = Upper(label.subtitle);
         DrawText(tex, title, kTex / 2, 62, FitScale(title, 236, 80, 6), kLabelFg);

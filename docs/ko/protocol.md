@@ -165,6 +165,7 @@ HMD:
 | `reset` | `id`(생략 시 전체) | 설정 파일의 기본 포즈로 되돌림 |
 | `add` | `id`(생략 시 온디맨드 전체) | 온디맨드 디바이스를 즉시 SteamVR에 추가(다음 프레임에 반영). `{"ok":true,"ids":[...]}` |
 | `hand_mode` | `mode`(`controllers` / `hands`, 생략 시 현재 모드만 반환) | 좌우 손을 컨트롤러 / 핸드 트래킹으로 전환(SteamVR은 멈추지 않음). `{"ok":true,"mode":"hands"}`. `status`에도 `hand_mode`가 포함됨 |
+| `render_models` | `mode`(`labeled` / `axes`, 생략 시 현재 설정만 반환) | 컨트롤러·트래커의 외형을 전환(SteamVR은 멈추지 않음). `labeled`는 이름이 들어간 형태(기본), `axes`는 개발용 색상 축(X 빨강·Y 초록·Z 파랑, 10 cm, 흰 선이 앞 = -Z). 시작 시 기본값은 설정의 `renderModels` |
 | `preview` | `mode`(`on` / `off`) | 다이렉트 모드(Linux, 또는 Windows에서 `display.mode = direct`)에서 프리뷰(공유 메모리로 영상 출력)를 시작 / 정지. 기본은 꺼져 있어 보는 사람이 없을 때는 GPU 복사도 쓰기도 하지 않음(`preview_viewer.py`와 `linux_check.py`는 자동으로 시작·정지) |
 | `refresh_rate` | `hz`(1~240, 생략 시 현재 값만 반환) | 가상 디스플레이의 프레임 레이트를 변경(다이렉트 모드, SteamVR은 멈추지 않음). `{"ok":true,"hz":30}` |
 | `preview_window` | `mode`(`on` / `off`) | Windows 다이렉트 모드(`display.mode = direct`)에서 프리뷰 창(HMD 영상)을 표시 / 숨김. 숨긴 동안은 아무것도 하지 않음 |

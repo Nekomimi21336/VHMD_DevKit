@@ -495,3 +495,26 @@ TEST(router_control_ownership) {
     router.HandleDatagram(R"({"type":"pose","id":"left_hand","pos":[8,1,0],"rot":[1,0,0,0]})", now);
     CHECK_NEAR(router.Find("left_hand")->ComputeOutput(now).pos.x, 8.0, 1e-9);
 }
+
+TEST(router_render_models_op) {
+    DriverConfig cfg = DefaultConfig();
+    CHECK(cfg.render_models == "labeled");
+    CHECK(LoadConfigFromJson(R"({"renderModels":"axes"})").config.render_models == "axes");
+    auto bad_cfg = LoadConfigFromJson(R"({"renderModels":"cubes"})");
+    CHECK(bad_cfg.config.render_models == "labeled" && !bad_cfg.warnings.empty());
+    std::vector<std::shared_ptr<DeviceState>> states;
+    for (const auto& d : cfg.devices) states.push_back(std::make_shared<DeviceState>(d, cfg));
+    const auto now = Clock::now();
+    std::string mode = "labeled";
+    RouterHooks hooks;
+    hooks.set_render_models = [&](const std::string& m) -> std::string {
+        mode = m;
+        return "";
+    };
+    hooks.render_models = [&] { return mode; };
+    MessageRouter router(cfg, states, hooks);
+    auto set = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"render_models","mode":"axes"})", now));
+    CHECK(set["ok"] == true && set["mode"] == "axes" && mode == "axes");
+    auto bad = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"render_models","mode":"cubes"})", now));
+    CHECK(bad["ok"] == false && bad["mode"] == "axes");
+}

@@ -169,6 +169,11 @@ ConfigLoadResult LoadConfigFromJson(std::string_view text) {
         c.smoothing = std::clamp(c.smoothing, 0.0, 0.99);
         Get(root, "applyTrackerRoles", c.apply_tracker_roles, w, "");
         Get(root, "trackersOnDemand", c.trackers_on_demand, w, "");
+        Get(root, "renderModels", c.render_models, w, "");
+        if (c.render_models != "labeled" && c.render_models != "axes") {
+            w.emplace_back("renderModels: expected labeled|axes");
+            c.render_models = "labeled";
+        }
         for (auto& d : c.devices) {
             if (d.kind == DeviceKind::Tracker) d.on_demand = c.trackers_on_demand;
         }

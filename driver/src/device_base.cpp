@@ -257,6 +257,22 @@ bool WriteFile(const std::filesystem::path& p, const void* data, size_t size) {
 
 void VirtualDevice::SetInstallPath(const std::string& path) { InstallPath() = path; }
 
+namespace {
+bool& AxesModels() {
+    static bool axes = false;
+    return axes;
+}
+} // namespace
+
+void VirtualDevice::SetAxesModels(bool axes) { AxesModels() = axes; }
+bool VirtualDevice::AxesModelsOn() { return AxesModels(); }
+
+vr::PropertyContainerHandle_t VirtualDevice::Container() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (index_ == vr::k_unTrackedDeviceIndexInvalid) return vr::k_ulInvalidPropertyContainer;
+    return vr::VRProperties()->TrackedDeviceToPropertyContainer(index_);
+}
+
 void VirtualDevice::SetLabel(vr::PropertyContainerHandle_t c, ModelShape shape, const DeviceLabel& label) {
     if (InstallPath().empty()) return;
     namespace fs = std::filesystem;
@@ -265,7 +281,8 @@ void VirtualDevice::SetLabel(vr::PropertyContainerHandle_t c, ModelShape shape, 
 
     // Render model: one folder per device and label, so SteamVR (which caches
     // models by name) shows the new one when the role changes.
-    const std::string name = "vhmd_" + Slug(Serial()) + "_" + Slug(label.title);
+    if (AxesModels()) shape = ModelShape::Axes;
+    const std::string name = "vhmd_" + Slug(Serial()) + "_" + Slug(label.title) + (AxesModels() ? "_axes" : "");
     const fs::path dir = resources / "rendermodels" / name;
     if (!fs::exists(dir / (name + ".json"), ec)) {
         const RenderModelFiles files = MakeRenderModel(shape, label);

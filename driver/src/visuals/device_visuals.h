@@ -26,7 +26,9 @@ const char* IconStateName(IconState s);
 // 32x32 RGBA PNG: a hexagon in the state's color with the label text.
 std::vector<uint8_t> MakeStatusIcon(const std::string& text, IconState state);
 
-enum class ModelShape { Tracker, Controller };
+// Axes: the device's own axes as colored bars (X red, Y green, Z blue, 10 cm)
+// plus a white pointer along -Z (forward), for development ("renderModels": "axes").
+enum class ModelShape { Tracker, Controller, Axes };
 
 struct RenderModelFiles {
     std::string obj;              // body.obj

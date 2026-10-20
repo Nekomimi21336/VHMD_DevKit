@@ -62,6 +62,7 @@ vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* driver_context) {
     install_path_ = vr::VRProperties()->GetStringProperty(vr::VRDriverHandle(), vr::Prop_InstallPath_String);
     VirtualDevice::SetInstallPath(install_path_);
     LoadConfig();
+    VirtualDevice::SetAxesModels(config_.render_models == "axes");
     SetVerbose(config_.verbose);
     CreateDevices();
 
@@ -97,6 +98,15 @@ vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* driver_context) {
         std::lock_guard<std::mutex> lock(hand_mode_mu_);
         return hand_mode_;
     };
+    hooks.set_render_models = [this](const std::string& mode) -> std::string {
+        const bool axes = mode == "axes";
+        if (axes == VirtualDevice::AxesModelsOn()) return "";
+        VirtualDevice::SetAxesModels(axes);
+        for (auto& d : devices_) d->RefreshRenderModel();
+        Log(LogLevel::Info, "render models: %s", mode.c_str());
+        return "";
+    };
+    hooks.render_models = []() { return std::string(VirtualDevice::AxesModelsOn() ? "axes" : "labeled"); };
     hooks.display_status = [this]() { return hmd_ ? hmd_->DisplayStatusJson() : std::string("{}"); };
     router_ = std::make_unique<MessageRouter>(config_, states_, hooks);
 

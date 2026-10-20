@@ -3,6 +3,8 @@
 ## 未リリース
 
 ### 追加
+- **VHMD Link: コントローラーの振動**。アプリの振動要求を `headset_bridge` がヘッドセットへ転送し(USB は TCP、Wi-Fi は UDP)、VHMD Link が OpenXR の振動として出す。
+- **コントローラー・トラッカーの見た目の切り替え**: 設定 `renderModels`(`labeled` / `axes`)と、SteamVR を止めずに切り替える `config` の `render_models`(`VHMDClient.render_models()`)。`axes` は開発用で、デバイスの X / Y / Z を赤・緑・青の線、前(-Z)を白い線で表示する。
 - **音: PC → ヘッドセット**。ドライバが既定の出力デバイスを WASAPI ループバックで取り込み、映像と同じ接続で 16 ビット PCM を送る。VHMD Link は AAudio(低遅延)で再生し、短いバッファで途切れと遅れを抑える。
 - **ドライバ内での映像圧縮(Windows のダイレクトモード)**: 合成器の目のテクスチャを GPU 上で NV12 にして Media Foundation のハードウェアエンコーダー(H.264 / HEVC)に渡し、描画時の姿勢付きで 127.0.0.1:39583 に出す(設定 `stream`)。CPU への読み出しをなくし、`headset_bridge` は転送だけになる(既定 HEVC・40 Mbit/s)。単体テスト `vhmd_stream_selftest`(SteamVR なしでエンコーダーを確認)。VHMD Link は HEVC に対応し、復号した画像を専用のスレッドで取り出す。
 - **ヘッドセット側アプリ VHMD Link(段階 1)**: Pico 4 Ultra などの単体型ヘッドセットで動く OpenXR のネイティブアプリ(`headset/`)。頭・両手の姿勢と入力を USB(`adb reverse`)経由で送り、PC の `python -m vhmd_client.headset_bridge` が VHMD ドライバに渡す。Gradle を使わない `build_apk.py` でビルドする。

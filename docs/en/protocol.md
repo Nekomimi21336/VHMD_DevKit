@@ -167,6 +167,7 @@ Passed to `IVRDriverInput::CreateEyeTrackingComponent("/eyetracking")` as `VREye
 | `add` | `id` (all on-demand devices if omitted) | Adds on-demand devices to SteamVR immediately (applied on the next frame). `{"ok":true,"ids":[...]}` |
 | `control` | `source` (a sender name, `""` = anyone; without it only reports), `devices` (default: all) | Chooses which sender drives the devices (SteamVR keeps running). Messages from other senders are dropped and counted. A device changing hands has the inputs the previous sender held released (except proximity / battery), stops velocity prediction and gives the new sender a full timeout. Reply: `control` (`owner`, per-device `devices`, per-sender `sources`: `age_s`, `accepted`, `ignored`) and `poses` (latest position / rotation of each device, so the sender taking over can continue from there). `status` carries `control` too |
 | `hand_mode` | `mode` (`controllers` / `hands`; without it, only returns the current mode) | Switches both hands between controllers and hand tracking (SteamVR keeps running). `{"ok":true,"mode":"hands"}`. `status` also carries `hand_mode` |
+| `render_models` | `mode` (`labeled` / `axes`; without it, only returns the current setting) | Switches how controllers and trackers look (SteamVR keeps running). `labeled`: shapes with their name (default); `axes`: colored axes for development (X red, Y green, Z blue, 10 cm; the white line points forward = -Z). The startup default is the config key `renderModels` |
 | `preview` | `mode` (`on` / `off`) | Starts / pauses the preview (eye images in shared memory) in direct mode (Linux, or Windows with `display.mode = direct`). It is off by default, so nothing is copied or written while nobody watches (`preview_viewer.py` and `linux_check.py` start and stop it themselves) |
 | `refresh_rate` | `hz` (1-240; without it, only returns the current rate) | Changes the virtual display's frame rate (direct mode; SteamVR keeps running). `{"ok":true,"hz":30}` |
 | `preview_window` | `mode` (`on` / `off`) | Shows / hides the preview window (the HMD image) in Windows direct mode (`display.mode = direct`). Nothing is done while it is hidden |
@@ -178,7 +179,7 @@ Each device in `status`: `id, serial, kind, role, enabled, on_demand, timeout_po
 
 ### Driver → client: `haptic`
 
-When an app requests haptics, the driver sends it to **the address that last sent a packet**.
+When an app requests haptics, the driver sends it to **the address that last sent a packet**. With VHMD Link, `headset_bridge` forwards it to the headset and the controller vibrates.
 
 ```json
 { "type": "haptic", "id": "right_hand", "duration": 0.005, "frequency": 100.0, "amplitude": 0.75 }

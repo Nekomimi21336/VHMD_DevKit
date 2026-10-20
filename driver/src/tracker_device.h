@@ -23,6 +23,7 @@ public:
     std::string ApplyRole(const RoleInfo& role, bool overwrite);
     // Follows role changes made in SteamVR's "Manage Trackers".
     bool HandleEvent(const vr::VREvent_t& event) override;
+    void RefreshRenderModel() override;
 
 protected:
     void OnActivate(vr::PropertyContainerHandle_t container) override;

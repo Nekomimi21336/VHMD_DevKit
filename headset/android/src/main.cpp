@@ -128,7 +128,43 @@ public:
     }
     bool Connected() const { return connected_.load(); }
 
+    // Messages the PC sent back (e.g. {"type":"haptic",...}), oldest first.
+    std::vector<std::string> TakeIncoming() {
+        std::lock_guard<std::mutex> l(in_mu_);
+        std::vector<std::string> out;
+        out.swap(incoming_);
+        return out;
+    }
+
 private:
+    void Keep(std::string msg) {
+        std::lock_guard<std::mutex> l(in_mu_);
+        if (incoming_.size() < 64) incoming_.push_back(std::move(msg));
+    }
+
+    // Non-blocking reads of what came back on either link.
+    void Receive(int fd, int udp) {
+        char buf[2048];
+        if (udp >= 0) {
+            for (;;) {
+                const ssize_t n = recv(udp, buf, sizeof(buf), MSG_DONTWAIT);
+                if (n <= 0) break;
+                Keep(std::string(buf, static_cast<size_t>(n)));
+            }
+        }
+        if (fd >= 0) {
+            for (;;) {
+                const ssize_t n = recv(fd, buf, sizeof(buf), MSG_DONTWAIT);
+                if (n <= 0) break;
+                tcp_in_.append(buf, static_cast<size_t>(n));
+            }
+            for (size_t nl; (nl = tcp_in_.find('\n')) != std::string::npos;) {
+                Keep(tcp_in_.substr(0, nl));
+                tcp_in_.erase(0, nl + 1);
+            }
+        }
+    }
+
     void Run() {
         int fd = -1;    // USB: TCP to 127.0.0.1 (adb reverse)
         int udp = -1;   // Wi-Fi: datagrams to the PC
@@ -156,6 +192,7 @@ private:
                 // One array per datagram, without the line break.
                 const size_t n = line.size() - (line.empty() || line.back() != '\n' ? 0 : 1);
                 connected_ = sendto(udp, line.data(), n, 0, reinterpret_cast<sockaddr*>(&a), sizeof(a)) > 0;
+                Receive(-1, udp);
                 continue;
             }
             if (link != kUsb) {
@@ -180,6 +217,8 @@ private:
                 fd = -1;
                 connected_ = false;
                 LOGI("PC connection lost");
+            } else {
+                Receive(fd, -1);
             }
         }
         if (fd >= 0) close(fd);
@@ -211,6 +250,9 @@ private:
     bool has_ = false;
     bool stop_ = false;
     std::atomic<bool> connected_{false};
+    std::mutex in_mu_;
+    std::vector<std::string> incoming_;
+    std::string tcp_in_;
 };
 
 // -- small math ---------------------------------------------------------------
@@ -905,6 +947,7 @@ struct App {
     std::string system_name;
     std::chrono::steady_clock::time_point next_info{};
     int reprojected = 0;   // frames shown at their render pose (stats)
+    int haptics = 0;       // vibrations applied (stats)
     // X + A held: take control back to "manual" (the person wearing the headset).
     std::chrono::steady_clock::time_point take_since{};
     bool take_holding = false, take_sent = false;
@@ -915,7 +958,7 @@ struct App {
     XrAction grip_pose = XR_NULL_HANDLE, trigger = XR_NULL_HANDLE, trigger_touch = XR_NULL_HANDLE,
              squeeze = XR_NULL_HANDLE, stick = XR_NULL_HANDLE, stick_click = XR_NULL_HANDLE,
              stick_touch = XR_NULL_HANDLE, btn_a = XR_NULL_HANDLE, btn_b = XR_NULL_HANDLE, btn_x = XR_NULL_HANDLE,
-             btn_y = XR_NULL_HANDLE, menu = XR_NULL_HANDLE;
+             btn_y = XR_NULL_HANDLE, menu = XR_NULL_HANDLE, haptic = XR_NULL_HANDLE;
     XrSpace grip_spaces[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
 
     GLuint program = 0, vbo = 0, vao = 0;
@@ -1155,6 +1198,8 @@ void SuggestBindings(App& app, const char* profile, bool has_menu_left, bool has
         b.push_back({app.btn_b, "/user/hand/right/input/b/click"});
     }
     if (has_menu_left) b.push_back({app.menu, "/user/hand/left/input/menu/click"});
+    b.push_back({app.haptic, "/user/hand/left/output/haptic"});
+    b.push_back({app.haptic, "/user/hand/right/output/haptic"});
     std::vector<XrActionSuggestedBinding> sb;
     for (auto& x : b) sb.push_back({x.a, Path(app, x.path)});
     XrInteractionProfileSuggestedBinding s{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
@@ -1185,6 +1230,7 @@ bool CreateActions(App& app) {
     app.btn_x = MakeAction(app, "x", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
     app.btn_y = MakeAction(app, "y", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
     app.menu = MakeAction(app, "menu", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
+    app.haptic = MakeAction(app, "haptic", XR_ACTION_TYPE_VIBRATION_OUTPUT, true);
 
     if (app.has_bd_controller) SuggestBindings(app, "/interaction_profiles/bytedance/pico4_controller", true, true);
     SuggestBindings(app, "/interaction_profiles/oculus/touch_controller", true, true);
@@ -1387,6 +1433,25 @@ void Frame(App& app) {
     AppendInputs(app, msg, kLeft);
     AppendInputs(app, msg, kRight);
 
+    // Vibration the PC asked for: {"type":"haptic","id":"left_hand","duration":s,"frequency":Hz,"amplitude":0..1}.
+    for (const std::string& m : app.sender.TakeIncoming()) {
+        if (m.find("\"haptic\"") == std::string::npos) continue;
+        const int hand = m.find("\"left_hand\"") != std::string::npos ? kLeft : kRight;
+        double duration = 0, frequency = 0, amplitude = 0;
+        JsonNumber(m, "duration", &duration);
+        JsonNumber(m, "frequency", &frequency);
+        JsonNumber(m, "amplitude", &amplitude);
+        XrHapticVibration v{XR_TYPE_HAPTIC_VIBRATION};
+        v.duration = duration > 0 ? static_cast<XrDuration>(duration * 1e9) : XR_MIN_HAPTIC_DURATION;
+        v.frequency = frequency > 0 ? static_cast<float>(frequency) : XR_FREQUENCY_UNSPECIFIED;
+        v.amplitude = static_cast<float>(std::clamp(amplitude, 0.0, 1.0));
+        XrHapticActionInfo hi{XR_TYPE_HAPTIC_ACTION_INFO};
+        hi.action = app.haptic;
+        hi.subactionPath = app.hand_paths[hand];
+        xrApplyHapticFeedback(app.session, &hi, reinterpret_cast<XrHapticBaseHeader*>(&v));
+        ++app.haptics;
+    }
+
     // Holding X and A for 1.5 s gives control back to the person wearing the
     // headset (an automation may have it): {"op":"control","source":"manual"}.
     {
@@ -1500,10 +1565,11 @@ void Frame(App& app) {
         const float rep = xr_frames ? 100.0f * app.reprojected / xr_frames : 0.0f;
         LOGI("frames %.0f/s, video received %.0f/s decoded %.0f/s shown %.0f/s (repeats %.0f/s, dropped %.0f/s, "
              "buffer %d, wait %.1f ms avg %.1f p95), at render pose %.0f%%, bunched: received %.0f/s decoded %.0f/s; "
-             "audio %.0f packets/s, %d underruns, %d skipped",
+             "audio %.0f packets/s, %d underruns, %d skipped; haptics %d",
              xr_frames / s, v.received / s, v.decoded / s, v.shown / s, v.repeats / s, v.dropped / s, v.buffer,
              v.wait_avg_ms, v.wait_p95_ms, rep, v.rx_close / s, v.dec_close / s, v.audio_packets / s,
-             v.audio_underruns, v.audio_skipped);
+             v.audio_underruns, v.audio_skipped, app.haptics);
+        app.haptics = 0;
         // The same numbers for the PC: over Wi-Fi there is no logcat.
         char st[384];
         snprintf(st, sizeof(st),
