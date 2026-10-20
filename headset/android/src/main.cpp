@@ -701,6 +701,7 @@ struct App {
     std::string system_name;
     std::chrono::steady_clock::time_point next_info{};
     int reprojected = 0;   // frames shown at their render pose (stats)
+    std::string link_stats;   // {"type":"link_stats",...} for the PC, refreshed every 2 s
 
     XrActionSet action_set = XR_NULL_HANDLE;
     XrPath hand_paths[2] = {};
@@ -1192,6 +1193,10 @@ void Frame(App& app) {
     if (now_info >= app.next_info) {   // now and then: UDP may drop one
         app.next_info = now_info + std::chrono::seconds(2);
         AppendHeadsetInfo(app, msg, eye_local);
+        if (!app.link_stats.empty()) {
+            msg += ',';
+            msg += app.link_stats;
+        }
     }
     msg += "]\n";
     app.sender.Post(std::move(msg));
@@ -1269,6 +1274,13 @@ void Frame(App& app) {
         const float s = std::chrono::duration<float>(now - last_log).count();
         LOGI("frames %.0f/s, video received %.0f/s decoded %.0f/s shown %.0f/s, at render pose %.0f%%", xr_frames / s,
              rx / s, dec / s, shown / s, xr_frames ? 100.0f * app.reprojected / xr_frames : 0.0f);
+        // The same numbers for the PC: over Wi-Fi there is no logcat.
+        char st[256];
+        snprintf(st, sizeof(st),
+                 "{\"type\":\"link_stats\",\"display\":%.1f,\"received\":%.1f,\"decoded\":%.1f,\"shown\":%.1f,"
+                 "\"reprojected\":%.0f}",
+                 xr_frames / s, rx / s, dec / s, shown / s, xr_frames ? 100.0f * app.reprojected / xr_frames : 0.0f);
+        app.link_stats = st;
         app.reprojected = 0;
         xr_frames = 0;
         last_log = now;

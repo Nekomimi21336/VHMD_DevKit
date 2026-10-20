@@ -24,6 +24,7 @@ from __future__ import annotations
 import collections
 import json
 import math
+import queue
 import shutil
 import socket
 import struct
@@ -107,7 +108,7 @@ class VideoServer(threading.Thread):
         super().__init__(name="vhmd-video", daemon=True)
         self.port, self.bitrate, self.fps, self.encoder, self.log = port, bitrate_mbps, fps, encoder, log
         self.host = host
-        self.frames_in = self.frames_out = self.bytes_out = 0
+        self.frames_in = self.frames_out = self.bytes_out = self.frames_dropped = 0
 
     def run(self) -> None:
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -153,7 +154,7 @@ class VideoServer(threading.Thread):
             rtp.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 << 20)
             rtp_port = rtp.getsockname()[1]
             br = f"{self.bitrate:g}M"
-            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-fflags", "nobuffer",
+            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-fflags", "nobuffer", "-filter_threads", "4",
                    "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{w}x{h}", "-r", f"{self.fps:g}", "-i", "pipe:0",
                    # Limited-range BT.709 YUV: headset decoders (and the GPU's YUV sampler) assume
                    # limited range and crush the dark end of a full-range stream.
@@ -187,23 +188,43 @@ class VideoServer(threading.Thread):
                         self.frames_out += 1
                         self.bytes_out += len(au)
 
+            # Reading the shared memory (~3.5 ms for 2880x1440) and writing to ffmpeg's
+            # pipe (~11 ms: ffmpeg converting) overlap: one thread each.
+            pending: queue.Queue = queue.Queue(maxsize=2)
+
+            def in_loop() -> None:
+                try:
+                    while not stop.is_set():
+                        try:
+                            f = pending.get(timeout=0.5)
+                        except queue.Empty:
+                            continue
+                        poses.append(f.pose)        # in the order frames enter ffmpeg
+                        ffmpeg.stdin.write(f.rgba)
+                        ffmpeg.stdin.flush()
+                        self.frames_in += 1
+                except OSError:
+                    stop.set()
+
             out = threading.Thread(target=out_loop, daemon=True)
             out.start()
+            feeder = threading.Thread(target=in_loop, daemon=True)
+            feeder.start()
             last = -1
             try:
-                while ffmpeg.poll() is None and out.is_alive():
+                while ffmpeg.poll() is None and out.is_alive() and not stop.is_set():
                     hdr = reader.peek()
                     if hdr is None or hdr[4] == last:
-                        time.sleep(0.001)
+                        time.sleep(0.0005)
                         continue
                     f = reader.read()
                     if f is None or (f.width, f.height) != (w, h):
                         continue
                     last = f.frame_index
-                    poses.append(f.pose)
-                    ffmpeg.stdin.write(f.rgba)
-                    ffmpeg.stdin.flush()
-                    self.frames_in += 1
+                    try:
+                        pending.put_nowait(f)
+                    except queue.Full:
+                        self.frames_dropped += 1    # ffmpeg behind: skip, the next frame is newer
             finally:
                 stop.set()
                 rtp.close()

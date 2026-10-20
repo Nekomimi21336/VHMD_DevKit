@@ -46,6 +46,8 @@
 python -m vhmd_client.mode vhmd --headset      # 元に戻すときは --no-headset
 ```
 
+一度 `--headset` にすると、その後の `mode vhmd`(FPS 操作ツールの切り替えボタンも)でもヘッドセットの値を使い続けます(`%LOCALAPPDATA%\VHMD\headset_applied`)。
+
 - SteamVR の設定 `vhmd_display`: 目ごとの視野角(`leftTanLeft` ... `rightTanDown`、ドライバが非対称な視野角に対応)、`renderWidth` / `renderHeight`、`ipdMeters`、`displayFrequency`。
 - VHMD の設定のプロファイル: ダイレクトモード、`display.refreshHz` と `preview.fps` をヘッドセットのリフレッシュレートに、`preview.maxEyeWidth` をヘッドセットの目の幅に。プロファイルは `%LOCALAPPDATA%` にあり切り替えのたびに作り直すので、ドライバをビルドし直してインストール済みの設定が既定値に戻っても消えません。
 
@@ -88,5 +90,6 @@ Gradle は使いません。`build_apk.py` が次を行います。
 - USB だけ(`--usb-only`)でも従来どおり動く。
 - Pico 4 Ultra の表示: 1920 × 1920 / 目、72 Hz、視野角 ±47.5°(左右対称、目の向きの傾きなし)、IPD 72.0 mm(本体の設定値)。`--headset` の後、SteamVR から見た VHMD の視野角も ±47.5°、72 Hz、IPD 72 mm になり、ヘッドセットで映像がレンズの範囲いっぱいに出る。
 - 補正: 表示したフレームの 100% が描画時の姿勢付き。プレビューの姿勢は Pico から送った頭の位置と一致(置いた状態で確認。動かしたときの見え方は未確認)。
-- 映像の大きさが 2880 × 1440(1 目 1440)になり、PC 側で 約 50 fps に下がった(プレビューを Python でコピーする部分。改善の余地)。
+- 映像 2880 × 1440(1 目 1440)を 72 fps・約 23 Mbit/s で送る。最初は約 50 fps だった。原因はドライバのプレビューの間引き(「前回から 1/72 秒以上」の判定で、少し早く来たフレームを落としていた。締め切り方式に変えて 72 / 72)と、PC 側で共有メモリの読み出し(3.5 ms)と ffmpeg への書き込み(11 ms)を順番にしていたこと(別スレッドに分けた)。
+- ヘッドセットの受信・復号・表示のフレームレートと補正の割合は 2 秒ごとに PC に送られ、`headset_bridge` の表示に出る(Wi-Fi だけのときは logcat が見られないため)。
 - ドライバをビルドするとインストール済みの `vhmd_config.json` がリポジトリの既定値に戻る。ストリーミング用の値は `--headset` のプロファイルで設定するので影響しない。

@@ -39,6 +39,7 @@ class Stats:
         self.lines = 0
         self.bytes = 0
         self.last = ""
+        self.headset: dict = {}   # the app's own numbers (link_stats), every 2 s
 
     def add(self, line: bytes) -> None:
         with self.lock:
@@ -56,15 +57,17 @@ class Stats:
 def forward(data: bytes, udp: socket.socket, driver, stats: Stats) -> None:
     """One JSON array from the app to the driver; the app's "headset" message
     (its display: fields of view, eyes, render size, refresh rate) is kept here."""
-    if b'"type":"headset"' in data:
+    if b'"type":"headset"' in data or b'"type":"link_stats"' in data:
         try:
             msgs = json.loads(data)
         except ValueError:
             msgs = []
-        rest = [m for m in msgs if m.get("type") != "headset"]
+        rest = [m for m in msgs if m.get("type") not in ("headset", "link_stats")]
         for m in msgs:
             if m.get("type") == "headset":
                 headset_info.update(m, log=lambda s: print(s, flush=True))
+            elif m.get("type") == "link_stats":
+                stats.headset = m
         data = json.dumps(rest, separators=(",", ":")).encode()
     udp.sendto(data, driver)
     stats.add(data)
@@ -175,6 +178,11 @@ def main() -> None:
                 fin, fout, vb = video.take_stats()
                 if fin or fout:
                     line += f"  |  video in {fin} / out {fout} fps  {vb * 8 / 1e6:5.1f} Mbit/s"
+            h = stats.headset
+            if h:
+                line += (f"  |  headset: received {h.get('received', 0):.0f} decoded {h.get('decoded', 0):.0f} "
+                         f"shown {h.get('shown', 0):.0f}/s at {h.get('display', 0):.0f} Hz, "
+                         f"{h.get('reprojected', 0):.0f}% reprojected")
             if line:
                 print(line, flush=True)
 

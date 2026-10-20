@@ -88,7 +88,7 @@ struct DirectModeComponent::Impl {
     DXGI_FORMAT atlas_format = DXGI_FORMAT_UNKNOWN;
     uint32_t atlas_w = 0, atlas_h = 0;
     uint32_t shm_level = 0, win_level = 0;
-    std::chrono::steady_clock::time_point last_shm{}, last_win{};
+    std::chrono::steady_clock::time_point next_shm{}, next_win{};   // frame-rate cap deadlines
 
     // Shared-memory readback (2 staging textures, mapped by the readback thread).
     ComPtr<ID3D11Texture2D> staging[2];
@@ -348,8 +348,18 @@ void DirectModeComponent::Present(vr::SharedTextureHandle_t sync_texture) {
 void DirectModeComponent::CopyPreview(const SubmitLayerPerEye_t (&layer)[2]) {
     using namespace std::chrono;
     const auto now = steady_clock::now();
-    const bool want_shm = preview_active_ && now - impl_->last_shm >= duration<double>(1.0 / std::max(1.0, capture_.fps));
-    const bool want_win = window_visible_ && now - impl_->last_win >= duration<double>(1.0 / window_fps_);
+    // Frame-rate caps as deadlines rather than "a full period since the last
+    // one": with presents at the cap rate, jitter made every other one a little
+    // early and the preview ran at ~52 of 72 fps. A present up to a quarter period
+    // early counts; the average stays at the cap.
+    auto due = [&](steady_clock::time_point& next, double fps) {
+        const auto period = duration_cast<steady_clock::duration>(duration<double>(1.0 / std::max(1.0, fps)));
+        if (now + period / 4 < next) return false;
+        next = std::max(next + period, now - period);   // after a pause, catch up at most one period
+        return true;
+    };
+    const bool want_shm = preview_active_ && due(impl_->next_shm, capture_.fps);
+    const bool want_win = window_visible_ && due(impl_->next_win, window_fps_);
     if (!want_shm && !want_win) return; // nobody is looking: no GPU work at all
 
     std::unique_lock<std::mutex> lock(impl_->mu);
@@ -414,7 +424,6 @@ void DirectModeComponent::CopyPreview(const SubmitLayerPerEye_t (&layer)[2]) {
     impl_->ctx->GenerateMips(impl_->atlas_srv.Get());
 
     if (want_shm) {
-        impl_->last_shm = now;
         const uint32_t w = std::max(1u, impl_->atlas_w >> impl_->shm_level);
         const uint32_t h = std::max(1u, impl_->atlas_h >> impl_->shm_level);
         const int idx = impl_->staging_pending == 0 ? 1 : 0;
@@ -445,7 +454,6 @@ void DirectModeComponent::CopyPreview(const SubmitLayerPerEye_t (&layer)[2]) {
         ++stats_.capture.submitted;
     }
     if (want_win) {
-        impl_->last_win = now;
         impl_->window_frame_ready = true;
     }
 }

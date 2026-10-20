@@ -29,6 +29,9 @@ from pathlib import Path
 from typing import Callable, Dict, Optional
 
 PATH = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "VHMD" / "headset.json"
+# Present while VHMD renders for the headset (mode vhmd --headset until --no-headset),
+# so later switches keep the headset's settings.
+APPLIED = PATH.with_name("headset_applied")
 TAN_KEYS = (("leftTanLeft", "leftTanRight", "leftTanUp", "leftTanDown"),
             ("rightTanLeft", "rightTanRight", "rightTanUp", "rightTanDown"))
 DISPLAY_KEYS = ("renderWidth", "renderHeight", "ipdMeters", "displayFrequency") + TAN_KEYS[0] + TAN_KEYS[1]

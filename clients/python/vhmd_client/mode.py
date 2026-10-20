@@ -133,8 +133,10 @@ def write_profile(mode: str, edits: Optional[Dict[str, Dict[str, str]]] = None) 
 
 def wanted_settings(mode: str, headset: Optional[bool] = None) -> Dict[str, Dict[str, object]]:
     """headset: True = render for the VHMD Link headset (headset_info), False =
-    VHMD's own display settings, None = leave them as they are."""
+    VHMD's own display settings, None = as chosen last time."""
     from . import headset_info
+    if headset is None:
+        headset = headset_info.APPLIED.exists() or None
     edits = None
     display: Dict[str, object] = {}
     if headset:
@@ -143,8 +145,10 @@ def wanted_settings(mode: str, headset: Optional[bool] = None) -> Dict[str, Dict
             raise SystemExit(f"no headset description yet ({headset_info.PATH}); run VHMD Link with headset_bridge first")
         display = headset_info.display_settings(info)
         edits = headset_info.profile_edits(info)
+        headset_info.APPLIED.touch()
     elif headset is False:
         display = {k: None for k in headset_info.DISPLAY_KEYS}   # removed: driver defaults
+        headset_info.APPLIED.unlink(missing_ok=True)
     out = {f"driver_{PHYSICAL_DRIVER}": {"enable": mode == "pico"},
            DRIVER_SECTION: {"configFile": str(write_profile(mode, edits))}}
     if display:
