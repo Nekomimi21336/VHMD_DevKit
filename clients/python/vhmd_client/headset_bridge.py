@@ -58,6 +58,7 @@ class BridgeOptions:
     sync: bool = True             # move VHMD's vsync to the headset's display timing
     sync_target_ms: float = 0.0   # how long frames should wait on the headset (0: the driver's default)
     refresh: float = 0.0          # display refresh rate asked of the headset (0: its own)
+    encoder_backend: str = "auto" # driver encoder: "auto" (AMF on AMD GPUs), "amf", "mf"
 
 
 class Stats:
@@ -158,6 +159,7 @@ class Bridge:
             self.video = VideoServer(host=host, bitrate_mbps=o.bitrate, encoder=o.encoder, buffer=o.buffer,
                                      codec=o.codec, eye_width=o.eye_width, source=o.video_source,
                                      adaptive=o.adaptive, log=self.log)
+            self.video.encoder_backend = o.encoder_backend
             self.video.start()
 
         self._udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -506,6 +508,8 @@ def main() -> None:
     ap.add_argument("--buffer", type=int, default=0, choices=(0, 1, 2),
                     help="frames the headset holds back: 0 = newest (lowest latency), 1 = smoother (+1 frame)")
     ap.add_argument("--fixed-bitrate", action="store_true", help="keep --bitrate even when the network is slower")
+    ap.add_argument("--encoder", default="auto", choices=("auto", "amf", "mf"),
+                    help="driver encoder: auto = AMD AMF (ultra low latency) when available, else Media Foundation")
     ap.add_argument("--refresh", type=float, default=0.0,
                     help="display refresh rate for the headset, e.g. 72 or 90 (VHMD follows it)")
     ap.add_argument("--no-sync", action="store_true", help="do not move VHMD's vsync to the headset's display")
@@ -518,7 +522,7 @@ def main() -> None:
         usb_only=args.usb_only, video=not args.no_video, bitrate=args.bitrate, codec=args.codec,
         eye_width=args.eye_width, video_source=args.video_source, encoder=args.encoder, buffer=args.buffer,
         adaptive=not args.fixed_bitrate, sync=not args.no_sync, sync_target_ms=args.sync_target_ms,
-        refresh=args.refresh),
+        refresh=args.refresh, encoder_backend=args.encoder),
         log=lambda m: print(m, flush=True))
     bridge.start()
     try:

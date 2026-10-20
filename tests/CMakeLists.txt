@@ -17,7 +17,8 @@ if(WIN32)
   # Skipped (exit 77) when the machine has no hardware H.264 encoder.
   add_executable(vhmd_stream_selftest
     windows/stream_selftest.cpp
-    ${PROJECT_SOURCE_DIR}/driver/src/windows/stream_encoder.cpp)
+    ${PROJECT_SOURCE_DIR}/driver/src/windows/stream_encoder.cpp
+    ${PROJECT_SOURCE_DIR}/driver/src/windows/amf_encoder.cpp)
   target_link_libraries(vhmd_stream_selftest PRIVATE vhmd_core d3d11 dxgi mfplat mfuuid ole32)
   add_test(NAME stream_selftest COMMAND vhmd_stream_selftest)
   set_tests_properties(stream_selftest PROPERTIES SKIP_RETURN_CODE 77)

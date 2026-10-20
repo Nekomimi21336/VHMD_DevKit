@@ -139,6 +139,7 @@ class VideoServer(threading.Thread):
         self.source = source   # "auto" (driver, else ffmpeg), "driver", "ffmpeg"
         self.frames_in = self.frames_out = self.bytes_out = self.frames_dropped = 0
         self.current: Optional[socket.socket] = None   # the headset's connection, while there is one
+        self.encoder_backend = "auto"   # driver encoder: "auto" (AMF on AMD), "amf", "mf" (Media Foundation)
         # Adaptive bitrate (driver encoder): down when the network cannot keep
         # up (sending to the headset blocks), back up toward self.bitrate when it can.
         self.adaptive = adaptive
@@ -223,7 +224,8 @@ class VideoServer(threading.Thread):
             info = headset_info.load()
             eye = int(info["render"][0]) if info else 0
         self.bitrate_now = self.bitrate
-        settings = {"bitrate_mbps": self.bitrate, "codec": self.codec, "eye_width": eye, "buffer": self.buffer}
+        settings = {"bitrate_mbps": self.bitrate, "codec": self.codec, "eye_width": eye, "buffer": self.buffer,
+                    "encoder": self.encoder_backend}
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         # A small send buffer (about 60 ms of video): when the network is slower
         # than the video, sending blocks soon (that is the signal to lower the

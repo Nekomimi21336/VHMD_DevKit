@@ -58,7 +58,8 @@ set_target_properties(driver_vhmd PROPERTIES
 if(WIN32)
   # Direct-mode HMD output on Windows (display.mode = "direct"): D3D11 shared
   # textures, optional preview window, shared-memory frames.
-  target_sources(driver_vhmd PRIVATE src/windows/direct_mode.cpp src/windows/stream_encoder.cpp)
+  target_sources(driver_vhmd PRIVATE src/windows/direct_mode.cpp src/windows/stream_encoder.cpp
+                                     src/windows/amf_encoder.cpp)
   # stream_encoder: hardware video encoding for VHMD Link (Media Foundation).
   target_link_libraries(driver_vhmd PRIVATE d3d11 dxgi mfplat mfuuid ole32)
 endif()

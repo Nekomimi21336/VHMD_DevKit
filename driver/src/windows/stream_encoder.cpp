@@ -31,6 +31,7 @@
 #include <nlohmann/json.hpp>
 
 #include "util/log.h"
+#include "windows/amf_encoder.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -180,6 +181,8 @@ struct StreamEncoder::Impl {
     double bitrate_mbps = 30;
     std::atomic<bool> bitrate_changed{false};   // a new bitrate for the running encoder
     std::string codec = "h264";
+    std::string backend = "auto";        // "auto" (AMF on AMD, else Media Foundation) | "amf" | "mf"
+    std::string amf_failed_codec;        // AMF could not do this codec: Media Foundation for it
     uint32_t eye_width = 0;
     int buffer = 0;
     float fov[2][4] = {};
@@ -464,6 +467,10 @@ void StreamEncoder::NetLoop() {
                     impl_->eye_width = uint32_t(std::clamp(j["eye_width"].get<int>(), 0, 4096));
                 if (j.contains("buffer") && j["buffer"].is_number())
                     impl_->buffer = std::clamp(j["buffer"].get<int>(), 0, 3);
+                if (j.contains("encoder") && j["encoder"].is_string()) {
+                    const std::string b = j["encoder"].get<std::string>();
+                    impl_->backend = b == "amf" || b == "mf" ? b : "auto";
+                }
             }
         }
         {
@@ -819,12 +826,152 @@ void StreamEncoder::EncodeLoop() {
         }
     };
 
+    // AMD: AMF in its ultra-low-latency usage, one frame at a time on this
+    // thread. Returns false when AMF cannot be used for the codec (then Media
+    // Foundation below), true when the session ended (client left, size, codec
+    // or frame rate changed: the loop sets up again).
+    auto run_amf = [&]() -> bool {
+        uint32_t w = 0, h = 0;
+        {
+            std::unique_lock<std::mutex> l(m.q_mu);
+            m.q_cv.wait_for(l, std::chrono::milliseconds(100), [&] { return !m.queue.empty() || !wanted_ || !running_; });
+            if (m.queue.empty()) return true;
+            w = m.queue.back().w;
+            h = m.queue.back().h;
+        }
+        std::string codec;
+        double bitrate;
+        {
+            std::lock_guard<std::mutex> l(m.set_mu);
+            codec = m.codec;
+            bitrate = m.bitrate_mbps;
+            m.bitrate_changed = false;
+        }
+        const UINT32 fps = UINT32(std::lround(fps_.load()));
+        AmfEncoder amf;
+        std::string err;
+        if (!amf.Init(m.device.Get(), codec, w, h, fps, bitrate, &err)) {
+            Log(LogLevel::Info, "stream: %s; using Media Foundation", err.c_str());
+            m.amf_failed_codec = codec;
+            return false;
+        }
+        m.hevc = codec == "hevc";
+        m.av1 = codec == "av1";
+        m.enc_w = w;
+        m.enc_h = h;
+        m.enc_fps = fps;
+        Log(LogLevel::Info, "stream: %ux%u @ %u fps, %.0f Mbit/s, encoder '%s'", w, h, fps, bitrate, amf.Name().c_str());
+        {
+            std::lock_guard<std::mutex> l(stats_mu_);
+            stats_.state = "encoding";
+            stats_.encoder = amf.Name();
+            stats_.width = w;
+            stats_.height = h;
+        }
+        send_config();
+        m.keyframe = true;
+        std::vector<uint8_t> au;
+        int failures = 0;
+        while (running_ && wanted_) {
+            // Frames waiting: encode the newest, the older ones are stale.
+            Impl::Frame f{};
+            bool have = false, reconfigure = false;
+            {
+                std::unique_lock<std::mutex> l(m.q_mu);
+                m.q_cv.wait_for(l, std::chrono::milliseconds(50),
+                                [&] { return !m.queue.empty() || !wanted_ || !running_ || m.bitrate_changed.load(); });
+                while (m.queue.size() > 1) {
+                    m.slot_busy[m.queue.front().slot] = false;
+                    m.queue.pop_front();
+                    std::lock_guard<std::mutex> s(stats_mu_);
+                    ++stats_.dropped;
+                }
+                if (!m.queue.empty()) {
+                    f = m.queue.front();
+                    m.queue.pop_front();
+                    have = true;
+                    reconfigure = f.w != w || f.h != h;
+                }
+            }
+            {
+                std::lock_guard<std::mutex> l(m.set_mu);
+                reconfigure = reconfigure || m.codec != codec;
+            }
+            if (reconfigure || std::lround(fps_.load()) != long(fps)) {
+                if (have) {
+                    std::lock_guard<std::mutex> l(m.q_mu);
+                    m.queue.push_front(f);   // for the new session
+                }
+                return true;
+            }
+            if (m.bitrate_changed.exchange(false)) {
+                double b;
+                {
+                    std::lock_guard<std::mutex> l(m.set_mu);
+                    b = m.bitrate_mbps;
+                }
+                amf.SetBitrate(b);
+                Log(LogLevel::Info, "stream: bitrate now %.1f Mbit/s", b);
+            }
+            bool need_config;
+            {
+                std::lock_guard<std::mutex> l(m.client_mu);
+                need_config = !m.config_sent && m.client != INVALID_SOCKET;
+            }
+            if (need_config) send_config();
+            if (!have) continue;
+            const uint64_t t_in = NowUs();
+            bool key = false;
+            const bool ok = amf.Encode(m.nv12[f.slot].Get(), f.index, m.keyframe.exchange(false), &au, &key);
+            {
+                std::lock_guard<std::mutex> l(m.q_mu);
+                m.slot_busy[f.slot] = false;
+            }
+            if (!ok) {
+                m.keyframe = true;
+                if (++failures >= 10) {
+                    Log(LogLevel::Warning, "stream: AMF stopped encoding; using Media Foundation");
+                    m.amf_failed_codec = codec;
+                    return true;
+                }
+                continue;
+            }
+            failures = 0;
+            bool config_ok;
+            {
+                std::lock_guard<std::mutex> l(m.client_mu);
+                config_ok = m.config_sent;
+            }
+            if (config_ok) send_msg(kKindFrame, f.index, nullptr, 0, au.data(), au.size(), f.pose_ok ? f.pose : nullptr);
+            const uint64_t t = NowUs();
+            std::lock_guard<std::mutex> l(stats_mu_);
+            ++stats_.encoded;
+            stats_.bytes += au.size();
+            m.encode_win.Add((t - f.submit_us) / 1000.0, &stats_.encode_ms_avg, &stats_.encode_ms_max);
+            m.encoder_win.Add((t - t_in) / 1000.0, &stats_.encoder_ms_avg, &stats_.encoder_ms_max);
+        }
+        return true;
+    };
+
     while (running_) {
         if (!wanted_) {
             if (m.mft) teardown();
+            {
+                std::lock_guard<std::mutex> l(m.set_mu);
+                m.amf_failed_codec.clear();   // try AMF again for the next client
+            }
             std::unique_lock<std::mutex> l(m.q_mu);
             m.q_cv.wait_for(l, std::chrono::milliseconds(100));
             continue;
+        }
+        if (!m.mft) {
+            std::string backend, codec;
+            {
+                std::lock_guard<std::mutex> l(m.set_mu);
+                backend = m.backend;
+                codec = m.codec;
+            }
+            if (backend != "mf" && m.amf_failed_codec != codec && run_amf()) continue;
         }
         // A client is there: set the encoder up for the size of the frames coming in.
         if (!m.mft) {

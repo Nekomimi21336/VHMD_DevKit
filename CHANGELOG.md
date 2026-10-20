@@ -3,6 +3,7 @@
 ## 未リリース
 
 ### 追加
+- **AMD の GPU では AMF の超低遅延モードで圧縮**(`driver/src/windows/amf_encoder.*`、AMF SDK v1.5.3 のヘッダーを `third_party/amf` に同梱、MIT)。3840 × 1920 の HEVC で Submit から送り出しまで 8.8 → 6.95 ms。H.264 / AV1 も対応。AMF が使えなければ Media Foundation に自動で戻る(`headset_bridge --encoder auto|amf|mf`、ストリームの設定 `encoder`)。
 - **既存の環境との共存**: `python -m vhmd_client.mode off`(PC のアプリの「元の環境」)で VHMD のドライバを止め、VHMD が変えた SteamVR の設定を最初に記録した値に戻す(`%LOCALAPPDATA%\VHMD\original_steamvr.json`)。PC のアプリに「SteamVR の使い方: VHMD Link / PICO Connect / 元の環境」の切り替え。
 - **遅れの測定と短縮**: ドライバが合成器のスレッドでの処理・圧縮の時間を、ヘッドセットが復号の時間を、`headset_bridge` が中継の時間を測って表示。圧縮器の出力をイベントで待つようにし(9.4 → 8.8 ms)、ヘッドセットのデコーダーに復号順の出力を指定(12.0 → 7.7 ms)。
 - **VHMD Link の PC アプリを単体の exe に**(`tools/build_link_exe.py`、PyInstaller): Python なしで動き、キーボード・マウス操作ツールも同じ exe(`--fps`)。`install_link.ps1` は exe があればそれをスタートメニューに登録し、リリースの zip に `VHMD Link/VHMD Link.exe` を入れる。

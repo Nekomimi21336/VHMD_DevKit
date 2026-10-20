@@ -5,7 +5,7 @@
 // parameter sets first. Writes the elementary stream next to the executable
 // (stream_selftest.h264 / .hevc / .av1) for inspection with ffprobe.
 //
-//   vhmd_stream_selftest [h264|hevc|av1] [eye_width] [source_eye_width (1280)]
+//   vhmd_stream_selftest [h264|hevc|av1] [eye_width] [source_eye_width (1280)] [frame_interval_us] [auto|amf|mf]
 // Exit codes: 0 pass, 1 fail, 77 skipped (no hardware encoder).
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -116,8 +116,9 @@ int main(int argc, char** argv) {
         std::printf("FAIL: cannot connect to the encoder\n");
         return 1;
     }
+    const std::string backend = argc > 5 ? argv[5] : "auto";   // encoder: AMF on AMD, else Media Foundation
     const std::string settings = "{\"codec\":\"" + codec + "\",\"bitrate_mbps\":20,\"eye_width\":" +
-                                 std::to_string(eye_out) + ",\"buffer\":1}\n";
+                                 std::to_string(eye_out) + ",\"buffer\":1,\"encoder\":\"" + backend + "\"}\n";
     send(c, settings.data(), int(settings.size()), 0);
 
     std::atomic<bool> done{false};
@@ -226,7 +227,10 @@ int main(int argc, char** argv) {
     }
     // The first frames go while the encoder starts (a few hundred ms).
     const bool pass = configs == 1 && frames >= total * 7 / 10 && posed >= frames - 2 && keyframes_with_ps >= 1 &&
-                      ordered && config.find("\"buffer\":1") != std::string::npos && mbps_b < mbps_a * 0.7;
+                      ordered && config.find("\"buffer\":1") != std::string::npos &&
+                      // The lower bitrate must show, unless the simple pattern never needed 8 Mbit/s
+                      // (AMF's CBR adds no filler).
+                      (mbps_a < 10 || mbps_b < mbps_a * 0.7);
     std::printf("%s\n", pass ? "PASS" : "FAIL");
     return pass ? 0 : 1;
 }
