@@ -426,6 +426,21 @@ PICO Connect で SteamVR につないだ Pico 4 Ultra に、VHMD のデバイス
 
 - 途中で SteamVR が vhmd を**セーフモードで無効化**した(停止に失敗した回が続いたため)。`steamvr.vrsettings` の `driver_vhmd.blocked_by_safe_mode` を消すと戻る。
 
+### VHMD と実機 HMD の切り替え(2026-10-21、Windows 11、Pico 4 Ultra + PICO Connect、SteamVR 2.17.10)
+
+`python -m vhmd_client.mode pico|vhmd` と FPS 操作ツールのボタンで確認した。
+
+| 項目 | 結果 |
+|---|---|
+| Pico モード | SteamVR のデバイスは `PICO_HMD`・`PICO_CONTROLLER_LEFT/RIGHT` + VHMD のトラッカー。VHMD の HMD とコントローラーは無効(`index -1`) |
+| VHMD モード | `VHMD-HMD-0`・`VHMD-CTL-L/R`。ダイレクトモードで起動 |
+| 所要時間 | VHMD へ 19 秒、Pico へ 12.5 秒(ドライバの応答待ちまで) |
+| ツールのボタン | 切り替え後にツールが開き直し、モードに合ったデバイスが並ぶ |
+| Pico モードのトラッカー | FPS 操作ツールの頭が実機 HMD の姿勢になり、「体」基準のトラッカー 3 個(腰・両足)が予定の位置と誤差 0.2 mm 以内で一致(45 秒、1628 サンプル)。ただしヘッドセットは置いたままで、頭はほぼ動いていない |
+
+- この PC では SnapVR(SteamVR のオーバーレイ)が、SteamVR が閉じるとすぐに起動し直す(vrserver の親が snapvr-engined)。最初の版は「vrserver がまだ動いている」と判断して 40 秒待ったあと強制終了していた。止める対象を最初の vrserver のプロセスに限り、vrmonitor は 1 秒ごとに終了させ直す(起動直後は数秒遅れて現れる)ようにして解消。起動し直した SteamVR は保存済みの設定を読むので、そのまま使う。
+- Pico 4 Ultra は装着していないと姿勢を更新しない(置いたままでは前回の値、SteamVR を起動し直した直後は原点・向き 0 のまま)。動きながらの追従は、装着して確認する必要がある。
+
 ## 2. 手動検証手順(要件 10.2)
 
 GUI 操作が必要なため未実施の項目です。結果欄に記入してください。

@@ -165,7 +165,7 @@ From other languages, just send JSON over UDP.
 python -m vhmd_client.fps        # run in clients/python, or pip install -e clients/python
 ```
 
-Drive the HMD and controllers by hand like an FPS game: the mouse looks around and WASD moves. A table shows and edits every device's position and angles, and a top view lets you drag devices around. In direct mode (`display.mode = "direct"`) the HMD's view is shown in the tool as well (set `preview.fps` to 30 for a smooth view). Poses are sent from their own thread 120 times a second with velocities, so SteamVR interpolates between packets.
+Drive the HMD and controllers by hand like an FPS game: the mouse looks around and WASD moves. A table shows and edits every device's position and angles, and a top view lets you drag devices around. In direct mode (`display.mode = "direct"`) the HMD's view is shown in the tool as well (set `preview.fps` to 30 for a smooth view). Poses are sent from their own thread at a steady 120 times a second.
 
 | Control | Effect |
 |---|---|
@@ -179,7 +179,7 @@ Drive the HMD and controllers by hand like an FPS game: the mouse looks around a
 | Pause / Take over from SteamVR | Stop sending so an automation program can drive / resume manual control from the poses SteamVR has now |
 | Copy as Python | Copy the current poses as `c.pose(...)` lines |
 | Raw mouse | On (default): ignores Windows pointer acceleration and turns the view by the mouse's own counts |
-| Motion prediction | On (default): velocities are sent too and SteamVR interpolates between packets. Turn it off if motion feels like it has inertia |
+| Motion prediction | Off by default. When on, velocities are sent too and SteamVR interpolates between packets (motion can feel like it has inertia) |
 | HMD view | One eye 16:9 (default) / both eyes / one eye (whole); scales with the window. For a large view set `preview.maxEyeWidth` to 1200 or more (with the default 960 an eye can shrink to 540 px, depending on the render size) |
 
 - The "SteamVR reports" column and the rings on the map are the poses apps actually see (needs pyopenvr: `pip install openvr`). Devices of other drivers, such as a physical HMD, are drawn in gray.
@@ -264,7 +264,7 @@ python -m vhmd_client.mode         # show the current mode
 
 The FPS control tool's "Switch to Pico" / "Switch to VHMD" button does the same (the tool reopens afterwards).
 
-- SteamVR picks its HMD at startup and cannot change it while running, so a switch restarts SteamVR (on this PC about 7 s to Pico, 27 s to VHMD). Running VR apps close.
+- SteamVR picks its HMD at startup and cannot change it while running, so a switch restarts SteamVR (on this PC about 13 s to Pico, 19 s to VHMD). Running VR apps close.
 - Only two SteamVR settings change: `driver_pico.enable` and `driver_vhmd.configFile`. The latter points to a copy of the installed config with only `hmd` / `controllers` changed (`%LOCALAPPDATA%\VHMD\profiles`), rebuilt on every switch so edits to the original carry over.
 - In Pico mode the FPS control tool takes the head from the physical HMD, and the trackers follow the person wearing it.
 

@@ -372,8 +372,8 @@ class App:
         self.sens = tk.DoubleVar(value=0.15)
         self.speed_v, self.sens_v = 1.5, 0.15   # thread-safe copies of the two above
         self.raw_var = tk.BooleanVar(value=True)
-        self.predict_var = tk.BooleanVar(value=True)
-        self.raw_v = self.predict_v = True
+        self.predict_var = tk.BooleanVar(value=False)   # off by default: no inertia-like overshoot
+        self.raw_v, self.predict_v = True, False
         self.raw_var.trace_add("write", lambda *a: setattr(self, "raw_v", bool(self.raw_var.get())))
         self.predict_var.trace_add("write", lambda *a: setattr(self, "predict_v", bool(self.predict_var.get())))
         self.raw: Optional[RawMouse] = None

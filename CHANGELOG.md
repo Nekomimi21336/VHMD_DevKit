@@ -3,10 +3,10 @@
 ## 未リリース
 
 ### 追加
-- **VHMD と実機 HMD の切り替え(Windows)**: `python -m vhmd_client.mode pico|vhmd`、FPS 操作ツールのボタン。SteamVR の設定 `driver_pico.enable` と `driver_vhmd.configFile`(インストール済みの設定から作るプロファイル)を切り替えて SteamVR を再起動する。
+- **VHMD と実機 HMD の切り替え(Windows)**: `python -m vhmd_client.mode pico|vhmd`、FPS 操作ツールのボタン。SteamVR の設定 `driver_pico.enable` と `driver_vhmd.configFile`(インストール済みの設定から作るプロファイル)を切り替えて SteamVR を再起動する。SnapVR などが SteamVR をすぐ起動し直す環境でも、元の SteamVR だけを止めて待つ。
 - **キーボードとマウスでの操作(Windows)**: `python -m vhmd_client.fps`。マウスで視点、WASD で移動、マウスボタンとキーでコントローラーの入力。各デバイスの位置・角度の表示と数値入力、上から見た図でのドラッグ、SteamVR 上の実際の姿勢の表示(pyopenvr がある場合)、送信の一時停止と SteamVR の姿勢からの引き継ぎ、今の姿勢を Python のコードとしてコピー。
 - FPS 操作ツールに HMD の視点を表示(ダイレクトモード)。プレビューを GDI で直接描くため、表示が UI の動きを妨げない。
-- 姿勢を専用スレッドから一定間隔(既定 120 回/秒)で、速度・角速度付きで送るようにした。SteamVR が送信の合間を補間するので、カクつきが減る。止まったときは速度を 0 にして行き過ぎを防ぐ。「動きの予測」でオン・オフできる。
+- 姿勢を専用スレッドから一定間隔(既定 120 回/秒)で、速度・角速度付きで送るようにした。SteamVR が送信の合間を補間するので、カクつきが減る。止まったときは速度を 0 にして行き過ぎを防ぐ。「動きの予測」でオン・オフでき、既定はオフ。
 - FPS 操作で Raw マウス入力(Windows のマウス加速を受けない)を既定にした。チェックボックスでカーソル移動量に戻せる。
 - HMD の視点の表示がウィンドウの大きさに追従する。共有メモリの映像をコピーせずに GDI で切り抜き・縮小するので、大きく表示しても UI が重くならない。`PreviewReader.address` / `peek` / `sequence`。
 - HMD の視点の表示モード: 片目 16:9 / 両目 / 片目(全体)。`PreviewReader.read_scaled` に両目(`eye="both"`)と縦横比での切り抜き(`aspect`)を追加。

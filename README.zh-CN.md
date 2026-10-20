@@ -165,7 +165,7 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 python -m vhmd_client.fps        # 在 clients/python 中运行，或 pip install -e clients/python
 ```
 
-像 FPS 游戏一样，用鼠标控制视角、WASD 移动，手动操作 HMD 和控制器。可以在表格中查看和输入每个设备的位置与角度，并在俯视图中拖动设备。直接模式(`display.mode = "direct"`)下，工具内还会显示 HMD 的视角(想流畅显示请把 `preview.fps` 设为 30)。姿态由专用线程以每秒 120 次连同速度发送，SteamVR 会在两次发送之间插值。
+像 FPS 游戏一样，用鼠标控制视角、WASD 移动，手动操作 HMD 和控制器。可以在表格中查看和输入每个设备的位置与角度，并在俯视图中拖动设备。直接模式(`display.mode = "direct"`)下，工具内还会显示 HMD 的视角(想流畅显示请把 `preview.fps` 设为 30)。姿态由专用线程以固定间隔(每秒 120 次)发送。
 
 | 操作 | 作用 |
 |---|---|
@@ -179,7 +179,7 @@ python -m vhmd_client.fps        # 在 clients/python 中运行，或 pip instal
 | 暂停 / 接管 SteamVR 姿态 | 停止发送，交给自动化程序 / 从 SteamVR 当前的姿态恢复手动操作 |
 | 复制为 Python | 把当前姿态作为 `c.pose(...)` 行复制到剪贴板 |
 | Raw 鼠标输入 | 开启(默认)时忽略 Windows 鼠标加速，直接用鼠标的移动量控制视角 |
-| 运动预测 | 开启(默认)时同时发送速度，SteamVR 在两次发送之间插值。感觉动作有惯性时可关闭 |
+| 运动预测 | 默认关闭。开启后同时发送速度，SteamVR 在两次发送之间插值(动作可能有惯性感) |
 | 视角显示 | 单眼 16:9(默认)/ 双眼 / 单眼(完整)可选，随窗口大小缩放。想放大显示请把 `preview.maxEyeWidth` 设为 1200 以上(默认 960 时，视渲染尺寸单眼可能缩到 540 px) |
 
 - "SteamVR 中的值"一列和图中的圆圈是应用实际看到的姿态(需要 pyopenvr：`pip install openvr`)。真实 HMD 等其他驱动的设备以灰色显示。
@@ -264,7 +264,7 @@ python -m vhmd_client.mode         # 显示当前模式
 
 FPS 操作工具中的"切换到 Pico"/"切换到 VHMD"按钮作用相同(切换后工具会重新打开)。
 
-- SteamVR 在启动时确定 HMD，运行中无法更改，因此切换时会重启 SteamVR(本机切到 Pico 约 7 秒，切到 VHMD 约 27 秒)。正在运行的 VR 应用会关闭。
+- SteamVR 在启动时确定 HMD，运行中无法更改，因此切换时会重启 SteamVR(本机切到 Pico 约 13 秒，切到 VHMD 约 19 秒)。正在运行的 VR 应用会关闭。
 - 只修改两项 SteamVR 设置：`driver_pico.enable` 和 `driver_vhmd.configFile`。后者指向已安装配置的副本(仅修改 `hmd` / `controllers`，位于 `%LOCALAPPDATA%\VHMD\profiles`)，每次切换都会重新生成，因此对原配置的修改会被沿用。
 - 在 Pico 模式下，FPS 操作工具的头部取自真实 HMD，追踪器跟随佩戴者。
 

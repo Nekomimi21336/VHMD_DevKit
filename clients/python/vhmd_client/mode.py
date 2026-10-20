@@ -122,32 +122,44 @@ def wanted_settings(mode: str) -> Dict[str, Dict[str, object]]:
 
 
 # -- SteamVR processes --------------------------------------------------------
-def running(image: str) -> bool:
-    out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {image}", "/NH"], capture_output=True, text=True,
-                         creationflags=subprocess.CREATE_NO_WINDOW).stdout
-    return image.lower() in out.lower()
+def pids(image: str) -> List[int]:
+    out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {image}", "/FO", "CSV", "/NH"], capture_output=True,
+                         text=True, creationflags=subprocess.CREATE_NO_WINDOW).stdout
+    found = []
+    for line in out.splitlines():
+        cols = [c.strip('"') for c in line.split('","')]
+        if len(cols) > 1 and cols[0].lower() == image.lower() and cols[1].isdigit():
+            found.append(int(cols[1]))
+    return found
 
 
 def steamvr_running() -> bool:
-    return running("vrserver.exe")
+    return bool(pids("vrserver.exe"))
 
 
-def stop_steamvr(progress: Progress, timeout: float = 40.0) -> None:
-    """Closes SteamVR the way its own window does: without vrmonitor, vrserver
-    shuts down gracefully ("Lost master process"). Only SteamVR's processes."""
+def _kill(pid_list: List[int]) -> None:
+    for pid in pid_list:
+        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True,
+                       creationflags=subprocess.CREATE_NO_WINDOW)
+
+
+def stop_steamvr(progress: Progress, timeout: float = 30.0) -> None:
+    """Closes the running SteamVR the way its own window does: without vrmonitor,
+    vrserver shuts down gracefully ("Lost master process"). Waits for that
+    vrserver process only: another program (SnapVR, PICO Connect) may start
+    SteamVR again right away, and that new instance is left alone."""
+    servers = pids("vrserver.exe")
     t0 = time.time()
-    while steamvr_running() and time.time() - t0 < timeout:
-        if running("vrmonitor.exe"):
-            subprocess.run(["taskkill", "/F", "/IM", "vrmonitor.exe"], capture_output=True,
-                           creationflags=subprocess.CREATE_NO_WINDOW)
+    while set(servers) & set(pids("vrserver.exe")) and time.time() - t0 < timeout:
+        # Repeated: vrmonitor appears a few seconds after a fresh start. While
+        # this vrserver lives, any vrmonitor is its own (SteamVR runs once).
+        _kill(pids("vrmonitor.exe"))
         time.sleep(1.0)
-    if steamvr_running():
-        # Started by another program (e.g. PICO Connect) without a vrmonitor
-        # that owns it: end the SteamVR processes directly.
+    left = list(set(servers) & set(pids("vrserver.exe")))
+    if left:
+        # Started without a vrmonitor that owns it: end that instance directly.
         progress("SteamVR did not close; ending its processes")
-        for image in ("vrserver.exe", "vrcompositor.exe", "vrdashboard.exe", "vrwebhelper.exe"):
-            subprocess.run(["taskkill", "/F", "/IM", image], capture_output=True,
-                           creationflags=subprocess.CREATE_NO_WINDOW)
+        _kill(left)
         time.sleep(2.0)
 
 
@@ -221,19 +233,45 @@ def switch(mode: str, progress: Progress = print, restart: bool = True) -> None:
     was_running = steamvr_running()
     if was_running:
         progress("saving the settings through SteamVR")
-        _apply_via_api(settings)
+        _apply_via_api(settings)          # persisted by SteamVR before it closes
         progress("closing SteamVR")
         stop_steamvr(progress)
-    _apply_to_file(settings)
-    if restart or was_running:
+    time.sleep(1.0)
+    if steamvr_running():
+        # Another program started SteamVR again; it read the saved settings.
+        progress("SteamVR was started again by another program")
+    else:
+        _apply_to_file(settings)
+        if not (restart or was_running):
+            progress(f"mode: {mode} (SteamVR not started)")
+            return
         progress("starting SteamVR")
         start_steamvr()
-        t0 = time.time()
-        while not steamvr_running() and time.time() - t0 < 60:
-            time.sleep(0.5)
-        if mode == "vhmd":
-            _wait_driver(progress)
+    t0 = time.time()
+    while not steamvr_running() and time.time() - t0 < 60:
+        time.sleep(0.5)
+    _wait_driver(progress)
+    if effective_mode() not in (mode, None):
+        # Rare: the new SteamVR came up before the settings were saved. Once more.
+        progress("settings not in effect yet; restarting SteamVR again")
+        _apply_via_api(settings)
+        stop_steamvr(progress)
+        time.sleep(1.0)
+        if not steamvr_running():
+            _apply_to_file(settings)
+            start_steamvr()
+        _wait_driver(progress)
     progress(f"mode: {mode}")
+
+
+def effective_mode() -> Optional[str]:
+    """The mode the running VHMD driver is in (None if it does not answer)."""
+    from .client import VHMDClient
+    try:
+        devices = {d["id"]: d for d in VHMDClient(timeout=1.0).status().get("devices", [])}
+    except Exception:
+        return None
+    return "vhmd" if devices.get("hmd", {}).get("enabled") else "pico"
 
 
 def _wait_driver(progress: Progress, timeout: float = 60.0) -> None:
