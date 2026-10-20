@@ -13,8 +13,9 @@
 // clients/python/vhmd_client/headset_stream.py): a 64-byte header
 // ("VHV1", kind 1 = config JSON / 2 = access unit, size, flags, frame index,
 // time, render pose) and the payload. The client may first send one line of
-// JSON with settings: {"bitrate_mbps": 30, "codec": "h264"|"hevc",
-// "eye_width": 1920, "fps": 72}. Encoding only runs while a client is connected.
+// JSON with settings: {"bitrate_mbps": 30, "codec": "h264"|"hevc"|"av1" (AV1 falls back to HEVC),
+// "eye_width": 1920, "fps": 72}; later lines {"bitrate_mbps": 25} change the
+// bitrate while streaming. Encoding only runs while a client is connected.
 //
 // Audio: while a client is connected, what the PC plays on its default output
 // device (WASAPI loopback) goes on the same connection: kind 4 = audio format

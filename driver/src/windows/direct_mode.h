@@ -85,6 +85,12 @@ public:
         if (stream_) stream_->SetRefreshRate(hz);
     }
     double RefreshRate() const { return refresh_hz_; }
+    // Moves the vsync clock by `seconds` (positive = later), spread over the next
+    // frames. Replaces a shift still pending.
+    void ShiftVsync(double seconds) {
+        std::lock_guard<std::mutex> lock(vsync_mu_);
+        pending_shift_s_ = seconds;
+    }
     void SetPreviewActive(bool active);
     void SetWindowVisible(bool visible);
 
@@ -114,6 +120,7 @@ private:
     mutable std::mutex vsync_mu_;
     std::condition_variable vsync_cv_;
     uint64_t vsync_count_ = 0;
+    double pending_shift_s_ = 0;   // guarded by vsync_mu_
 };
 
 } // namespace vhmd

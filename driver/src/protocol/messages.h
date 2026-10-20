@@ -70,6 +70,9 @@ struct ConfigMessage {
     std::string role; // optional role argument
     std::string mode; // optional mode argument ("hand_mode")
     std::optional<double> hz; // optional number ("refresh_rate")
+    // "display_sync": the headset's frame wait (circular mean), its display
+    // period, the wanted wait (ms) and how consistent the measurement was (0..1).
+    std::optional<double> slack_ms, period_ms, target_ms, weight;
     std::optional<double> seq; // echoed back in replies
     // "control": the sender that drives the devices ("" = anyone) and, optionally,
     // which devices (none = all). Without "source" the op only reports.

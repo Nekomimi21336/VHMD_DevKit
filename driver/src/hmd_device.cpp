@@ -183,6 +183,30 @@ HmdDevice::~HmdDevice() = default;
 
 bool HmdDevice::DirectMode() const { return direct_ != nullptr; }
 
+std::string HmdDevice::DisplaySync(double slack_ms, double period_ms, double target_ms, double weight,
+                                   double* shift_ms) {
+    *shift_ms = 0;
+#if defined(VHMD_HAS_DIRECT_MODE)
+    if (!direct_) return "display sync needs direct mode";
+    const double own = 1000.0 / direct_->RefreshRate();
+    if (!(period_ms > 0) || std::abs(period_ms - own) > 0.3)
+        return "the headset's refresh rate differs from VHMD's";
+    // Error as a phase: a frame that waits nearly a whole period arrived just
+    // after the headset's frame began, i.e. slightly late.
+    double e = std::fmod(slack_ms - target_ms, own);
+    if (e > own / 2) e -= own;
+    if (e < -own / 2) e += own;
+    // Frames waiting longer than wanted: render later (positive shift), and the
+    // other way round. Half the error per report: the result shows in the next.
+    *shift_ms = std::clamp(0.5 * e * std::clamp(weight, 0.0, 1.0), -3.0, 3.0);
+    direct_->ShiftVsync(*shift_ms / 1000.0);
+    return "";
+#else
+    (void)slack_ms, (void)period_ms, (void)target_ms, (void)weight;
+    return "display sync needs direct mode";
+#endif
+}
+
 bool HmdDevice::SetRefreshRate(double hz) {
 #if defined(VHMD_HAS_DIRECT_MODE)
     if (direct_) {

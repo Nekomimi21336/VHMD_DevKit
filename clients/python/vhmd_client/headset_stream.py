@@ -110,7 +110,7 @@ class RtpDepacketizer:
 class VideoServer(threading.Thread):
     def __init__(self, port: int = VIDEO_PORT, bitrate_mbps: float = 30.0, fps: float = 90.0,
                  encoder: str = "h264_amf", log=print, host: str = "127.0.0.1", buffer: int = 0,
-                 codec: str = "hevc", eye_width: int = 0, source: str = "auto") -> None:
+                 codec: str = "hevc", eye_width: int = 0, source: str = "auto", adaptive: bool = True) -> None:
         super().__init__(name="vhmd-video", daemon=True)
         self.port, self.bitrate, self.fps, self.encoder, self.log = port, bitrate_mbps, fps, encoder, log
         self.host = host
@@ -120,6 +120,12 @@ class VideoServer(threading.Thread):
         self.source = source   # "auto" (driver, else ffmpeg), "driver", "ffmpeg"
         self.frames_in = self.frames_out = self.bytes_out = self.frames_dropped = 0
         self.current: Optional[socket.socket] = None   # the headset's connection, while there is one
+        # Adaptive bitrate (driver encoder): down when the network cannot keep
+        # up (sending to the headset blocks), back up toward self.bitrate when it can.
+        self.adaptive = adaptive
+        self.min_bitrate = 8.0
+        self.bitrate_now = bitrate_mbps
+        self._drv: Optional[socket.socket] = None   # the driver's encoder, while relaying
 
     def run(self) -> None:
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -149,6 +155,18 @@ class VideoServer(threading.Thread):
             except OSError:
                 pass
 
+    def set_bitrate(self, mbps: float) -> None:
+        """A new bitrate (the highest the adaptive control goes to); applied while
+        streaming from the driver's encoder."""
+        self.bitrate = mbps
+        self.bitrate_now = min(self.bitrate_now, mbps) if self.adaptive else mbps
+        drv = self._drv
+        if drv is not None:
+            try:
+                drv.sendall((json.dumps({"bitrate_mbps": round(self.bitrate_now, 1)}) + "\n").encode())
+            except OSError:
+                pass
+
     def stream(self, conn: socket.socket) -> None:
         if self.source in ("auto", "driver"):
             try:
@@ -157,6 +175,20 @@ class VideoServer(threading.Thread):
                 drv = None
                 if self.source == "driver":
                     raise OSError(f"the driver's encoder is not on 127.0.0.1:{DRIVER_STREAM_PORT}")
+                # SteamVR not (yet) running: end this connection, the headset
+                # comes back in a second. ffmpeg only for a running driver
+                # without its own encoder (older driver, Linux).
+                try:
+                    alive = VHMDClient(timeout=0.5).ping()
+                except Exception:
+                    alive = False
+                if not alive:
+                    raise OSError("waiting for SteamVR (the VHMD driver does not answer)")
+                time.sleep(2.0)   # the encoder starts with the HMD: once more before falling back
+                try:
+                    drv = socket.create_connection(("127.0.0.1", DRIVER_STREAM_PORT), timeout=1.0)
+                except OSError:
+                    drv = None
             if drv:
                 return self.relay(conn, drv)
         return self.stream_ffmpeg(conn)
@@ -168,11 +200,16 @@ class VideoServer(threading.Thread):
         if not eye:
             info = headset_info.load()
             eye = int(info["render"][0]) if info else 0
+        self.bitrate_now = self.bitrate
         settings = {"bitrate_mbps": self.bitrate, "codec": self.codec, "eye_width": eye, "buffer": self.buffer}
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 << 20)
+        # A small send buffer (about 60 ms of video): when the network is slower
+        # than the video, sending blocks soon (that is the signal to lower the
+        # bitrate) instead of queueing seconds of frames.
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, max(256 << 10, int(self.bitrate * 1e6 * 0.06 / 8)))
         drv.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         drv.settimeout(None)
+        self._drv = drv
         drv.sendall((json.dumps(settings) + "\n").encode())
         self.log(f"video: from the driver's encoder ({json.dumps(settings)})")
 
@@ -185,6 +222,11 @@ class VideoServer(threading.Thread):
                 b += c
             return bytes(b)
 
+        blocked = 0.0                     # seconds spent waiting to send, this second
+        window = time.monotonic()
+        calm = 0                          # calm seconds in a row
+        hold_until = 0.0                  # no increase before this
+        ceiling, ceiling_at = 0.0, 0.0    # the rate that last proved too much, and when
         try:
             while True:
                 hdr = recvn(HEADER.size)
@@ -194,12 +236,38 @@ class VideoServer(threading.Thread):
                 payload = recvn(size)
                 if kind == KIND_CONFIG:
                     self.log(f"video: {payload.decode(errors='replace')}")
+                t = time.monotonic()
                 conn.sendall(hdr + payload)
+                now = time.monotonic()
+                blocked += now - t
                 if kind == KIND_FRAME:
                     self.frames_in += 1
                     self.frames_out += 1
                     self.bytes_out += size
+                if now - window >= 1.0:
+                    busy = blocked / (now - window)
+                    blocked, window = 0.0, now
+                    new = self.bitrate_now
+                    if busy > 0.2:            # the network is behind: down by 30 %
+                        ceiling, ceiling_at = self.bitrate_now, now
+                        new = max(self.min_bitrate, self.bitrate_now * 0.7)
+                        calm, hold_until = 0, now + 5.0
+                    elif busy < 0.03:
+                        calm += 1
+                        # Up again carefully; below the rate that failed, for 30 s.
+                        limit = self.bitrate if now - ceiling_at > 30.0 else min(self.bitrate, ceiling * 0.85)
+                        if calm >= 3 and now >= hold_until and self.bitrate_now < limit - 0.5:
+                            new = min(limit, self.bitrate_now * 1.15)
+                            calm, hold_until = 0, now + 2.0
+                    else:
+                        calm = 0
+                    if self.adaptive and abs(new - self.bitrate_now) >= 0.5:
+                        self.log(f"video: {'lowering' if new < self.bitrate_now else 'raising'} the bitrate to "
+                                 f"{new:.0f} Mbit/s (sending was blocked {busy * 100:.0f}% of the last second)")
+                        self.bitrate_now = new
+                        drv.sendall((json.dumps({"bitrate_mbps": round(new, 1)}) + "\n").encode())
         finally:
+            self._drv = None
             drv.close()
 
     def stream_ffmpeg(self, conn: socket.socket) -> None:

@@ -3,9 +3,9 @@
 // local TCP client, and the client checks the messages: one config, then
 // access units with increasing frame indices, the pose, and a keyframe with
 // parameter sets first. Writes the elementary stream next to the executable
-// (stream_selftest.h264 / .hevc) for inspection with ffprobe.
+// (stream_selftest.h264 / .hevc / .av1) for inspection with ffprobe.
 //
-//   vhmd_stream_selftest [h264|hevc] [eye_width]
+//   vhmd_stream_selftest [h264|hevc|av1] [eye_width] [source_eye_width (1280)]
 // Exit codes: 0 pass, 1 fail, 77 skipped (no hardware encoder).
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -57,7 +57,7 @@ static bool RecvAll(SOCKET s, void* p, size_t n) {
 int main(int argc, char** argv) {
     const std::string codec = argc > 1 ? argv[1] : "h264";
     const int eye_out = argc > 2 ? std::atoi(argv[2]) : 960;
-    const uint32_t eye_w = 1280, eye_h = 1280;   // source eye size
+    const uint32_t eye_w = argc > 3 ? uint32_t(std::atoi(argv[3])) : 1280, eye_h = eye_w;   // source eye size
 
     ComPtr<ID3D11Device> dev;
     ComPtr<ID3D11DeviceContext> ctx;
@@ -122,6 +122,7 @@ int main(int argc, char** argv) {
     std::atomic<bool> done{false};
     int configs = 0, frames = 0, posed = 0, keyframes_with_ps = 0;
     uint64_t last_index = 0, bytes = 0;
+    uint64_t bytes_a = 0, bytes_b = 0;   // frames 72..215 at 20 Mbit/s, 288..431 after asking for 8
     bool ordered = true;
     std::string config;
     const std::string out_path = std::string("stream_selftest.") + codec;
@@ -139,10 +140,31 @@ int main(int argc, char** argv) {
             } else if (h.kind == 2) {
                 ++frames;
                 bytes += h.size;
+                if (h.index >= 72 && h.index < 216) bytes_a += h.size;
+                if (h.index >= 288 && h.index < 432) bytes_b += h.size;
                 if (h.index && h.index <= last_index) ordered = false;
                 if (h.index) last_index = h.index;
                 if (h.flags & 1) ++posed;
-                for (size_t i = 0; i + 4 < payload.size(); ++i)
+                if (codec == "av1") {
+                    // Low-overhead OBUs: header (type in bits 3-6, extension flag, size flag),
+                    // leb128 size. A keyframe starts with a sequence header (type 1).
+                    for (size_t i = 0; i < payload.size();) {
+                        const uint8_t hb = payload[i];
+                        if (!(hb & 2)) break;
+                        size_t j = i + 1 + ((hb & 4) ? 1 : 0);
+                        uint64_t sz = 0;
+                        for (int shift = 0; j < payload.size(); shift += 7) {
+                            sz |= uint64_t(payload[j] & 0x7F) << shift;
+                            if (!(payload[j++] & 0x80)) break;
+                        }
+                        if (((hb >> 3) & 0xF) == 1) {
+                            ++keyframes_with_ps;
+                            break;
+                        }
+                        i = j + size_t(sz);
+                    }
+                }
+                for (size_t i = 0; codec != "av1" && i + 4 < payload.size(); ++i)
                     if (payload[i] == 0 && payload[i + 1] == 0 && payload[i + 2] == 1) {
                         const int t = codec == "hevc" ? (payload[i + 3] >> 1) & 0x3F : payload[i + 3] & 0x1F;
                         if (t == (codec == "hevc" ? 32 : 7)) {
@@ -156,10 +178,15 @@ int main(int argc, char** argv) {
         done = true;
     });
 
-    // 3 s at 72 fps: a vertical bar sweeping across, different colors per eye.
+    // 6 s at 72 fps: a vertical bar sweeping across, different colors per eye.
+    // After 3 s the client asks for a lower bitrate while streaming.
     const auto t0 = std::chrono::steady_clock::now();
-    const int total = 216;
+    const int total = 432;
     for (int n = 0; n < total; ++n) {
+        if (n == 216) {
+            const std::string lower = "{\"bitrate_mbps\":8}\n";
+            send(c, lower.data(), int(lower.size()), 0);
+        }
         const uint32_t bar = (n * 13) % eye_w;
         for (uint32_t y = 0; y < td.Height; ++y)
             for (uint32_t x = 0; x < td.Width; ++x) {
@@ -185,7 +212,9 @@ int main(int argc, char** argv) {
     std::printf("submitted %llu, encoded %llu, dropped %llu\n", (unsigned long long)st.submitted,
                 (unsigned long long)st.encoded, (unsigned long long)st.dropped);
     std::printf("client: %d config, %d frames (%d with pose, %d with parameter sets), %.1f Mbit/s, ordered %s\n",
-                configs, frames, posed, keyframes_with_ps, bytes * 8.0 / 3.0 / 1e6, ordered ? "yes" : "no");
+                configs, frames, posed, keyframes_with_ps, bytes * 8.0 / 6.0 / 1e6, ordered ? "yes" : "no");
+    const double mbps_a = bytes_a * 8.0 / 2.0 / 1e6, mbps_b = bytes_b * 8.0 / 2.0 / 1e6;
+    std::printf("bitrate: %.1f Mbit/s asked 20, then %.1f Mbit/s asked 8 while streaming\n", mbps_a, mbps_b);
     std::printf("config: %s\nstream written to %s\n", config.c_str(), out_path.c_str());
     if (st.state.rfind("error: no hardware", 0) == 0) {
         std::printf("SKIP: %s\n", st.state.c_str());
@@ -193,7 +222,7 @@ int main(int argc, char** argv) {
     }
     // The first frames go while the encoder starts (a few hundred ms).
     const bool pass = configs == 1 && frames >= total * 7 / 10 && posed >= frames - 2 && keyframes_with_ps >= 1 &&
-                      ordered && config.find("\"buffer\":1") != std::string::npos;
+                      ordered && config.find("\"buffer\":1") != std::string::npos && mbps_b < mbps_a * 0.7;
     std::printf("%s\n", pass ? "PASS" : "FAIL");
     return pass ? 0 : 1;
 }

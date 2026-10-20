@@ -54,6 +54,10 @@ class BridgeOptions:
     video_source: str = "auto"
     encoder: str = "h264_amf"
     buffer: int = 0
+    adaptive: bool = True         # lower the bitrate when the network cannot keep up
+    sync: bool = True             # move VHMD's vsync to the headset's display timing
+    sync_target_ms: float = 0.0   # how long frames should wait on the headset (0: the driver's default)
+    refresh: float = 0.0          # display refresh rate asked of the headset (0: its own)
 
 
 class Stats:
@@ -132,7 +136,10 @@ class Bridge:
         self.pc_state = {"steamvr": False, "driver": False, "control": ""}
         self.rates = {"msgs": 0, "kib": 0.0, "video_in": 0, "video_out": 0, "mbps": 0.0}
         self.summary = ""
+        self.sync_state: dict = {}      # the driver's last display_sync reply
+        self.sync_shift_total = 0.0     # ms moved since the start (drift followed)
         self._models_applied: Optional[str] = None   # render models set for this driver session
+        self._rate_note = ""                          # last refresh-rate message logged
         self._driver = (options.driver_host, options.driver_port)
         self._udp: Optional[socket.socket] = None
         self._replies: dict = {}
@@ -147,7 +154,8 @@ class Bridge:
         host = "127.0.0.1" if o.usb_only else "0.0.0.0"
         if o.video:
             self.video = VideoServer(host=host, bitrate_mbps=o.bitrate, encoder=o.encoder, buffer=o.buffer,
-                                     codec=o.codec, eye_width=o.eye_width, source=o.video_source, log=self.log)
+                                     codec=o.codec, eye_width=o.eye_width, source=o.video_source,
+                                     adaptive=o.adaptive, log=self.log)
             self.video.start()
 
         self._udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -214,6 +222,9 @@ class Bridge:
         if buffer is not None:
             self.o.buffer = buffer
         if self.video:
+            if codec is None and buffer is None:   # bitrate only: no reconnect
+                self.video.set_bitrate(self.o.bitrate)
+                return
             self.video.bitrate, self.video.codec, self.video.buffer = self.o.bitrate, self.o.codec, self.o.buffer
             self.video.restart()
 
@@ -248,6 +259,9 @@ class Bridge:
             **self.pc_state,
             **self.rates,
             "headset_stats": dict(self.stats.headset),
+            "bitrate_now": self.video.bitrate_now if self.video else 0.0,
+            "sync": dict(self.sync_state),
+            "sync_total_ms": self.sync_shift_total,
             "summary": self.summary,
         }
 
@@ -257,21 +271,34 @@ class Bridge:
         (its display: fields of view, eyes, render size, refresh rate, edition)
         and statistics stay here."""
         self.link.last_seen = time.monotonic()
-        if b'"type":"headset"' in data or b'"type":"link_stats"' in data:
+        if b'"type":"headset"' in data or b'"type":"link_stats"' in data or b'"type":"link_timing"' in data:
             try:
                 msgs = json.loads(data)
             except ValueError:
                 msgs = []
-            rest = [m for m in msgs if m.get("type") not in ("headset", "link_stats")]
+            rest = [m for m in msgs if m.get("type") not in ("headset", "link_stats", "link_timing")]
             for m in msgs:
                 if m.get("type") == "headset":
                     self.info = m
                     headset_info.update(m, log=self.log)
                 elif m.get("type") == "link_stats":
                     self.stats.headset = m
+                elif m.get("type") == "link_timing" and self.o.sync:
+                    self._display_sync(m)
             data = json.dumps(rest, separators=(",", ":")).encode()
         self._udp.sendto(data, self._driver)
         self.stats.add(data)
+
+    def _display_sync(self, m: dict) -> None:
+        """The headset's frame timing to the driver, which moves its vsync clock
+        (no waiting for the reply here: this is the pose path)."""
+        req = {"type": "config", "op": "display_sync", "seq": -1, "slack_ms": m.get("slack_ms"),
+               "period_ms": m.get("period_ms"), "weight": m.get("weight", 1.0)}
+        if self.o.sync_target_ms > 0:
+            req["target_ms"] = self.o.sync_target_ms
+        if req["slack_ms"] is None or req["period_ms"] is None:
+            return
+        self._udp.sendto(json.dumps(req, separators=(",", ":")).encode(), self._driver)
 
     def _accept(self, srv: socket.socket) -> None:
         while True:
@@ -338,6 +365,10 @@ class Bridge:
                     reply = json.loads(data)
                 except ValueError:
                     continue
+                if reply.get("seq") == -1:   # display_sync, not waited for
+                    self.sync_state = reply
+                    self.sync_shift_total += reply.get("shift_ms", 0.0) or 0.0
+                    continue
                 with self._reply_cv:
                     self._replies[reply.get("seq")] = reply
                     while len(self._replies) > 32:   # unanswered leftovers
@@ -348,17 +379,20 @@ class Bridge:
     def _monitor(self) -> None:
         from . import mode
         last_steamvr_check = 0.0
+        window = time.monotonic()
         while True:
-            time.sleep(1.0)
+            time.sleep(max(0.0, 1.0 - (time.monotonic() - window)))
+            now = time.monotonic()
+            dt, window = max(0.001, now - window), now
             n, b, last = self.stats.take()
             fin = fout = vb = 0
             if self.video:
                 fin, fout, vb = self.video.take_stats()
-            self.rates = {"msgs": n, "kib": b / 1024, "video_in": fin, "video_out": fout, "mbps": vb * 8 / 1e6}
+            self.rates = {"msgs": round(n / dt), "kib": b / 1024 / dt, "video_in": round(fin / dt),
+                          "video_out": round(fout / dt), "mbps": vb * 8 / 1e6 / dt}
             self.summary = summary(last) if n else ""
 
             # SteamVR and the driver: is it up, who has control of the HMD.
-            now = time.monotonic()
             if now - last_steamvr_check > 3.0:
                 last_steamvr_check = now
                 try:
@@ -390,9 +424,26 @@ class Bridge:
                     except (OSError, TimeoutError, ValueError):
                         pass
 
+            # VHMD renders at the headset's refresh rate (changed live in direct mode).
+            hs_rate = float(self.info.get("refresh") or 0)
+            if self.pc_state["driver"] and self.connected() and hs_rate > 0:
+                try:
+                    drv_rate = float(self.request("refresh_rate").get("hz") or 0)
+                    if drv_rate and abs(drv_rate - hs_rate) > 0.5:
+                        r = self.request("refresh_rate", hz=hs_rate)
+                        note = (f"VHMD now renders at {hs_rate:g} Hz like the headset" if r.get("ok") else
+                                f"VHMD stays at {drv_rate:g} Hz (headset {hs_rate:g} Hz): {r.get('error', '')}")
+                        if note != self._rate_note:
+                            self._rate_note = note
+                            self.log(note)
+                except (OSError, TimeoutError, ValueError):
+                    pass
+
             if self.connected():
-                self.link.send(json.dumps({"type": "status", "pc": platform.node(), **self.pc_state},
-                                          separators=(",", ":")).encode())
+                status = {"type": "status", "pc": platform.node(), **self.pc_state}
+                if self.o.refresh > 0:
+                    status["refresh"] = self.o.refresh
+                self.link.send(json.dumps(status, separators=(",", ":")).encode())
 
 
 def summary(last: str) -> str:
@@ -414,6 +465,10 @@ def report_line(st: dict) -> str:
     line = f"{st['msgs']:4d} msg/s  {st['kib']:6.1f} KiB/s  {st['summary']}" if st["msgs"] else ""
     if st["video_in"] or st["video_out"]:
         line += f"  |  video in {st['video_in']} / out {st['video_out']} fps  {st['mbps']:5.1f} Mbit/s"
+    if st["sync"]:
+        line += f"  |  sync {st['sync'].get('shift_ms', 0):+.2f} ms (total {st['sync_total_ms']:+.1f})"
+        if not st["sync"].get("ok", True):
+            line += f" {st['sync'].get('error', '')}"
     h = st["headset_stats"]
     if h:
         line += (f"  |  headset: received {h.get('received', 0):.0f} decoded {h.get('decoded', 0):.0f} "
@@ -432,19 +487,28 @@ def main() -> None:
     ap.add_argument("--usb-only", action="store_true", help="listen on 127.0.0.1 only (adb reverse), no network")
     ap.add_argument("--no-video", action="store_true", help="poses only, no video")
     ap.add_argument("--bitrate", type=float, default=40.0, help="video bitrate, Mbit/s")
-    ap.add_argument("--codec", default="hevc", choices=("hevc", "h264"), help="codec of the driver's encoder")
+    ap.add_argument("--codec", default="hevc", choices=("hevc", "h264", "av1"),
+                    help="codec of the driver's encoder (av1: newer GPUs; falls back to hevc)")
     ap.add_argument("--eye-width", type=int, default=0, help="video width per eye (default: the headset's)")
     ap.add_argument("--video-source", default="auto", choices=("auto", "driver", "ffmpeg"),
                     help="auto: the driver's hardware encoder if it runs, else ffmpeg on the preview")
     ap.add_argument("--encoder", default="h264_amf", help="ffmpeg fallback: H.264 encoder (h264_amf, h264_nvenc, ...)")
     ap.add_argument("--buffer", type=int, default=0, choices=(0, 1, 2),
                     help="frames the headset holds back: 0 = newest (lowest latency), 1 = smoother (+1 frame)")
+    ap.add_argument("--fixed-bitrate", action="store_true", help="keep --bitrate even when the network is slower")
+    ap.add_argument("--refresh", type=float, default=0.0,
+                    help="display refresh rate for the headset, e.g. 72 or 90 (VHMD follows it)")
+    ap.add_argument("--no-sync", action="store_true", help="do not move VHMD's vsync to the headset's display")
+    ap.add_argument("--sync-target-ms", type=float, default=0.0,
+                    help="how long frames should wait on the headset before shown (default: 0.4 frame)")
     args = ap.parse_args()
 
     bridge = Bridge(BridgeOptions(
         driver_host=args.driver_host, driver_port=args.driver_port, port=args.port, adb=not args.no_adb,
         usb_only=args.usb_only, video=not args.no_video, bitrate=args.bitrate, codec=args.codec,
-        eye_width=args.eye_width, video_source=args.video_source, encoder=args.encoder, buffer=args.buffer),
+        eye_width=args.eye_width, video_source=args.video_source, encoder=args.encoder, buffer=args.buffer,
+        adaptive=not args.fixed_bitrate, sync=not args.no_sync, sync_target_ms=args.sync_target_ms,
+        refresh=args.refresh),
         log=lambda m: print(m, flush=True))
     bridge.start()
     try:

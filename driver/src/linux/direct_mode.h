@@ -62,6 +62,12 @@ public:
     // Changes the vsync clock (frame rate) while running.
     void SetRefreshRate(double hz) { refresh_hz_ = hz; }
     double RefreshRate() const { return refresh_hz_; }
+    // Moves the vsync clock by `seconds` (positive = later), spread over the next
+    // frames. Replaces a shift still pending.
+    void ShiftVsync(double seconds) {
+        std::lock_guard<std::mutex> lock(vsync_mu_);
+        pending_shift_s_ = seconds;
+    }
     void SetPreviewActive(bool active) { capture_->SetActive(active); }
 
 private:
@@ -89,6 +95,7 @@ private:
     std::atomic<bool> vsync_running_{false};
     mutable std::mutex vsync_mu_;
     std::condition_variable vsync_cv_;
+    double pending_shift_s_ = 0;   // guarded by vsync_mu_
     uint64_t vsync_count_ = 0;
 };
 

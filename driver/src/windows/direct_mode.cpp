@@ -203,6 +203,12 @@ void DirectModeComponent::VsyncLoop() {
         }
         vsync_cv_.notify_all();
         next += period;
+        {   // a requested shift (display sync), at most half a millisecond per frame
+            std::lock_guard<std::mutex> lock(vsync_mu_);
+            const double step = std::clamp(pending_shift_s_, -0.0005, 0.0005);
+            pending_shift_s_ -= step;
+            next += std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(step));
+        }
         const auto now = clock::now();
         if (now > next + period * 4) next = now + period; // fell far behind: resync, do not burst
     }

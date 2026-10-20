@@ -167,6 +167,7 @@ HMD:
 | `add` | `id`(省略時はオンデマンド全台) | オンデマンドのデバイスを今すぐ SteamVR に追加(次のフレームで反映)。`{"ok":true,"ids":[...]}` |
 | `hand_mode` | `mode`(`controllers` / `hands`、省略時は現在のモードを返すだけ) | 左右の手をコントローラー / ハンドトラッキングで切り替え(SteamVR は止まりません)。`{"ok":true,"mode":"hands"}`。`status` にも `hand_mode` が入ります |
 | `render_models` | `mode`(`labeled` / `axes`、省略時は現在の設定を返すだけ) | コントローラー・トラッカーの見た目を切り替え(SteamVR は止まりません)。`labeled` は名前入りの形(既定)、`axes` は開発用の色付きの軸(X 赤・Y 緑・Z 青、10 cm、白い線が前 = -Z)。起動時の既定は設定の `renderModels` |
+| `display_sync` | `slack_ms`、`period_ms`(必須)、`target_ms`(既定は周期の 0.4)、`weight`(0〜1) | ストリーミング先のヘッドセットとフレームのタイミングを合わせる(ダイレクトモード)。ヘッドセットでフレームが表示まで待った時間(表示周期上の円平均)を渡すと、`target_ms` に近づくよう VHMD の vsync をずらす(誤差の半分、最大 3 ms、1 フレームあたり 0.5 ms まで)。`{"ok":true,"shift_ms":-0.4}`。周期が VHMD と違えばエラー。`headset_bridge` が 0.5 秒ごとに送る |
 | `preview` | `mode`(`on` / `off`) | ダイレクトモード(Linux、または Windows で `display.mode = direct`)で、プレビュー(共有メモリへの映像書き出し)を開始 / 停止。既定では止まっていて、見る人がいないときは GPU のコピーも書き込みもしません(`preview_viewer.py` と `linux_check.py` は自動で開始・停止) |
 | `refresh_rate` | `hz`(1〜240、省略時は現在値を返すだけ) | 仮想ディスプレイのフレームレートを変更(ダイレクトモード、SteamVR は止まりません)。`{"ok":true,"hz":30}` |
 | `control` | `source`(送り手の名前、`""` で誰でも。省略時は現在の状態を返すだけ)、`devices`(省略時は全デバイス) | どの送り手がデバイスを動かすかを決める(SteamVR は止まりません)。操作権を持たない送り手のメッセージは捨てられ、数えられます。操作権が移ったデバイスは、前の送り手が押していた入力を離した状態に戻し(装着センサー・バッテリーは除く)、速度による予測を止め、新しい送り手にタイムアウトの猶予を与えます。応答: `control`(`owner`、デバイスごとの `devices`、送り手ごとの `sources`: `age_s`・`accepted`・`ignored`)と `poses`(各デバイスの最新の位置・回転。引き継ぐ側が今の位置から続けられる)。`status` にも `control` が入ります |

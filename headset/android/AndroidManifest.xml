@@ -6,6 +6,8 @@
 
     <uses-feature android:glEsVersion="0x00030002" android:required="true" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Wi-Fi lock (low latency): keeps the Wi-Fi out of power saving while streaming. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- From the Khronos OpenXR loader's manifest: talk to the runtime broker. -->
     <uses-permission android:name="org.khronos.openxr.permission.OPENXR" />

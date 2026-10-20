@@ -106,6 +106,9 @@ vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* driver_context) {
         Log(LogLevel::Info, "render models: %s", mode.c_str());
         return "";
     };
+    hooks.display_sync = [this](double slack, double period, double target, double weight, double* shift) {
+        return hmd_ ? hmd_->DisplaySync(slack, period, target, weight, shift) : std::string("no HMD");
+    };
     hooks.render_models = []() { return std::string(VirtualDevice::AxesModelsOn() ? "axes" : "labeled"); };
     hooks.display_status = [this]() { return hmd_ ? hmd_->DisplayStatusJson() : std::string("{}"); };
     router_ = std::make_unique<MessageRouter>(config_, states_, hooks);

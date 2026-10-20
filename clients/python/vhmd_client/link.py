@@ -40,7 +40,8 @@ SETTINGS = DATA / "link_settings.json"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_NAME = "VHMD Link"
 QUALITY = (("low", 20.0), ("standard", 40.0), ("high", 60.0), ("max", 80.0))
-DEFAULTS = {"quality": "standard", "codec": "hevc", "buffer": 0, "auto_steamvr": True, "dev_view": False}
+DEFAULTS = {"quality": "standard", "codec": "hevc", "buffer": 0, "refresh": 72, "auto_steamvr": True,
+            "dev_view": False}
 
 TEXT = {
     "en": {
@@ -56,8 +57,9 @@ TEXT = {
         "auto_vr": "Start SteamVR when the headset connects",
         "quality": "Quality", "codec": "Codec", "smooth": "Motion",
         "q_low": "Low (20 Mbit/s)", "q_standard": "Standard (40 Mbit/s)", "q_high": "High (60 Mbit/s)", "q_max": "Highest (80 Mbit/s)",
-        "c_hevc": "HEVC (recommended)", "c_h264": "H.264",
+        "c_hevc": "HEVC (recommended)", "c_h264": "H.264", "c_av1": "AV1 (newer GPUs)",
         "b0": "Lowest latency", "b1": "Smoother (+1 frame)",
+        "refresh": "Refresh rate", "r72": "72 Hz", "r90": "90 Hz (more GPU load)",
         "dev_view": "Developer view", "startup": "Open when Windows starts",
         "take_back": "Give control to the headset", "fps_tool": "Keyboard/mouse control", "log": "Log",
         "quit": "Quit", "open": "Open", "tray_hint": "Closing the window keeps VHMD Link in the notification area.",
@@ -79,8 +81,9 @@ TEXT = {
         "auto_vr": "ヘッドセットがつながったら SteamVR を起動する",
         "quality": "画質", "codec": "圧縮方式", "smooth": "動き",
         "q_low": "低(20 Mbit/s)", "q_standard": "標準(40 Mbit/s)", "q_high": "高(60 Mbit/s)", "q_max": "最高(80 Mbit/s)",
-        "c_hevc": "HEVC(推奨)", "c_h264": "H.264",
+        "c_hevc": "HEVC(推奨)", "c_h264": "H.264", "c_av1": "AV1(新しい GPU)",
         "b0": "遅れを最小に", "b1": "なめらか(+1 フレーム)",
+        "refresh": "リフレッシュレート", "r72": "72 Hz", "r90": "90 Hz(GPU の負荷が増える)",
         "dev_view": "開発者向けの表示", "startup": "Windows の起動時に開く",
         "take_back": "操作をヘッドセットに戻す", "fps_tool": "キーボード・マウス操作", "log": "ログ",
         "quit": "終了", "open": "開く", "tray_hint": "ウィンドウを閉じても VHMD Link は通知領域で動き続けます。",
@@ -188,7 +191,8 @@ class LinkApp:
             except tk.TclError:
                 pass
         self.bridge = Bridge(BridgeOptions(bitrate=self.bitrate(), codec=str(self.s["codec"]),
-                                           buffer=int(self.s["buffer"])), log=self.log)
+                                           buffer=int(self.s["buffer"]), refresh=float(self.s["refresh"])),
+                             log=self.log)
         try:
             self.bridge.start()
         except OSError:
@@ -269,8 +273,9 @@ class LinkApp:
         grid = ttk.Frame(c, style="Card.TFrame")
         grid.pack(fill="x", pady=(4, 0))
         self.q_var = self.combo(grid, 0, t["quality"], [(k, t["q_" + k]) for k, _ in QUALITY], "quality")
-        self.c_var = self.combo(grid, 1, t["codec"], [("hevc", t["c_hevc"]), ("h264", t["c_h264"])], "codec")
+        self.c_var = self.combo(grid, 1, t["codec"], [("hevc", t["c_hevc"]), ("av1", t["c_av1"]), ("h264", t["c_h264"])], "codec")
         self.b_var = self.combo(grid, 2, t["smooth"], [(0, t["b0"]), (1, t["b1"])], "buffer")
+        self.r_var = self.combo(grid, 3, t["refresh"], [(72, t["r72"]), (90, t["r90"])], "refresh")
 
         # Developer
         self.dev_card_outer = tk.Frame(self.root, bg=pal["border"], padx=1, pady=1)
@@ -309,8 +314,17 @@ class LinkApp:
 
         def changed(_e=None) -> None:
             value = next(v for v, lab in choices if lab == var.get())
+            if value == self.s[key]:
+                return
             self.set(key, value)
-            self.bridge.set_video(bitrate=self.bitrate(), codec=str(self.s["codec"]), buffer=int(self.s["buffer"]))
+            if key == "refresh":   # the headset switches, VHMD follows it (no reconnect)
+                self.bridge.o.refresh = float(value)
+                self.log(f"refresh rate: {value} Hz")
+                return
+            if key == "quality":
+                self.bridge.set_video(bitrate=self.bitrate())
+            else:
+                self.bridge.set_video(bitrate=self.bitrate(), codec=str(self.s["codec"]), buffer=int(self.s["buffer"]))
             self.log(f"video settings: {self.bitrate():g} Mbit/s, {self.s['codec']}, buffer {self.s['buffer']}")
 
         box.bind("<<ComboboxSelected>>", changed)
@@ -389,7 +403,8 @@ class LinkApp:
             st = self.bridge.status()
             connected = st["headset"]
             if (connected and not self.was_connected and self.s["auto_steamvr"] and not st["steamvr"]
-                    and self.mode == "vhmd" and not self.busy and time.monotonic() - self.auto_started_at > 60):
+                    and self.mode == "vhmd" and not self.busy and time.monotonic() - self.auto_started_at > 60
+                    and not mode.steamvr_running()):   # asked directly: the bridge's view may not be there yet
                 self.log("headset connected: starting SteamVR")
                 self.start_vr()
             self.was_connected = connected
@@ -454,8 +469,12 @@ class LinkApp:
                 self.dev_card_outer.pack(fill="both", expand=True, padx=14, pady=(0, 10))
             h = st["headset_stats"]
             control = st["control"] or "-"
+            sync = st["sync"]
+            sync_text = (f"sync {sync.get('shift_ms', 0):+.2f} ms (total {st['sync_total_ms']:+.1f})" if sync.get("ok")
+                         else f"sync: {sync.get('error', 'waiting')}" if sync else "sync: -")
             lines = [
-                f"PC     video {st['video_in']}/{st['video_out']} fps  {st['mbps']:5.1f} Mbit/s   poses {st['msgs']}/s",
+                f"PC     video {st['video_in']}/{st['video_out']} fps  {st['mbps']:5.1f} Mbit/s "
+                f"(now {st['bitrate_now']:.0f})   poses {st['msgs']}/s   {sync_text}",
                 f"Head   received {h.get('received', 0):.0f}  decoded {h.get('decoded', 0):.0f}  "
                 f"shown {h.get('shown', 0):.0f}/s at {h.get('display', 0):.0f} Hz  repeats {h.get('repeats', 0):.0f}",
                 f"       wait {h.get('wait_ms', 0):.1f} ms (p95 {h.get('wait_p95_ms', 0):.1f})  "

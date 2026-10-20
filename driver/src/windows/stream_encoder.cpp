@@ -141,7 +141,7 @@ struct StreamEncoder::Impl {
     uint32_t enc_w = 0, enc_h = 0;
     std::vector<uint8_t> seq_header;
     int need_input = 0;
-    bool hevc = false;
+    bool hevc = false, av1 = false;   // the codec being encoded (else H.264)
     double enc_fps = 0;
 
     // Client (net thread accepts, encode thread sends).
@@ -149,10 +149,12 @@ struct StreamEncoder::Impl {
     SOCKET client = INVALID_SOCKET;
     SOCKET listener = INVALID_SOCKET;
     bool config_sent = false;
+    std::atomic<uint64_t> client_gen{0};   // +1 per client: the audio format goes to each one
     std::atomic<bool> keyframe{false};
     // Settings for the current client.
     std::mutex set_mu;
     double bitrate_mbps = 30;
+    std::atomic<bool> bitrate_changed{false};   // a new bitrate for the running encoder
     std::string codec = "h264";
     uint32_t eye_width = 0;
     int buffer = 0;
@@ -238,15 +240,15 @@ void StreamEncoder::Submit(ID3D11Texture2D* src, uint32_t eye_w, uint32_t eye_h,
     src->GetDesc(&sd);
 
     // Output size: the eye width asked for (or the source's), even and within the
-    // codec's limit (H.264 4096 wide in total, HEVC 8192), aspect kept.
+    // codec's limit (H.264 4096 wide in total, HEVC / AV1 8192), aspect kept.
     uint32_t want_eye;
-    bool hevc;
+    bool h264;
     {
         std::lock_guard<std::mutex> l(m.set_mu);
         want_eye = m.eye_width ? m.eye_width : eye_w;
-        hevc = m.codec == "hevc";
+        h264 = m.codec == "h264";
     }
-    want_eye = std::min({want_eye, eye_w, hevc ? 4096u : 2048u});
+    want_eye = std::min({want_eye, eye_w, h264 ? 2048u : 4096u});
     const uint32_t out_w = (want_eye * 2) & ~15u;
     const uint32_t out_h = uint32_t(std::lround(double(eye_h) * want_eye / eye_w)) & ~15u;
     if (out_w < 64 || out_h < 64) return;
@@ -427,7 +429,10 @@ void StreamEncoder::NetLoop() {
                 if (j.contains("bitrate_mbps") && j["bitrate_mbps"].is_number())
                     impl_->bitrate_mbps = std::clamp(j["bitrate_mbps"].get<double>(), 1.0, 500.0);
                 if (j.contains("codec") && j["codec"].is_string())
-                    impl_->codec = j["codec"].get<std::string>() == "hevc" ? "hevc" : "h264";
+                {
+                    const std::string c = j["codec"].get<std::string>();
+                    impl_->codec = c == "hevc" || c == "av1" ? c : "h264";
+                }
                 if (j.contains("eye_width") && j["eye_width"].is_number())
                     impl_->eye_width = uint32_t(std::clamp(j["eye_width"].get<int>(), 0, 4096));
                 if (j.contains("buffer") && j["buffer"].is_number())
@@ -438,6 +443,7 @@ void StreamEncoder::NetLoop() {
             std::lock_guard<std::mutex> l(impl_->client_mu);
             impl_->client = c;
             impl_->config_sent = false;
+            ++impl_->client_gen;
         }
         impl_->keyframe = true;
         wanted_ = true;
@@ -446,10 +452,23 @@ void StreamEncoder::NetLoop() {
             stats_.client = true;
         }
         Log(LogLevel::Info, "stream: client connected (%s)", line.empty() ? "default settings" : line.c_str());
-        // The client sends nothing more; a read returning 0 / error means it left.
+        // Later lines change the bitrate while streaming ({"bitrate_mbps": 25});
+        // a read returning 0 / error means the client left.
         tmo = 0;
         setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&tmo), sizeof(tmo));
+        line.clear();
         while (running_ && recv(c, &ch, 1, 0) > 0) {
+            if (ch != '\n') {
+                if (line.size() < 1024) line += ch;
+                continue;
+            }
+            auto j = nlohmann::json::parse(line, nullptr, false);
+            line.clear();
+            if (j.is_object() && j.contains("bitrate_mbps") && j["bitrate_mbps"].is_number()) {
+                std::lock_guard<std::mutex> l(impl_->set_mu);
+                impl_->bitrate_mbps = std::clamp(j["bitrate_mbps"].get<double>(), 1.0, 500.0);
+                impl_->bitrate_changed = true;
+            }
         }
         wanted_ = false;
         {
@@ -511,27 +530,45 @@ void StreamEncoder::EncodeLoop() {
             std::lock_guard<std::mutex> l(m.set_mu);
             bitrate = m.bitrate_mbps;
             m.hevc = m.codec == "hevc";
+            m.av1 = m.codec == "av1";
         }
-        const GUID subtype = m.hevc ? MFVideoFormat_HEVC : MFVideoFormat_H264;
-        MFT_REGISTER_TYPE_INFO in_info{MFMediaType_Video, MFVideoFormat_NV12}, out_info{MFMediaType_Video, subtype};
         IMFActivate** acts = nullptr;
         UINT32 count = 0;
-        ComPtr<IMFAttributes> enum_attrs;
-        MFCreateAttributes(&enum_attrs, 1);
-        LUID luid{DWORD(m.luid & 0xffffffffu), LONG(m.luid >> 32)};
-        enum_attrs->SetBlob(MFT_ENUM_ADAPTER_LUID, reinterpret_cast<const UINT8*>(&luid), sizeof(luid));
-        MFTEnum2(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, &in_info, &out_info,
-                 enum_attrs.Get(), &acts, &count);
-        if (count == 0) {
+        // The GPU's encoders for a codec (on the adapter the textures live on).
+        auto find = [&](const GUID& subtype) {
+            MFT_REGISTER_TYPE_INFO in_info{MFMediaType_Video, MFVideoFormat_NV12}, out_info{MFMediaType_Video, subtype};
+            ComPtr<IMFAttributes> enum_attrs;
+            MFCreateAttributes(&enum_attrs, 1);
+            LUID luid{DWORD(m.luid & 0xffffffffu), LONG(m.luid >> 32)};
+            enum_attrs->SetBlob(MFT_ENUM_ADAPTER_LUID, reinterpret_cast<const UINT8*>(&luid), sizeof(luid));
+            MFTEnum2(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, &in_info,
+                     &out_info, enum_attrs.Get(), &acts, &count);
+            if (count == 0) {
+                CoTaskMemFree(acts);
+                acts = nullptr;
+                MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, &in_info,
+                          &out_info, &acts, &count);
+            }
+        };
+        find(m.av1 ? MFVideoFormat_AV1 : m.hevc ? MFVideoFormat_HEVC : MFVideoFormat_H264);
+        if (count == 0 && m.av1) {   // AV1 needs a recent GPU: HEVC instead
             CoTaskMemFree(acts);
             acts = nullptr;
-            MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, &in_info,
-                      &out_info, &acts, &count);
+            Log(LogLevel::Warning, "stream: no hardware AV1 encoder; using HEVC");
+            m.av1 = false;
+            m.hevc = true;
+            {
+                std::lock_guard<std::mutex> l(m.set_mu);
+                m.codec = "hevc";
+            }
+            find(MFVideoFormat_HEVC);
         }
+        const GUID subtype = m.av1 ? MFVideoFormat_AV1 : m.hevc ? MFVideoFormat_HEVC : MFVideoFormat_H264;
+        const char* codec_name = m.av1 ? "AV1" : m.hevc ? "HEVC" : "H.264";
         if (count == 0) {
             CoTaskMemFree(acts);
             std::lock_guard<std::mutex> l(stats_mu_);
-            stats_.state = std::string("error: no hardware ") + (m.hevc ? "HEVC" : "H.264") + " encoder";
+            stats_.state = std::string("error: no hardware ") + codec_name + " encoder";
             return false;
         }
         WCHAR* wname = nullptr;
@@ -590,7 +627,8 @@ void StreamEncoder::EncodeLoop() {
         out_type->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
         out_type->SetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235);
         out_type->SetUINT32(MF_MT_YUV_MATRIX, MFVideoTransferMatrix_BT709);
-        out_type->SetUINT32(MF_MT_MPEG2_PROFILE, m.hevc ? eAVEncH265VProfile_Main_420_8 : eAVEncH264VProfile_High);
+        if (!m.av1)   // AV1: the encoder's default (Main)
+            out_type->SetUINT32(MF_MT_MPEG2_PROFILE, m.hevc ? eAVEncH265VProfile_Main_420_8 : eAVEncH264VProfile_High);
         if (FAILED(hr = m.mft->SetOutputType(m.out_id, out_type.Get(), 0))) {
             std::lock_guard<std::mutex> l(stats_mu_);
             stats_.state = "error: encoder output type (" + std::to_string(hr) + ")";
@@ -635,7 +673,7 @@ void StreamEncoder::EncodeLoop() {
         m.enc_w = w;
         m.enc_h = h;
         m.need_input = 0;
-        Log(LogLevel::Info, "stream: %s %ux%u @ %u fps, %.0f Mbit/s, encoder '%s'", m.hevc ? "HEVC" : "H.264", w, h, fps,
+        Log(LogLevel::Info, "stream: %s %ux%u @ %u fps, %.0f Mbit/s, encoder '%s'", codec_name, w, h, fps,
             bitrate, name.c_str());
         std::lock_guard<std::mutex> l(stats_mu_);
         stats_.state = "encoding";
@@ -649,7 +687,7 @@ void StreamEncoder::EncodeLoop() {
         nlohmann::json j;
         {
             std::lock_guard<std::mutex> l(m.set_mu);
-            j["codec"] = m.hevc ? "hevc" : "h264";
+            j["codec"] = m.av1 ? "av1" : m.hevc ? "hevc" : "h264";
             j["width"] = m.enc_w;
             j["height"] = m.enc_h;
             j["eye_width"] = m.enc_w / 2;
@@ -716,7 +754,9 @@ void StreamEncoder::EncodeLoop() {
                             m.in_flight.pop_front();
                         }
                     }
-                    const bool add_header = clean && !m.seq_header.empty() && !HasParameterSets(data, len, m.hevc);
+                    // (AV1 keyframes carry their sequence header; the type's blob is not raw OBUs.)
+                    const bool add_header =
+                        !m.av1 && clean && !m.seq_header.empty() && !HasParameterSets(data, len, m.hevc);
                     bool config_ok;
                     {
                         std::lock_guard<std::mutex> l(m.client_mu);
@@ -775,11 +815,23 @@ void StreamEncoder::EncodeLoop() {
         bool want_codec_change;
         {
             std::lock_guard<std::mutex> l(m.set_mu);
-            want_codec_change = (m.codec == "hevc") != m.hevc;
+            want_codec_change = m.codec != (m.av1 ? "av1" : m.hevc ? "hevc" : "h264");
         }
         if (reconfigure || want_codec_change || std::lround(fps_.load()) != std::lround(m.enc_fps)) {
             teardown();
             continue;
+        }
+        if (m.bitrate_changed.exchange(false) && m.codec_api) {
+            double bitrate;
+            {
+                std::lock_guard<std::mutex> l(m.set_mu);
+                bitrate = m.bitrate_mbps;
+            }
+            // Hardware encoders take a new mean bitrate while running.
+            SetCodecValue(m.codec_api.Get(), CODECAPI_AVEncCommonMeanBitRate, ULONG(bitrate * 1e6));
+            SetCodecValue(m.codec_api.Get(), CODECAPI_AVEncCommonMaxBitRate, ULONG(bitrate * 1e6));
+            SetCodecValue(m.codec_api.Get(), CODECAPI_AVEncCommonBufferSize, ULONG(bitrate * 1e6 / m.enc_fps * 2));
+            Log(LogLevel::Info, "stream: bitrate now %.1f Mbit/s", bitrate);
         }
         bool need_config;
         {
@@ -892,6 +944,7 @@ void StreamEncoder::AudioLoop() {
         const UINT32 out_ch = std::min<UINT32>(2, in_ch);
         const std::string fmt = "{\"rate\":" + std::to_string(rate) + ",\"channels\":" + std::to_string(out_ch) +
                                 ",\"format\":\"s16\"}";
+        uint64_t gen = m.client_gen.load();
         m.Send(kKindAudioFormat, 0, reinterpret_cast<const uint8_t*>(fmt.data()), fmt.size(), nullptr, 0, nullptr);
         ac->Start();
         set_state("capturing " + std::to_string(rate) + " Hz");
@@ -900,6 +953,13 @@ void StreamEncoder::AudioLoop() {
         uint64_t sample_no = 0;
         const size_t chunk = size_t(rate) / 100 * out_ch;   // 10 ms
         while (running_ && wanted_) {
+            if (m.client_gen.load() != gen) {   // a new client (reconnected quickly): it needs the format too
+                gen = m.client_gen.load();
+                m.Send(kKindAudioFormat, 0, reinterpret_cast<const uint8_t*>(fmt.data()), fmt.size(), nullptr, 0,
+                       nullptr);
+                sample_no = 0;
+                out.clear();
+            }
             UINT32 n = 0;
             if (FAILED(cap->GetNextPacketSize(&n))) break;
             if (n == 0) {

@@ -83,6 +83,16 @@ constexpr bool kDev = VHMD_DEV_EDITION != 0;
 bool g_ja = false;            // system language is Japanese
 const char* T(const char* ja, const char* en) { return g_ja ? ja : en; }
 
+std::string Fmt(const char* f, ...) __attribute__((format(printf, 1, 2)));
+std::string Fmt(const char* f, ...) {
+    char b[512];
+    va_list ap;
+    va_start(ap, f);
+    vsnprintf(b, sizeof(b), f, ap);
+    va_end(ap);
+    return b;
+}
+
 // This headset's own IPv4 address on the LAN (for the connection screen).
 std::string OwnAddress() {
     ifaddrs* list = nullptr;
@@ -633,7 +643,16 @@ public:
             }
             if (!queue_.empty()) {
                 img = queue_.front().img;
-                waits_ms_.push_back(std::chrono::duration<float, std::milli>(now - queue_.front().arrived).count());
+                const float w = std::chrono::duration<float, std::milli>(now - queue_.front().arrived).count();
+                waits_ms_.push_back(w);
+                // The wait as a phase of the display period, for the PC's vsync
+                // sync (a wait of almost a period = arrived just too late).
+                if (period_ms_ > 1) {
+                    const float a = 6.2831853f * std::fmod(w, period_ms_) / period_ms_;
+                    phase_c_ += std::cos(a);
+                    phase_s_ += std::sin(a);
+                    ++phase_n_;
+                }
                 queue_.pop_front();
             }
         }
@@ -683,6 +702,23 @@ public:
     }
 
     GLuint texture() const { return tex_; }
+    void SetPeriodMs(float ms) { period_ms_ = ms; }
+    // Frame wait since the last call as a circular mean over the display period
+    // (slack_ms in [0, period)), how consistent it was (0..1) and how many frames.
+    bool TakeTiming(float* slack_ms, float* weight, int* n) {
+        std::lock_guard<std::mutex> l(queue_mu_);
+        *n = phase_n_;
+        const bool ok = phase_n_ > 0 && period_ms_ > 1;
+        if (ok) {
+            float a = std::atan2(phase_s_, phase_c_);
+            if (a < 0) a += 6.2831853f;
+            *slack_ms = a / 6.2831853f * period_ms_;
+            *weight = std::sqrt(phase_c_ * phase_c_ + phase_s_ * phase_s_) / phase_n_;
+        }
+        phase_c_ = phase_s_ = 0;
+        phase_n_ = 0;
+        return ok;
+    }
     // Head pose the shown frame was rendered for (render thread).
     bool FramePose(XrPosef* out) const {
         if (!cur_pose_valid_) return false;
@@ -850,7 +886,9 @@ private:
                 has_fov_ = true;
             }
         }
-        const std::string mime = json.find("\"codec\":\"hevc\"") != std::string::npos ? "video/hevc" : "video/avc";
+        const std::string mime = json.find("\"codec\":\"hevc\"") != std::string::npos  ? "video/hevc"
+                                 : json.find("\"codec\":\"av1\"") != std::string::npos ? "video/av01"
+                                                                                         : "video/avc";
         LOGI("video: config %s %.0fx%.0f, fov %s, buffer %d", mime.c_str(), w, h, has_fov_ ? "from the PC" : "own",
              buffer_.load());
         if (codec_ && w == width_ && h == height_ && mime == mime_) return;   // same stream: keep the decoder
@@ -962,6 +1000,9 @@ private:
     std::deque<Queued> queue_;   // filled by OnImage, emptied by Update
     int repeats_ = 0, dropped_ = 0;
     std::vector<float> waits_ms_;
+    float period_ms_ = 0;                  // the headset's display period
+    float phase_c_ = 0, phase_s_ = 0;      // sums of cos / sin of the wait phase
+    int phase_n_ = 0;
     // render thread only
     GLuint tex_ = 0;
     AImage* cur_img_ = nullptr;
@@ -1051,9 +1092,13 @@ struct App {
         bool known = false;
         bool steamvr = false, driver = false;
         std::string control;    // who moves the HMD: "manual", "auto", another sender, "" = anyone
+        double refresh = 0;     // display refresh rate the PC wants (0 = the headset's own)
         std::chrono::steady_clock::time_point at{};
     } pc;
     std::string shown_control;  // last owner announced in a notice
+    std::vector<float> refresh_rates;   // offered by the headset (XR_FB_display_refresh_rate)
+    float requested_refresh = 0;
+    std::chrono::steady_clock::time_point next_timing{};
 
     // Panels: the connection screen (follows the gaze lazily), a notice line
     // and (Dev edition) the statistics overlay.
@@ -1214,11 +1259,11 @@ bool CreateSession(App& app) {
                               reinterpret_cast<PFN_xrVoidFunction*>(&request_fn));
         uint32_t n = 0;
         if (enum_fn && request_fn && XR_SUCCEEDED(enum_fn(app.session, 0, &n, nullptr)) && n > 0) {
-            std::vector<float> rates(n);
-            enum_fn(app.session, n, &n, rates.data());
-            const float best = *std::max_element(rates.begin(), rates.end());
-            LOGI("refresh rates: %u offered, requesting %.0f Hz: %s", n, best,
-                 XR_SUCCEEDED(request_fn(app.session, best)) ? "ok" : "failed");
+            app.refresh_rates.resize(n);
+            enum_fn(app.session, n, &n, app.refresh_rates.data());
+            std::string list;
+            for (float r : app.refresh_rates) list += Fmt("%.0f ", r);
+            LOGI("refresh rates offered: %sHz (the PC chooses)", list.c_str());
         }
     }
     return true;
@@ -1498,6 +1543,56 @@ void AppendHeadsetInfo(App& app, std::string& out, const std::vector<XrView>& ey
     out += buf;
 }
 
+// -- Wi-Fi --------------------------------------------------------------------
+// A low-latency Wi-Fi lock (Android 10+, WIFI_MODE_FULL_LOW_LATENCY): without
+// it the headset's Wi-Fi saves power between bursts and video frames arrive in
+// bunches. Held while the app runs (Android drops it when the app is not in front).
+jobject AcquireWifiLock(App& app) {
+    JNIEnv* env = nullptr;
+    JavaVM* vm = app.android->activity->vm;
+    if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return nullptr;
+    jobject activity = app.android->activity->clazz;
+    jclass ctx_cls = env->GetObjectClass(activity);
+    jmethodID get_service = env->GetMethodID(ctx_cls, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;");
+    jstring name = env->NewStringUTF("wifi");
+    jobject wifi = get_service ? env->CallObjectMethod(activity, get_service, name) : nullptr;
+    env->DeleteLocalRef(name);
+    env->DeleteLocalRef(ctx_cls);
+    jobject lock = nullptr;
+    if (wifi && !env->ExceptionCheck()) {
+        jclass wm_cls = env->GetObjectClass(wifi);
+        jmethodID create = env->GetMethodID(wm_cls, "createWifiLock", "(ILjava/lang/String;)Landroid/net/wifi/WifiManager$WifiLock;");
+        jstring tag = env->NewStringUTF("VHMDLink");
+        jobject l = create ? env->CallObjectMethod(wifi, create, 4 /* WIFI_MODE_FULL_LOW_LATENCY */, tag) : nullptr;
+        env->DeleteLocalRef(tag);
+        if (l && !env->ExceptionCheck()) {
+            jclass lock_cls = env->GetObjectClass(l);
+            jmethodID acquire = env->GetMethodID(lock_cls, "acquire", "()V");
+            if (acquire) env->CallVoidMethod(l, acquire);
+            if (!env->ExceptionCheck()) lock = env->NewGlobalRef(l);
+            env->DeleteLocalRef(lock_cls);
+        }
+        if (l) env->DeleteLocalRef(l);
+        env->DeleteLocalRef(wm_cls);
+    }
+    if (wifi) env->DeleteLocalRef(wifi);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    LOGI("Wi-Fi low-latency lock: %s", lock ? "held" : "not available");
+    return lock;
+}
+
+void ReleaseWifiLock(App& app, jobject lock) {
+    if (!lock) return;
+    JNIEnv* env = nullptr;
+    if (app.android->activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return;
+    jclass cls = env->GetObjectClass(lock);
+    jmethodID release = env->GetMethodID(cls, "release", "()V");
+    if (release) env->CallVoidMethod(lock, release);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    env->DeleteLocalRef(cls);
+    env->DeleteGlobalRef(lock);
+}
+
 // -- panels -------------------------------------------------------------------
 bool CreatePanel(App& app, Panel& p, int32_t w, int32_t h, XrSpace space, XrExtent2Df size) {
     XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
@@ -1629,15 +1724,6 @@ std::string ControlName(const std::string& owner) {
     return owner;
 }
 
-std::string Fmt(const char* f, ...) __attribute__((format(printf, 1, 2)));
-std::string Fmt(const char* f, ...) {
-    char b[512];
-    va_list ap;
-    va_start(ap, f);
-    vsnprintf(b, sizeof(b), f, ap);
-    va_end(ap);
-    return b;
-}
 
 // What the panels say this frame.
 void UpdatePanels(App& app, bool video, const XrSpaceLocation& head) {
@@ -1789,6 +1875,8 @@ void Frame(App& app) {
             app.pc.steamvr = JsonBool(m, "steamvr", false);
             app.pc.driver = JsonBool(m, "driver", false);
             JsonString(m, "control", &app.pc.control);
+            double refresh = 0;
+            app.pc.refresh = JsonNumber(m, "refresh", &refresh) ? refresh : 0;
             std::string name;
             if (JsonString(m, "pc", &name)) {
                 std::lock_guard<std::mutex> l(g_pc_mu);
@@ -1811,6 +1899,20 @@ void Frame(App& app) {
         hi.subactionPath = app.hand_paths[hand];
         xrApplyHapticFeedback(app.session, &hi, reinterpret_cast<XrHapticBaseHeader*>(&v));
         ++app.haptics;
+    }
+
+    // The refresh rate the PC asked for (VHMD then renders at it).
+    if (app.pc.refresh > 0 && std::abs(app.pc.refresh - app.requested_refresh) > 0.5 && !app.refresh_rates.empty()) {
+        float best = app.refresh_rates[0];
+        for (float r : app.refresh_rates)
+            if (std::abs(r - app.pc.refresh) < std::abs(best - app.pc.refresh)) best = r;
+        PFN_xrRequestDisplayRefreshRateFB request_fn = nullptr;
+        xrGetInstanceProcAddr(app.instance, "xrRequestDisplayRefreshRateFB",
+                              reinterpret_cast<PFN_xrVoidFunction*>(&request_fn));
+        const bool ok = request_fn && XR_SUCCEEDED(request_fn(app.session, best));
+        LOGI("refresh rate %.0f Hz (PC asked %.0f): %s", best, app.pc.refresh, ok ? "ok" : "failed");
+        app.requested_refresh = static_cast<float>(app.pc.refresh);
+        app.next_info = {};   // tell the PC soon
     }
 
     // Holding X and A for 1.5 s gives control back to the person wearing the
@@ -1844,6 +1946,16 @@ void Frame(App& app) {
         xrLocateViews(app.session, &li, &vs, static_cast<uint32_t>(eye_local.size()), &n, eye_local.data());
     }
     const auto now_info = std::chrono::steady_clock::now();
+    app.video.SetPeriodMs(static_cast<float>(fs.predictedDisplayPeriod) / 1e6f);
+    if (now_info >= app.next_timing) {
+        app.next_timing = now_info + std::chrono::milliseconds(500);
+        float slack = 0, weight = 0;
+        int frames = 0;
+        if (app.video.TakeTiming(&slack, &weight, &frames) && frames >= 10) {
+            msg += Fmt(",{\"type\":\"link_timing\",\"slack_ms\":%.2f,\"period_ms\":%.3f,\"weight\":%.2f,\"n\":%d}", slack,
+                       static_cast<float>(fs.predictedDisplayPeriod) / 1e6f, weight, frames);
+        }
+    }
     if (now_info >= app.next_info) {   // now and then: UDP may drop one
         app.next_info = now_info + std::chrono::seconds(2);
         AppendHeadsetInfo(app, msg, eye_local);
@@ -2010,6 +2122,7 @@ void android_main(android_app* android) {
     app.android = android;
     android->userData = &app;
     android->onAppCmd = OnAppCmd;
+    jobject wifi_lock = nullptr;
     {
         char lang[3] = {};
         AConfiguration_getLanguage(android->config, lang);
@@ -2037,6 +2150,7 @@ void android_main(android_app* android) {
     } else {
         InitGl(app);
         CreatePanels(app);
+        wifi_lock = AcquireWifiLock(app);
         app.sender.Start();
         app.video.Start();
         LOGI("VHMD Link%s %s running; looking for the PC (Wi-Fi discovery on UDP %u, USB fallback)",
@@ -2066,6 +2180,7 @@ void android_main(android_app* android) {
         Frame(app);
     }
 
+    ReleaseWifiLock(app, wifi_lock);
     app.sender.Stop();
     app.video.Stop();
     if (app.session) xrDestroySession(app.session);

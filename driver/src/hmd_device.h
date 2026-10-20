@@ -69,6 +69,12 @@ public:
     // Changes the frame rate while running (direct mode). Returns false if unavailable.
     bool SetRefreshRate(double hz);
     double RefreshRate() const;
+    // Display sync with a streaming headset: it reports how long frames wait
+    // there before being shown (slack, circular mean over its display period);
+    // the vsync clock moves so the slack approaches `target_ms`. `weight` (0..1)
+    // is how consistent the measurement was. Returns an error, or "" with the
+    // shift applied in *shift_ms.
+    std::string DisplaySync(double slack_ms, double period_ms, double target_ms, double weight, double* shift_ms);
     // Shows / hides the preview window (Windows direct mode). Returns false if unavailable.
     bool SetPreviewWindow(bool visible);
 

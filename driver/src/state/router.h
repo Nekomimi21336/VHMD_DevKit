@@ -45,6 +45,9 @@ struct RouterHooks {
     // Render models: "labeled" | "axes".
     std::function<std::string(const std::string& mode)> set_render_models;
     std::function<std::string()> render_models;
+    // Display sync (HmdDevice::DisplaySync): error or "", shift applied (ms).
+    std::function<std::string(double slack_ms, double period_ms, double target_ms, double weight, double* shift_ms)>
+        display_sync;
     // Changes the virtual display's frame rate (direct mode). Returns an error string.
     std::function<std::string(double hz)> set_refresh_rate;
     // Current frame rate, for replies.

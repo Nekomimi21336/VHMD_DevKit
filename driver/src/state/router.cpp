@@ -370,6 +370,22 @@ std::optional<std::string> MessageRouter::HandleConfig(const ConfigMessage& m, C
             if (!err.empty()) r["error"] = err;
         }
         if (hooks_.hand_mode) r["mode"] = hooks_.hand_mode();
+    } else if (m.op == "display_sync") {
+        // {"op":"display_sync","slack_ms":4.1,"period_ms":13.889,"target_ms":5.5,"weight":0.9}
+        if (!hooks_.display_sync) {
+            r["ok"] = false;
+            r["error"] = "display_sync not available";
+        } else if (!m.slack_ms || !m.period_ms) {
+            r["ok"] = false;
+            r["error"] = "slack_ms and period_ms are required";
+        } else {
+            double shift = 0;
+            const std::string err = hooks_.display_sync(*m.slack_ms, *m.period_ms, m.target_ms.value_or(*m.period_ms * 0.4),
+                                                        m.weight.value_or(1.0), &shift);
+            r["ok"] = err.empty();
+            if (!err.empty()) r["error"] = err;
+            r["shift_ms"] = shift;
+        }
     } else if (m.op == "render_models") {
         // {"op":"render_models","mode":"axes"|"labeled"}; no mode = query.
         if (!hooks_.set_render_models) {

@@ -518,3 +518,26 @@ TEST(router_render_models_op) {
     auto bad = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"render_models","mode":"cubes"})", now));
     CHECK(bad["ok"] == false && bad["mode"] == "axes");
 }
+
+TEST(router_display_sync_op) {
+    DriverConfig cfg = DefaultConfig();
+    std::vector<std::shared_ptr<DeviceState>> states;
+    for (const auto& d : cfg.devices) states.push_back(std::make_shared<DeviceState>(d, cfg));
+    const auto now = Clock::now();
+    double got_slack = 0, got_target = 0, got_weight = 0;
+    RouterHooks hooks;
+    hooks.display_sync = [&](double slack, double period, double target, double weight, double* shift) -> std::string {
+        got_slack = slack;
+        got_target = target;
+        got_weight = weight;
+        *shift = 1.25;
+        return period > 0 ? "" : "bad period";
+    };
+    MessageRouter router(cfg, states, hooks);
+    auto r = nlohmann::json::parse(*router.HandleDatagram(
+        R"({"type":"config","op":"display_sync","slack_ms":3.5,"period_ms":10.0,"weight":0.5})", now));
+    CHECK(r["ok"] == true && r["shift_ms"] == 1.25);
+    CHECK(got_slack == 3.5 && got_target == 4.0 && got_weight == 0.5);   // target defaults to 0.4 period
+    auto missing = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"display_sync"})", now));
+    CHECK(missing["ok"] == false);
+}
