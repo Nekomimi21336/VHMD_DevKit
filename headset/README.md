@@ -4,16 +4,26 @@
 
 | 段階 | 内容 | 状態 |
 |---|---|---|
-| 1 | 頭・両手の姿勢と入力を USB 経由で VHMD に送る | 動作確認済み(Pico 4 Ultra、Pico OS 5.15.7) |
+| 1 | 頭・両手の姿勢と入力を VHMD に送る(Wi-Fi が基本、USB は予備) | 動作確認済み(Pico 4 Ultra、Pico OS 5.15.7) |
 | 2 | VHMD が描いた映像をヘッドセットに表示する | 動作確認済み(最初の版。頭の動きに対する補正はまだ) |
 | 3 | ドライバ側でマニュアル(ヘッドセット)とオート(自動操作)を SteamVR を止めずに切り替える | 未着手 |
 
 ## しくみ
 
 ```
-ヘッドセット: VHMD Link ──TCP 39580: 姿勢・入力──(adb reverse / USB)──> PC: headset_bridge ──UDP──> VHMD ドライバ
-                       <──TCP 39581: H.264 映像─────────────────────── PC: headset_stream <── VHMD のプレビュー(共有メモリ)
+ヘッドセット: VHMD Link ──姿勢・入力(Wi-Fi: UDP 39580 / USB: TCP 39580)──> PC: headset_bridge ──UDP──> VHMD ドライバ
+                       <──H.264 映像(TCP 39581)────────────────────────── PC: headset_stream <── VHMD のプレビュー
 ```
+
+### つなぎ方(Wi-Fi が基本)
+
+1. アプリは起動すると LAN に `VHMD-DISCOVER` をブロードキャスト(UDP 39582)し、PC の `headset_bridge` が答えます。IP アドレスの入力は要りません。
+2. 見つかれば Wi-Fi: 姿勢・入力は 1 配列 = 1 データグラムの UDP(遅れた古いパケットで後続が待たされない)、映像は TCP。
+3. 見つからなければ USB: `adb reverse` 経由の TCP(127.0.0.1)。1 配列 = 1 行。
+4. アドレスを固定したいときは、ヘッドセットの `/sdcard/Android/data/com.vhmd.link/files/pc_address.txt` に PC の IPv4 アドレスを書く(`adb push`)と、探さずにそこへつなぎます。
+
+- ヘッドセット内の床のグリッドの色: 緑 = Wi-Fi、水色 = USB、赤 = 未接続。
+- VHMD ドライバは PC 内(127.0.0.1)でだけ待ち受けたままで、LAN に開くのは `headset_bridge` のポート(UDP 39580・39582、TCP 39580・39581)です。LAN 上のどの機器からもつなげるので、信頼できるネットワークで使うか、`--usb-only` で PC 内だけにします。
 
 ### 姿勢と入力(段階 1)
 
@@ -30,17 +40,17 @@
 
 ## 使い方
 
-1. ヘッドセットで開発者モードと USB デバッグを有効にし、USB でつなぐ(`adb devices` に出ること)。
+1. インストールのときだけ USB が要ります: ヘッドセットで開発者モードと USB デバッグを有効にし、USB でつなぐ(`adb devices` に出ること)。PC とヘッドセットは同じ LAN に。
 2. ビルドとインストール(初回は `--fetch-loader` で OpenXR ローダーを Maven Central から取得):
 
    ```powershell
    python headset/android/build_apk.py --fetch-loader --install
    ```
 
-3. PC で中継を起動(`adb reverse` も行います):
+3. PC で中継を起動(Wi-Fi の待ち受けと、USB 用の `adb reverse` を両方行います):
 
    ```powershell
-   python -m vhmd_client.headset_bridge
+   python -m vhmd_client.headset_bridge            # USB を使わないなら --no-adb、Wi-Fi を使わないなら --usb-only
    ```
 
 4. SteamVR は VHMD モード(`python -m vhmd_client.mode vhmd`)にしておくと、VHMD の HMD とコントローラーがヘッドセットに合わせて動きます。
@@ -63,4 +73,6 @@ Gradle は使いません。`build_apk.py` が次を行います。
 - 目ごとのスワップチェーンは 1920 × 1920。セッションは FOCUSED まで進み、72 回/秒で PC に届く(約 58 KiB/s)。
 - VHMD モードの SteamVR で、`VHMD-HMD-0`・`VHMD-CTL-L/R` がヘッドセットの姿勢になった。
 - 映像: 2160 × 1200(両目並び)を 20〜26 Mbit/s で送り、ヘッドセットで受信・復号 約 60 回/秒、表示の更新 約 52 回/秒(表示は 72 Hz)。PC 側の入力が約 60 回/秒で頭打ち(プレビューを Python でコピーして ffmpeg に渡している部分)。ヘッドセットの画面キャプチャと PC の元画像で、向き・左右・明るさが一致。
+- Wi-Fi(5 GHz、Wi-Fi 5、866 Mbit/s、RSSI -32 dBm): USB の転送を消した状態で、アプリが PC(192.168.0.4)を自動で見つけ、姿勢・入力 72 回/秒(UDP)、映像 約 63 fps・20 Mbit/s(TCP)。映像を流している間の往復遅延(ping)は平均 2 ms(1〜4 ms)。何も流していないときは平均 38 ms(ヘッドセットの Wi-Fi 省電力)。
+- USB だけ(`--usb-only`)でも従来どおり動く。
 - 映像を出すには、VHMD の設定で `display.mode = "direct"`、`preview.fps` を 90、`preview.maxEyeWidth` を 1200 にした(既定の 15 fps / 960 では遅く小さい)。

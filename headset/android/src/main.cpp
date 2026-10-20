@@ -1,11 +1,14 @@
 // VHMD Link: a native OpenXR app for standalone headsets (Pico 4 Ultra first).
 //
-// Stage 1: reads the head and controller poses and inputs every frame and sends
-// them to the PC as VHMD protocol messages (one JSON array per line) over TCP to
-// 127.0.0.1:39580. With `adb reverse tcp:39580 tcp:39580` that port is the PC's,
-// where `python -m vhmd_client.headset_bridge` forwards each line to the VHMD
-// driver's UDP port. The headset shows a floor grid (green while connected to
-// the PC, red otherwise) and an axis triad on each controller.
+// Reads the head and controller poses and inputs every frame and sends them to
+// the PC (`python -m vhmd_client.headset_bridge`) as VHMD protocol messages, one
+// JSON array each, and shows VHMD's image (H.264 on TCP 39581).
+//
+// Finding the PC: an address in <external files dir>/pc_address.txt if present,
+// else a "VHMD-DISCOVER" broadcast to UDP 39582 answered by the bridge; poses
+// then go as UDP datagrams to port 39580 (Wi-Fi). With no answer the app falls
+// back to USB: TCP to 127.0.0.1 (adb reverse), one array per line.
+// The floor grid shows the link: green Wi-Fi, cyan USB, red none.
 //
 // Coordinates: OpenXR's STAGE space (meters, +Y up, -Z forward, origin on the
 // floor) matches SteamVR's standing space, so poses go out unchanged.
@@ -51,6 +54,44 @@
 namespace {
 
 constexpr uint16_t kPcPort = 39580;
+constexpr uint16_t kDiscoveryPort = 39582;
+enum Link { kNone = 0, kUsb = 1, kWifi = 2 };
+
+// Where the PC is (network byte order) and how we reach it; set by the video
+// thread, which looks for the PC, and read by the pose sender.
+std::atomic<uint32_t> g_pc_addr{0};
+std::atomic<int> g_link{kNone};
+uint32_t g_manual_addr = 0;   // from pc_address.txt
+
+std::string AddrText(uint32_t a) {
+    char b[INET_ADDRSTRLEN] = {};
+    inet_ntop(AF_INET, &a, b, sizeof(b));
+    return b;
+}
+
+// Broadcasts a discovery request; returns the answering PC's address or 0.
+uint32_t Discover() {
+    int s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0) return 0;
+    int one = 1;
+    setsockopt(s, SOL_SOCKET, SO_BROADCAST, &one, sizeof(one));
+    timeval tv{0, 700000};
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    sockaddr_in b{};
+    b.sin_family = AF_INET;
+    b.sin_port = htons(kDiscoveryPort);
+    b.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+    const char msg[] = "VHMD-DISCOVER 1";
+    sendto(s, msg, sizeof(msg) - 1, 0, reinterpret_cast<sockaddr*>(&b), sizeof(b));
+    char buf[512];
+    sockaddr_in from{};
+    socklen_t fl = sizeof(from);
+    const ssize_t n = recvfrom(s, buf, sizeof(buf) - 1, 0, reinterpret_cast<sockaddr*>(&from), &fl);
+    close(s);
+    if (n <= 0) return 0;
+    buf[n] = 0;
+    return strstr(buf, "\"vhmd\"") ? from.sin_addr.s_addr : 0;
+}
 
 bool Check(XrResult r, const char* what) {
     if (XR_FAILED(r)) {
@@ -87,7 +128,8 @@ public:
 
 private:
     void Run() {
-        int fd = -1;
+        int fd = -1;    // USB: TCP to 127.0.0.1 (adb reverse)
+        int udp = -1;   // Wi-Fi: datagrams to the PC
         while (true) {
             std::string line;
             {
@@ -97,6 +139,26 @@ private:
                 if (!has_) continue;
                 line.swap(pending_);
                 has_ = false;
+            }
+            const int link = g_link.load();
+            if (link == kWifi) {
+                if (fd >= 0) {
+                    close(fd);
+                    fd = -1;
+                }
+                if (udp < 0) udp = socket(AF_INET, SOCK_DGRAM, 0);
+                sockaddr_in a{};
+                a.sin_family = AF_INET;
+                a.sin_port = htons(kPcPort);
+                a.sin_addr.s_addr = g_pc_addr.load();
+                // One array per datagram, without the line break.
+                const size_t n = line.size() - (line.empty() || line.back() != '\n' ? 0 : 1);
+                connected_ = sendto(udp, line.data(), n, 0, reinterpret_cast<sockaddr*>(&a), sizeof(a)) > 0;
+                continue;
+            }
+            if (link != kUsb) {
+                connected_ = false;
+                continue;
             }
             if (fd < 0) fd = Connect();
             if (fd < 0) {
@@ -119,6 +181,7 @@ private:
             }
         }
         if (fd >= 0) close(fd);
+        if (udp >= 0) close(udp);
     }
 
     int Connect() {
@@ -360,21 +423,36 @@ public:
 
 private:
     void Run() {
+        uint32_t last_wifi = 0;
         while (!stop_) {
+            // Wi-Fi first (a fixed address, else discovery), then USB.
+            uint32_t addr = g_manual_addr ? g_manual_addr : Discover();
+            if (addr) {
+                if (addr != last_wifi) LOGI("PC found on the network: %s", AddrText(addr).c_str());
+                last_wifi = addr;
+                g_pc_addr = addr;
+                g_link = kWifi;
+            } else {
+                addr = htonl(INADDR_LOOPBACK);
+                g_pc_addr = addr;
+                g_link = kUsb;
+            }
             int fd = socket(AF_INET, SOCK_STREAM, 0);
             sockaddr_in a{};
             a.sin_family = AF_INET;
             a.sin_port = htons(kVideoPort);
-            a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            a.sin_addr.s_addr = addr;
             if (fd < 0 || connect(fd, reinterpret_cast<sockaddr*>(&a), sizeof(a)) != 0) {
                 if (fd >= 0) close(fd);
-                std::this_thread::sleep_for(std::chrono::seconds(1));
+                std::this_thread::sleep_for(std::chrono::milliseconds(300));
                 continue;
             }
             int one = 1;
             setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+            int rcv = 4 << 20;
+            setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof(rcv));
             fd_ = fd;
-            LOGI("video: connected");
+            LOGI("video: connected over %s (%s)", g_link.load() == kWifi ? "Wi-Fi" : "USB", AddrText(addr).c_str());
             std::vector<uint8_t> payload;
             VideoHeader h{};
             while (!stop_ && ReadAll(fd, &h, sizeof(h)) && memcmp(h.magic, "VHV1", 4) == 0) {
@@ -1022,8 +1100,10 @@ void Frame(App& app) {
         // Scene: floor grid (green when the PC is connected, red when not) and
         // an axis triad on each controller.
         std::vector<Vertex> verts;
-        const bool ok = app.sender.Connected();
-        const float gr = ok ? 0.15f : 0.45f, gg = ok ? 0.45f : 0.12f, gb = ok ? 0.25f : 0.12f;
+        const int link = app.sender.Connected() ? g_link.load() : kNone;
+        const float gr = link == kNone ? 0.45f : 0.12f;
+        const float gg = link == kNone ? 0.12f : 0.45f;
+        const float gb = link == kUsb ? 0.5f : link == kWifi ? 0.2f : 0.12f;
         for (int i = -10; i <= 10; ++i) {
             const float t = i * 0.5f;
             Line(verts, t, 0, -5, t, 0, 5, gr, gg, gb);
@@ -1115,6 +1195,20 @@ void android_main(android_app* android) {
     android->userData = &app;
     android->onAppCmd = OnAppCmd;
 
+    if (android->activity->externalDataPath) {
+        const std::string path = std::string(android->activity->externalDataPath) + "/pc_address.txt";
+        if (FILE* f = fopen(path.c_str(), "r")) {
+            char text[64] = {};
+            fgets(text, sizeof(text), f);
+            fclose(f);
+            text[strcspn(text, " \r\n")] = 0;
+            in_addr a{};
+            if (inet_pton(AF_INET, text, &a) == 1) {
+                g_manual_addr = a.s_addr;
+                LOGI("PC address from %s: %s", path.c_str(), text);
+            }
+        }
+    }
     if (!InitLoader(app) || !CreateInstance(app) || !InitEgl(app) || !CreateSession(app) ||
         !CreateSwapchains(app) || !CreateActions(app)) {
         LOGE("startup failed");
@@ -1123,7 +1217,7 @@ void android_main(android_app* android) {
         InitGl(app);
         app.sender.Start();
         app.video.Start();
-        LOGI("running; sending to 127.0.0.1:%u (adb reverse)", kPcPort);
+        LOGI("running; looking for the PC (Wi-Fi discovery on UDP %u, USB fallback)", kDiscoveryPort);
     }
 
     while (!android->destroyRequested) {

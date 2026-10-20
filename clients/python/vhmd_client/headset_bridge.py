@@ -1,18 +1,25 @@
 """Relay between the VHMD Link headset app and the VHMD driver.
 
-The app sends one JSON array of VHMD protocol messages per line over TCP to
-port 39580 on the headset's localhost; `adb reverse` (done here unless
---no-adb) makes that this PC. Each line goes on to the driver as one UDP
-datagram. On port 39581 the app gets VHMD's image as H.264 (headset_stream;
-needs ffmpeg and the driver in direct mode).
+Network (default): the app finds this PC by broadcasting "VHMD-DISCOVER" to
+UDP port 39582 and gets the ports in the reply; it then sends one JSON array
+of VHMD protocol messages per UDP datagram to port 39580. USB: over
+`adb reverse` (done here unless --no-adb) the app sends the same arrays one
+per line over TCP to port 39580. Either way each array goes on to the driver
+(which only listens on this PC) as one UDP datagram. On TCP port 39581 the app
+gets VHMD's image as H.264 (headset_stream; needs ffmpeg and the driver in
+direct mode).
 
-    python -m vhmd_client.headset_bridge [--driver-port 39570] [--no-adb] [--no-video]
+    python -m vhmd_client.headset_bridge [--usb-only] [--no-adb] [--no-video]
+
+The network ports accept any device on the LAN: use it on a trusted network,
+or --usb-only.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import platform
 import socket
 import subprocess
 import threading
@@ -22,6 +29,7 @@ from .client import DEFAULT_HOST, DEFAULT_PORT
 from .headset_stream import VIDEO_PORT, VideoServer
 
 LISTEN_PORT = 39580
+DISCOVERY_PORT = 39582
 
 
 class Stats:
@@ -60,6 +68,28 @@ def serve_client(conn: socket.socket, udp: socket.socket, driver, stats: Stats) 
                     stats.add(line)
 
 
+def serve_udp(sock: socket.socket, udp: socket.socket, driver, stats: Stats) -> None:
+    """Poses over the network: one JSON array per datagram."""
+    peer = None
+    while True:
+        data, addr = sock.recvfrom(65536)
+        if addr != peer:
+            peer = addr
+            print("headset sending over the network from", addr[0], flush=True)
+        udp.sendto(data, driver)
+        stats.add(data)
+
+
+def serve_discovery(sock: socket.socket, args) -> None:
+    """Answers the app's broadcast with this PC's ports (unicast)."""
+    reply = json.dumps({"vhmd": "pc", "name": platform.node(), "pose_port": args.port,
+                        "video_port": VIDEO_PORT}).encode()
+    while True:
+        data, addr = sock.recvfrom(1024)
+        if data.startswith(b"VHMD-DISCOVER"):
+            sock.sendto(reply, addr)
+
+
 def summary(last: str) -> str:
     """Short human-readable view of the newest message (head position, trigger)."""
     try:
@@ -81,6 +111,7 @@ def main() -> None:
     ap.add_argument("--driver-port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--port", type=int, default=LISTEN_PORT, help="TCP port the app connects to")
     ap.add_argument("--no-adb", action="store_true", help="do not run adb reverse")
+    ap.add_argument("--usb-only", action="store_true", help="listen on 127.0.0.1 only (adb reverse), no network")
     ap.add_argument("--no-video", action="store_true", help="poses only, no video")
     ap.add_argument("--bitrate", type=float, default=30.0, help="video bitrate, Mbit/s")
     ap.add_argument("--encoder", default="h264_amf", help="ffmpeg H.264 encoder (h264_amf, h264_nvenc, libx264, ...)")
@@ -88,21 +119,36 @@ def main() -> None:
 
     if not args.no_adb:
         for port in (args.port, VIDEO_PORT):
-            r = subprocess.run(["adb", "reverse", f"tcp:{port}", f"tcp:{port}"], capture_output=True, text=True)
-            print(f"adb reverse {port}:", "ok" if r.returncode == 0 else (r.stderr.strip() or r.stdout.strip()))
+            try:
+                r = subprocess.run(["adb", "reverse", f"tcp:{port}", f"tcp:{port}"], capture_output=True,
+                                   text=True, timeout=5)
+                print(f"adb reverse {port}:", "ok" if r.returncode == 0 else (r.stderr.strip() or r.stdout.strip()))
+            except (OSError, subprocess.TimeoutExpired):
+                print(f"adb reverse {port}: adb not available (USB not used)")
+    host = "127.0.0.1" if args.usb_only else "0.0.0.0"
     video = None
     if not args.no_video:
-        video = VideoServer(bitrate_mbps=args.bitrate, encoder=args.encoder, log=lambda m: print(m, flush=True))
+        video = VideoServer(host=host, bitrate_mbps=args.bitrate, encoder=args.encoder,
+                            log=lambda m: print(m, flush=True))
         video.start()
 
     udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     driver = (args.driver_host, args.driver_port)
+    stats = Stats()
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind(("127.0.0.1", args.port))
+    srv.bind((host, args.port))
     srv.listen(2)
-    stats = Stats()
-    print(f"waiting for the headset on 127.0.0.1:{args.port} -> driver {driver[0]}:{driver[1]}")
+    if not args.usb_only:
+        pose_udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        pose_udp.bind((host, args.port))
+        threading.Thread(target=serve_udp, args=(pose_udp, udp, driver, stats), daemon=True).start()
+        disc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        disc.bind((host, DISCOVERY_PORT))
+        threading.Thread(target=serve_discovery, args=(disc, args), daemon=True).start()
+        print(f"network: discovery on UDP {DISCOVERY_PORT}, poses on UDP {args.port}, video on TCP {VIDEO_PORT}"
+              " (any device on the LAN can connect)")
+    print(f"USB: poses on TCP 127.0.0.1:{args.port} -> driver {driver[0]}:{driver[1]}", flush=True)
 
     def report() -> None:
         while True:

@@ -102,20 +102,21 @@ class RtpDepacketizer:
 
 class VideoServer(threading.Thread):
     def __init__(self, port: int = VIDEO_PORT, bitrate_mbps: float = 30.0, fps: float = 90.0,
-                 encoder: str = "h264_amf", log=print) -> None:
+                 encoder: str = "h264_amf", log=print, host: str = "127.0.0.1") -> None:
         super().__init__(name="vhmd-video", daemon=True)
         self.port, self.bitrate, self.fps, self.encoder, self.log = port, bitrate_mbps, fps, encoder, log
+        self.host = host
         self.frames_in = self.frames_out = self.bytes_out = 0
 
     def run(self) -> None:
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        srv.bind(("127.0.0.1", self.port))
+        srv.bind((self.host, self.port))
         srv.listen(1)
-        self.log(f"video: waiting for the headset on 127.0.0.1:{self.port}")
+        self.log(f"video: waiting for the headset on {self.host}:{self.port}")
         while True:
-            conn, _ = srv.accept()
-            self.log("video: headset connected")
+            conn, addr = srv.accept()
+            self.log(f"video: headset connected from {addr[0]}")
             try:
                 self.stream(conn)
             except (OSError, ValueError) as e:
@@ -127,6 +128,7 @@ class VideoServer(threading.Thread):
         if not shutil.which("ffmpeg"):
             raise OSError("ffmpeg not found on PATH")
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 << 20)
         client = VHMDClient(timeout=2.0)
         client.preview(True)
         reader = PreviewReader()
