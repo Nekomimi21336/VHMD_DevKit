@@ -138,7 +138,7 @@ COLORS = {"hmd": "#2b6cb0", "left_hand": "#c05621", "right_hand": "#2f855a"}
 TRACKER_COLOR = "#6b46c1"
 OTHER_COLOR = "#888888"
 VIEW_MODES = ("eye169", "both", "eye")
-VIEW_SIZES = {"both": (720, 400), "eye169": (640, 360), "eye": (540, 600)}   # view area (pixels)
+VIEW_START = (640, 400)          # initial view area (pixels); it then follows the window
 UI_HZ = 30                       # table / map / view refresh
 
 
@@ -271,23 +271,37 @@ class BITMAPINFOHEADER(ctypes.Structure):
                 ("biYPelsPerMeter", ctypes.c_int32), ("biClrUsed", ctypes.c_uint32), ("biClrImportant", ctypes.c_uint32)]
 
 
-def blit_bgrx(hwnd: int, box_w: int, box_h: int, w: int, h: int, pixels: bytes) -> None:
-    """Draws a top-down 32-bit BGRX image into a window, scaled to fit the box
-    (aspect kept, centered). Plain GDI from any thread: drawing a live image
-    through a Tk PhotoImage costs ~15 ms of the Tk thread per frame."""
-    bmi = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), w, -h, 1, 32, 0, 0, 0, 0, 0, 0)
+class BITMAPINFO_MASKS(ctypes.Structure):
+    _fields_ = [("header", BITMAPINFOHEADER), ("masks", ctypes.c_uint32 * 3)]
+
+
+def stretch_rgba(hdc, box_w: int, box_h: int, bits, img_w: int, img_h: int,
+                 src: Tuple[int, int, int, int]) -> None:
+    """Draws the src rectangle (x, y, w, h) of a top-down 32-bit RGBA image
+    (rows of img_w pixels) into a device context, scaled to fit the box with the
+    aspect kept and centered. The RGBA byte order is described to GDI with bit
+    masks, so the pixels are used where they are, without copying or swizzling."""
+    x, y, w, h = src
+    bmi = BITMAPINFO_MASKS(BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), img_w, -img_h, 1, 32, 3,
+                                            0, 0, 0, 0, 0),                     # BI_BITFIELDS
+                           (ctypes.c_uint32 * 3)(0x000000FF, 0x0000FF00, 0x00FF0000))
     s = min(box_w / w, box_h / h)
     dw, dh = int(w * s), int(h * s)
-    hdc = user32.GetDC(hwnd)
-    if not hdc:
-        return
-    try:
-        gdi32.SetStretchBltMode(hdc, 4)                # HALFTONE: smooth scaling
-        gdi32.SetBrushOrgEx(hdc, 0, 0, None)
-        gdi32.StretchDIBits(hdc, (box_w - dw) // 2, (box_h - dh) // 2, dw, dh, 0, 0, w, h,
-                            pixels, ctypes.byref(bmi), 0, 0x00CC0020)   # DIB_RGB_COLORS, SRCCOPY
-    finally:
-        user32.ReleaseDC(hwnd, hdc)
+    gdi32.SetStretchBltMode(hdc, 4)                # HALFTONE: smooth scaling
+    gdi32.SetBrushOrgEx(hdc, 0, 0, None)
+    # StretchDIBits counts the source y from the bottom row even for a top-down DIB.
+    gdi32.StretchDIBits(hdc, (box_w - dw) // 2, (box_h - dh) // 2, dw, dh, x, img_h - y - h, w, h,
+                        bits, ctypes.byref(bmi), 0, 0x00CC0020)   # DIB_RGB_COLORS, SRCCOPY
+
+
+def view_crop(mode: str, width: int, height: int, eye_w: int) -> Tuple[int, int, int, int]:
+    """Source rectangle of a preview frame (both eyes side by side) for a view mode."""
+    if mode == "both":
+        return 0, 0, width, height
+    if mode == "eye169":
+        ch = min(height, round(eye_w * 9 / 16))
+        return 0, (height - ch) // 2, eye_w, ch
+    return 0, 0, eye_w, height
 
 
 def angular_velocity(q0: Sequence[float], q1: Sequence[float], dt: float) -> Tuple[float, float, float]:
@@ -356,7 +370,7 @@ class App:
         self.predict_var.trace_add("write", lambda *a: setattr(self, "predict_v", bool(self.predict_var.get())))
         self.raw: Optional[RawMouse] = None
         self.view_mode = VIEW_MODES[0]
-        self.view_box = VIEW_SIZES[self.view_mode]
+        self.view_box = VIEW_START
         self.speed.trace_add("write", lambda *a: self._copy_var("speed_v", self.speed))
         self.sens.trace_add("write", lambda *a: self._copy_var("sens_v", self.sens))
         self.warp = (0, 0)
@@ -496,7 +510,7 @@ class App:
         ttk.Label(left, text=t["help"], justify="left", foreground="#444").pack(anchor="w", pady=(6, 0))
 
         right = ttk.Frame(body)
-        right.pack(side="left", anchor="n", padx=(10, 0))
+        right.pack(side="left", fill="both", expand=True, padx=(10, 0))
         head = ttk.Frame(right)
         head.pack(anchor="w", fill="x")
         ttk.Label(head, text=t["view"]).pack(side="left")
@@ -507,7 +521,9 @@ class App:
         self.mode_box.pack(side="left", padx=6)
         # The preview thread paints this frame directly with GDI.
         self.view = tk.Frame(right, width=self.view_box[0], height=self.view_box[1], bg="#111")
-        self.view.pack(anchor="w")
+        self.view.pack(fill="both", expand=True)
+        # The preview thread scales each frame to whatever size this area has.
+        self.view.bind("<Configure>", lambda e: setattr(self, "view_box", (max(1, e.width), max(1, e.height))))
         self.view_text = tk.Label(self.view, bg="#111", fg="#ddd", justify="center",
                                   text=t["view_wait"] if self.display_mode == "direct" and self.hmd_active
                                   else t["view_window"] if self.hmd_active else t["view_none"])
@@ -1001,22 +1017,31 @@ class App:
         n, t0 = 0, time.perf_counter()
         try:
             while self.running:
+                mode, box = self.view_mode, self.view_box
                 try:
-                    mode, (bw, bh) = self.view_mode, self.view_box
-                    eye = "both" if mode == "both" else "left"
-                    aspect = 16 / 9 if mode == "eye169" else None
-                    r = reader.read_scaled(bw, bh, eye=eye, aspect=aspect, pixel_format="bgrx",
-                                           skip_index=last_index if shown == mode else -1)
+                    hdr = reader.peek()
                 except OSError:
-                    r = None
-                if r is None:
+                    hdr = None
+                if hdr is None or reader.address is None or (hdr[4] == last_index and (mode, box) == shown):
                     time.sleep(0.005)
                     continue
-                w, h, last_index, pixels = r
-                shown = mode
+                width, height, stride, eye_w, last_index, offset = hdr
+                seq = reader.sequence()
+                if seq & 1 or stride != width * 4:
+                    time.sleep(0.001)
+                    continue
+                # Draw straight from the shared memory: GDI crops and scales it,
+                # and ctypes releases the GIL meanwhile, so Tk keeps running. A
+                # frame rewritten during the call just shows torn for 1/30 s.
+                hdc = user32.GetDC(ctypes.c_void_p(self.view_hwnd)) if self.view_hwnd else None
+                if hdc:
+                    try:
+                        stretch_rgba(hdc, box[0], box[1], ctypes.c_void_p(reader.address + offset),
+                                     width, height, view_crop(mode, width, height, eye_w))
+                    finally:
+                        user32.ReleaseDC(ctypes.c_void_p(self.view_hwnd), hdc)
+                shown = (mode, box)
                 self.view_started = True
-                if self.view_hwnd:
-                    blit_bgrx(self.view_hwnd, bw, bh, w, h, pixels)
                 n += 1
                 if time.perf_counter() - t0 >= 1.0:
                     self.view_fps = n / (time.perf_counter() - t0)
@@ -1026,9 +1051,9 @@ class App:
             reader.close()
 
     def set_view_mode(self, mode: str) -> None:
-        self.view_box = VIEW_SIZES[mode]
-        self.view.config(width=self.view_box[0], height=self.view_box[1])
         self.view_mode = mode
+        if self.view_hwnd:
+            user32.InvalidateRect(ctypes.c_void_p(self.view_hwnd), None, True)   # clear the old shape
 
     def show_view(self) -> None:
         if self.view_started and self.view_text.winfo_ismapped():
@@ -1180,6 +1205,10 @@ def main() -> None:
     except Exception:
         pass
     root = tk.Tk()
+    # Start large enough that the HMD view is useful; it grows with the window.
+    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    w, h = min(1700, int(sw * 0.9)), min(1000, int(sh * 0.85))
+    root.geometry(f"{w}x{h}+{(sw - w) // 2}+{max(0, (sh - h) // 3)}")
     with VHMDClient(args.host, args.port) as c:
         App(root, c, args.rate, args.lang or ui_language())
         root.mainloop()

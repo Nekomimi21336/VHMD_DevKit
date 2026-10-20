@@ -215,6 +215,29 @@ class PreviewReader:
             return Frame(width, height, eye_w, frame_index, ts, src_fmt, bytes(data))
         return None
 
+    @property
+    def address(self) -> Optional[int]:
+        """Address of the mapped preview (Windows named mapping), for handing the
+        pixels to the OS without copying them. None elsewhere or before mapping."""
+        return self._win.addr if self._win is not None else None
+
+    def sequence(self) -> int:
+        """The writer's sequence number (odd while a frame is being written)."""
+        return struct.unpack_from("<Q", self._mm, _SEQ_OFFSET)[0] if self._mm is not None else 1
+
+    def peek(self) -> Optional[Tuple[int, int, int, int, int, int]]:
+        """Header of the latest frame without copying pixels: (width, height,
+        stride, eye_width, frame_index, data_offset). Together with
+        :attr:`address`, a tool can draw straight from the shared memory;
+        compare :meth:`sequence` before and after to notice a rewrite."""
+        if not self._map():
+            return None
+        (magic, version, header_size, width, height, stride, _fmt, _seq, frame_index, _ts, eye_w, _src,
+         _r0, _r1) = _HEADER.unpack_from(self._mm, 0)
+        if magic != MAGIC or version != 1 or header_size + stride * height > self._size:
+            return None
+        return width, height, stride, eye_w or width, frame_index, header_size
+
     def read_scaled(self, max_w: int, max_h: int, eye: str = "left", skip_index: int = -1,
                     pixel_format: str = "rgb", aspect: Optional[float] = None,
                     retries: int = 50) -> Optional[Tuple[int, int, int, bytes]]:
