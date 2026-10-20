@@ -6,7 +6,8 @@ own OpenXR loader, binds a pose action to XR_EXT_eye_gaze_interaction
 while gaze messages are sent to the driver. Also checks that the head pose in
 LOCAL space matches STAGE (the vhmd universe is calibrated at identity), that
 the HMD proximity sensor arrives as XR_EXT_user_presence events, and that the
-hand skeleton arrives as XR_EXT_hand_tracking joints.
+hand skeleton arrives as XR_EXT_hand_tracking joints. Also reports whether trackers
+are visible through XR_HTCX_vive_tracker_interaction (they are not: see below).
 Plain ctypes, so no extra Python package is needed. Prints one JSON line: {"results": [...], "info": {...}}.
 
     python tests/integration/openxr_check.py [--port 39570]
@@ -110,7 +111,9 @@ TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT, TYPE_HAND_TRACKER_CREATE_INFO_EXT = 10
 TYPE_HAND_JOINTS_LOCATE_INFO_EXT, TYPE_HAND_JOINT_LOCATIONS_EXT = 1000051002, 1000051003
 TYPE_EVENT_DATA_USER_PRESENCE_CHANGED_EXT, TYPE_SYSTEM_USER_PRESENCE_PROPERTIES_EXT = 1000470000, 1000470001
 HAND_LEFT, HAND_JOINT_COUNT, JOINT_WRIST, JOINT_INDEX_TIP, JOINT_MIDDLE_TIP = 1, 26, 1, 10, 15
-OPTIONAL_EXTS = (b"XR_EXT_user_presence", b"XR_EXT_hand_tracking")
+OPTIONAL_EXTS = (b"XR_EXT_user_presence", b"XR_EXT_hand_tracking", b"XR_HTCX_vive_tracker_interaction")
+# Roles of tracker_0 / tracker_1 in the default config (waist, left foot).
+TRACKER_ROLES = (("tracker_0", "waist"), ("tracker_1", "left_foot"))
 FORM_FACTOR_HMD, ACTION_TYPE_POSE, VIEW_CONFIG_STEREO = 1, 4, 2
 SPACE_VIEW, SPACE_LOCAL, SPACE_STAGE = 1, 2, 3
 STATE_READY, STATE_SYNCHRONIZED, STATE_FOCUSED = 2, 3, 5
@@ -206,6 +209,22 @@ class EyeGazeSession:
         self.ok(xr.xrSuggestInteractionProfileBindings(
             self.inst, byref(ProfileSB(TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING, None, profile, 1, binding))),
             "xrSuggestInteractionProfileBindings")
+        self.tracker_spaces = {}
+        if "XR_HTCX_vive_tracker_interaction" in self.optional:
+            # One pose action with a subaction path per tracker role.
+            roles = [self.path(f"/user/vive_tracker_htcx/role/{r}") for _, r in TRACKER_ROLES]
+            subs = (H * len(roles))(*roles)
+            self.tracker_action = H()
+            self.ok(xr.xrCreateAction(self.aset, byref(ActionCI(TYPE_ACTION_CREATE_INFO, None, b"trackers", ACTION_TYPE_POSE,
+                                                                len(roles), ctypes.addressof(subs), b"trackers")),
+                                      byref(self.tracker_action)), "xrCreateAction trackers")
+            tb = (SuggBind * len(roles))(*[SuggBind(self.tracker_action.value,
+                                                    self.path(f"/user/vive_tracker_htcx/role/{r}/input/grip/pose"))
+                                           for _, r in TRACKER_ROLES])
+            self.ok(xr.xrSuggestInteractionProfileBindings(self.inst, byref(ProfileSB(
+                TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING, None, self.path("/interaction_profiles/htc/vive_tracker_htcx"),
+                len(roles), tb))), "xrSuggestInteractionProfileBindings trackers")
+            self._tracker_roles = list(zip([d for d, _ in TRACKER_ROLES], roles))
         sets = (H * 1)(self.aset.value)
         self.ok(xr.xrAttachSessionActionSets(self.sess, byref(AttachInfo(TYPE_SESSION_ACTION_SETS_ATTACH_INFO, None, 1,
                                                                          sets))), "xrAttachSessionActionSets")
@@ -213,6 +232,12 @@ class EyeGazeSession:
         self.ok(xr.xrCreateActionSpace(self.sess, byref(ActionSpaceCI(TYPE_ACTION_SPACE_CREATE_INFO, None,
                                                                       self.action.value, 0, IDENTITY)),
                                        byref(self.gaze_space)), "xrCreateActionSpace")
+        for device, role_path in getattr(self, "_tracker_roles", []):
+            sp = H()
+            self.ok(xr.xrCreateActionSpace(self.sess, byref(ActionSpaceCI(TYPE_ACTION_SPACE_CREATE_INFO, None,
+                                                                          self.tracker_action.value, role_path, IDENTITY)),
+                                           byref(sp)), "xrCreateActionSpace tracker")
+            self.tracker_spaces[device] = sp
         self.spaces = {}
         for name, kind in (("view", SPACE_VIEW), ("local", SPACE_LOCAL), ("stage", SPACE_STAGE)):
             s = H()
@@ -283,6 +308,12 @@ class EyeGazeSession:
         r = self.xr.xrLocateSpace(space, self.spaces[base], self.now(), byref(loc))
         q, p = loc.pose.orientation, loc.pose.position
         return r, loc.locationFlags, (p.x, p.y, p.z), (q.w, q.x, q.y, q.z)
+
+    def locate_tracker(self, device, base="stage"):
+        loc = SpaceLoc(TYPE_SPACE_LOCATION, None, 0)
+        r = self.xr.xrLocateSpace(self.tracker_spaces[device], self.spaces[base], self.now(), byref(loc))
+        p = loc.pose.position
+        return r, loc.locationFlags, (p.x, p.y, p.z)
 
     def hand_joints(self, base="stage"):
         """(isActive, [(flags, (x, y, z))] * 26) for the left hand."""
@@ -423,9 +454,39 @@ def main() -> int:
         else:
             info["openxr_user_presence"] = "extension not offered by the runtime"
 
+        # Trackers by role -> XR_HTCX_vive_tracker_interaction (OpenXR apps such as VRChat).
+        if xr.tracker_spaces:
+            want = {"tracker_0": (0.1, 1.0, 0.2), "tracker_1": (-0.15, 0.1, 0.05)}
+            got = {}
+            t1, last = time.perf_counter(), 0.0
+            while time.perf_counter() - t1 < 4.0:
+                if time.perf_counter() - last > 0.05:
+                    for dev, pos in want.items():
+                        client.pose(dev, pos)
+                    last = time.perf_counter()
+                xr.sync()
+                got = {dev: xr.locate_tracker(dev) for dev in want}
+                if all(g[0] == 0 and g[1] & tracked == tracked and dist(g[2], want[d]) < TOL_M for d, g in got.items()):
+                    break
+                time.sleep(0.02)
+            ok = all(g[0] == 0 and g[1] & tracked == tracked and dist(g[2], want[d]) < TOL_M for d, g in got.items())
+            # SteamVR exposes only "vive_tracker*" controller types through this
+            # extension; vhmd_tracker is not one (no impersonation), so this is
+            # reported, not checked.
+            info["openxr_vive_trackers"] = ("located" if ok else "not exposed (SteamVR maps only vive_tracker* controller "
+                                            "types to XR_HTCX_vive_tracker_interaction)")
+        else:
+            info["openxr_vive_trackers"] = "XR_HTCX_vive_tracker_interaction not offered by the runtime"
+
         # Hand skeleton -> XR_EXT_hand_tracking joints (hand tracking twins, Full skeleton).
-        if xr.hand_tracker is not None:
-            client.hand_mode("hands")
+        hands_ok = xr.hand_tracker is not None
+        if hands_ok:
+            try:
+                client.hand_mode("hands")
+            except ValueError as e:  # controllers disabled (e.g. trackers only next to a real HMD)
+                info["openxr_hand_tracking"] = f"skipped: {e}"
+                hands_ok = False
+        if hands_ok:
 
             def spread(curl):
                 """Index/middle fingertip distance from the wrist once the hand settles."""
@@ -453,7 +514,7 @@ def main() -> int:
                             "ok": ok, "detail": f"active open={open_active} fist={fist_active}, fingertip-wrist "
                                                f"open={open_d if open_d is None else round(open_d, 3)} m "
                                                f"fist={fist_d if fist_d is None else round(fist_d, 3)} m"})
-        else:
+        elif xr.hand_tracker is None:
             info["openxr_hand_tracking"] = "not supported by the runtime"
     except Skip as e:
         info["openxr_skipped"] = str(e)

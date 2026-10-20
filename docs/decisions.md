@@ -53,7 +53,8 @@
 | ウォッチドッグ(`IVRWatchdogProvider`) | 未実装 | SteamVR が閉じているあいだに SteamVR を自動起動する仕組みで、開発用ツールで有効にするには影響が大きい |
 | 表情(フェイシャルトラッキング) | 対象外。OpenVR に表情の API が無く、SteamVR の OpenXR ランタイムもフェイス系拡張を提供していないため、SteamVR との接続という本ツールの役割の外(調査: `docs/face_tracking_research.md`) | — |
 | トラッカーのみモード (`hmd.enabled=false`) | Pico 4 Ultra + PICO Connect で確認済み(2026-10-20)。実 HMD が無いときは SteamVR に HMD が無く、VHMD のデバイスも有効にならない | — |
-| VMT の Joint / Follow / Skeleton / ルーム行列 | 未実装(破棄してログ) | `protocol/osc.cpp` に追加 |
+| VMT の Joint / Follow / Skeleton / ルーム行列 | v0.5.0 で実装。親を持つ姿勢はタイムアウトしない(VMT と同じ) | — |
+| OpenXR の Vive トラッカー拡張(`XR_HTCX_vive_tracker_interaction`) | VHMD のトラッカーは見えない。SteamVR は `vive_tracker*` のコントローラー種別だけをこの拡張に割り当てる。種別を偽装すれば見えるが、他社製品のふりをすることになるため採用していない | 利用者が明示的に有効にするオプトイン設定として検討 |
 | 実行時のデバイス削除 | OpenVR にはデバイス削除 API が無い。追加は最初のパケットで行う(オンデマンド)。使わなくなったデバイスは切断として報告する | — |
 | Linux の表示経路 | v0.2.0 を Linux 版 SteamVR 2.17.10(Arch、KDE Wayland)で試した結果、ドライバは読み込まれ HMD も認識されたが、コンポジタが `CannotDRMLeaseDisplay` で起動しなかった(null ドライバも同じ。Valve issue #889)。`IVRVirtualDisplay` は Linux で壊れている(issue #409)。**v0.3.0 で `IVRDriverDirectModeComponent` を実装**(ALVR の Linux ドライバと同じ方式。共有 Vulkan イメージを `IVRIPCResourceManagerClient` で確保し、vsync はドライバが通知)。実 GPU(RTX 4000 Ada)の Linux 版 SteamVR 2.17.10 で 90 fps の描画と統合テスト合格を確認。GTX 1050 ではコンポジタが GPU 例外で止まる | 実画面のある Linux デスクトップと、プレビューの開始・停止(軽量化後)の実 GPU での動作は未確認 |
 | 共有イメージの読み取り | 作成時と同じパラメータで OPAQUE_FD としてインポートし、最初の 1 回だけ UNDEFINED から遷移(ALVR と同じ扱い)。同期は dma-buf の書き込みフェンスを上限付きで待つ。プレビュー用途なので、間に合わなければ欠けたフレームになるだけ | — |
@@ -65,7 +66,7 @@
 
 ## 4. この PC 固有の注意
 
-- **PICO Connect のドライバも登録されている**。今回の検証時はヘッドセット未接続で PICO 側が HMD を追加しなかったため、vhmd の HMD がアクティブ HMD になった。PICO 接続時に両方が有効だとどちらがアクティブになるかは**未検証**。実機を使うときは `tools/uninstall_driver.ps1` で登録解除するか、`hmd.enabled: false`(トラッカーのみ)にする。
+- **PICO Connect のドライバも登録されている**。ヘッドセット未接続なら vhmd の HMD がアクティブになり、接続中は PICO の HMD が優先される(2026-10-20 確認)。実機と併用するときは `hmd.enabled: false`(トラッカーのみ)にする。
 - SteamVR の `LastKnown.ActualHMDDriver` が `vhmd` に変わる(SteamVR が自動で記録する情報。PICO 接続時には PICO に戻る想定)。
 - **SnapVR (`snapvr-engined.exe`) が SteamVR 終了後に SteamVR を再起動する**。テストスクリプトの `--stop-relaunchers` はこれを検出して終了させる(SteamVR 本体・Steam クライアント・ゲームは対象外)。同時に OpenVR-AdvancedSettings も終了対象になる。いずれも次回 SteamVR 起動時に自動起動するオーバーレイ。
 - vrmonitor は `taskkill`(WM_CLOSE)では終了しない。テストではマスタープロセス (vrmonitor) を終了させ、vrserver の「Lost master process ... Quitting all」→「Graceful exit」経路で終了させている(ドライバの `Cleanup` が呼ばれることをログで確認)。

@@ -2,8 +2,17 @@
 
 ## 未リリース
 
+### 修正
+- VMT の Joint / Follow で親を持つトラッカーが 0.5 秒で無効になる問題。親を持つ姿勢はタイムアウトしないようにした(VMT と同じ)。
+
+### テスト
+- `openxr_check.py`: OpenXR の Vive トラッカー拡張で VHMD のトラッカーが見えるかを情報として表示。コントローラーが無効な構成ではハンドトラッキングの確認を飛ばす。
+- `stress_restart.py`: vrmonitor が遅れて起動しても SteamVR を止められるようにし、ログはその回の vrserver の PID でセッションを探すようにした。
+
 ### ドキュメント
 - 実機 HMD(Pico 4 Ultra + PICO Connect)にトラッカーを足す構成を確認し、「実機 HMD と併用するとき」を書き直した。
+- 実機併用での VMT、30 分の連続稼働、実行中のアンインストール、VRChat(ダイレクトモード)の結果を追記。
+- Pico 4 Ultra 向けアプリの調査メモ(`docs/pico4ultra_research.md`)。
 
 ## v0.5.0(2026-10-20)
 

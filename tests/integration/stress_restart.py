@@ -61,6 +61,7 @@ def main() -> int:
                 if time.monotonic() - t0 > 120:
                     raise TimeoutError("driver did not answer within 120 s")
             rec["driver_up_s"] = round(time.monotonic() - t0, 2)
+            pid = svr.vrserver_pid()
             time.sleep(args.settle)
             st = client.status()
             # On-demand trackers only get an index once something is sent to them.
@@ -73,7 +74,8 @@ def main() -> int:
 
             rec["stop_s"] = round(svr.stop_steamvr(stop_relaunchers=args.stop_relaunchers,
                                                    relaunch_watch=args.relaunch_watch), 2)
-            log = svr.latest_session(svr.read_log_since(svr.vrserver_log(), 0))
+            # The session of the vrserver this cycle started (found by PID).
+            log = svr.session_by_pid(pid) if pid else svr.latest_session(svr.read_log_since(svr.vrserver_log(), 0))
             rec["cleanup_logged"] = bool(svr.log_lines(log, r"vhmd: shutting down"))
             rec["graceful_exit"] = bool(svr.log_lines(log, r"\[vrserver\] Graceful exit"))
             rec["problems"] = [l.strip()[:200] for l in svr.log_lines(log, CRASH_PATTERNS)][:5]

@@ -225,9 +225,15 @@ def stop_steamvr(timeout: float = 60.0, stop_relaunchers: bool = False, relaunch
                 print(f"stop_steamvr: terminating OpenVR overlay/app: {name} (pid {pid}, {path})")
                 _kill_pid(pid)
         _kill_name("vrmonitor")
+        # vrmonitor can start several seconds after the driver is up; a stop sent
+        # before it exists never reaches vrserver, so keep asking until it exits.
+        last_kill = time.monotonic()
         while running(("vrserver",)):
             if time.monotonic() - t0 > timeout:
                 raise TimeoutError("vrserver did not exit")
+            if time.monotonic() - last_kill > 1.0:
+                _kill_name("vrmonitor")
+                last_kill = time.monotonic()
             time.sleep(0.25)
         took = time.monotonic() - t0
         # Make sure nothing brings SteamVR straight back.
@@ -261,6 +267,30 @@ def latest_session(text: str) -> str:
     if idx < 0:
         return text
     return text[text.rfind("\n", 0, idx) + 1:]
+
+
+def vrserver_pid() -> Optional[int]:
+    """PID of the running vrserver, if any."""
+    for pid, name in _process_table():
+        if name == "vrserver":
+            return pid
+    return None
+
+
+def session_by_pid(pid: int) -> str:
+    """Log text of the vrserver session with this PID. vrserver.txt holds
+    several sessions and is rotated into vrserver.previous.txt, so both are
+    searched; the newest session is not necessarily the one we started."""
+    log = vrserver_log()
+    for path in (log, log.with_name(log.stem + ".previous" + log.suffix)):
+        text = read_log_since(path, 0)
+        idx = text.find(f"startup with PID={pid},")
+        if idx < 0:
+            continue
+        start = text.rfind("\n", 0, idx) + 1
+        nxt = text.find("startup with PID=", idx + 1)
+        return text[start:] if nxt < 0 else text[start:text.rfind("\n", 0, nxt) + 1]
+    return ""
 
 
 def log_lines(text: str, pattern: str) -> List[str]:

@@ -73,7 +73,9 @@ OutputPose DeviceState::ComputeOutput(Clock::time_point now) {
     // Before the first packet the device sits at its configured default pose;
     // the timeout clock starts at creation so policies apply uniformly.
     const Clock::time_point ref = last_update_.value_or(created_);
-    out.timed_out = Seconds(now - ref) > timeout_s_;
+    // A pose relative to a parent (VMT Joint / Follow) keeps following it without
+    // new packets, like VMT; the parent's own validity decides.
+    out.timed_out = latest_.parent.empty() && Seconds(now - ref) > timeout_s_;
 
     smoother_.Update(latest_.pos, latest_.rot, smoothing_, dt);
     out.pos = smoother_.Position();

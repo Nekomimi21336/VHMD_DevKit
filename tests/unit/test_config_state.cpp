@@ -426,3 +426,23 @@ TEST(state_pose_age_becomes_time_offset) {
     CHECK_NEAR(out.time_offset, -0.06, 1e-6);
     CHECK_NEAR(out.acc.y, -1.0, 1e-12);
 }
+
+TEST(state_parented_pose_does_not_time_out) {
+    auto c = DefaultConfig();
+    DeviceConfig cfg;
+    for (const auto& dev : c.devices) {
+        if (dev.id == "tracker_2") cfg = dev;
+    }
+    DeviceState s(cfg, c);
+    PoseMessage m;
+    m.id = "tracker_2";
+    m.parent = "HMD";
+    const auto t0 = Clock::now();
+    s.SubmitPose(m, t0);
+    auto out = s.ComputeOutput(t0 + std::chrono::seconds(10));
+    CHECK(!out.timed_out && out.pose_valid && out.parent == "HMD");
+    PoseMessage plain;
+    plain.id = "tracker_2";
+    s.SubmitPose(plain, t0);
+    CHECK(s.ComputeOutput(t0 + std::chrono::seconds(10)).timed_out);
+}
