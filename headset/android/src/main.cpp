@@ -37,6 +37,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <deque>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -403,8 +404,34 @@ public:
             glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         }
+        // Decoded images wait in a queue. buffer 0: always the newest (lowest
+        // latency; when one arrives just after a display frame, that frame shows
+        // the old image again and the next one skips an image). buffer 1: one image
+        // is held back, so a late arrival is covered by the one in reserve, at the
+        // cost of about one frame of latency.
+        // Images are taken from the reader as soon as the decoder renders them
+        // (OnImage, on the reader's thread): left in the reader, a newer one
+        // replaces an older one before the render loop gets to it.
+        const auto now = std::chrono::steady_clock::now();
         AImage* img = nullptr;
-        if (AImageReader_acquireLatestImage(reader, &img) != AMEDIA_OK || !img) return has_frame_;
+        {
+            std::lock_guard<std::mutex> l(queue_mu_);
+            const size_t keep = static_cast<size_t>(buffer_.load()) + 1;
+            while (queue_.size() > keep) {   // more than wanted: drop the oldest
+                AImage_delete(queue_.front().img);
+                queue_.pop_front();
+                ++dropped_;
+            }
+            if (!queue_.empty()) {
+                img = queue_.front().img;
+                waits_ms_.push_back(std::chrono::duration<float, std::milli>(now - queue_.front().arrived).count());
+                queue_.pop_front();
+            }
+        }
+        if (!img) {
+            if (has_frame_) ++repeats_;
+            return has_frame_;
+        }
         AHardwareBuffer* hb = nullptr;
         AImage_getHardwareBuffer(img, &hb);
         EGLImageKHR egl = EGL_NO_IMAGE_KHR;
@@ -449,11 +476,23 @@ public:
     bool HasFov() const { return has_fov_.load(); }
     XrFovf Fov(int eye) const { return fov_[eye]; }
     bool Connected() const { return fd_.load() >= 0; }
-    void TakeStats(int* received, int* decoded, int* shown) {
-        *received = received_.exchange(0);
-        *decoded = decoded_.exchange(0);
-        *shown = shown_;
-        shown_ = 0;
+    struct Stats {
+        int received, decoded, shown, repeats, dropped, buffer;
+        float wait_avg_ms, wait_p95_ms;   // decoded image waiting before it is shown
+    };
+    Stats TakeStats() {
+        std::lock_guard<std::mutex> l(queue_mu_);
+        Stats s{received_.exchange(0), decoded_.exchange(0), shown_, repeats_, dropped_, buffer_.load(), 0, 0};
+        if (!waits_ms_.empty()) {
+            float sum = 0;
+            for (float w : waits_ms_) sum += w;
+            s.wait_avg_ms = sum / waits_ms_.size();
+            std::sort(waits_ms_.begin(), waits_ms_.end());
+            s.wait_p95_ms = waits_ms_[std::min(waits_ms_.size() - 1, waits_ms_.size() * 95 / 100)];
+        }
+        shown_ = repeats_ = dropped_ = 0;
+        waits_ms_.clear();
+        return s;
     }
 
 private:
@@ -525,6 +564,19 @@ private:
         f.pose.orientation = {h.pose[4], h.pose[5], h.pose[6], h.pose[3]};
     }
 
+    // Reader thread: a decoded image is ready.
+    void OnImage(AImageReader* r) {
+        AImage* in = nullptr;
+        if (AImageReader_acquireNextImage(r, &in) != AMEDIA_OK || !in) return;
+        std::lock_guard<std::mutex> l(queue_mu_);
+        queue_.push_back({in, std::chrono::steady_clock::now()});
+        while (queue_.size() > 4) {   // the render loop is not taking them: keep the newest
+            AImage_delete(queue_.front().img);
+            queue_.pop_front();
+            ++dropped_;
+        }
+    }
+
     static bool ReadAll(int fd, void* dst, size_t n) {
         auto* p = static_cast<uint8_t*>(dst);
         while (n > 0) {
@@ -537,9 +589,10 @@ private:
     }
 
     void Configure(const std::string& json) {
-        double w = 0, h = 0;
+        double w = 0, h = 0, buffer = 0;
         JsonNumber(json, "width", &w);
         JsonNumber(json, "height", &h);
+        if (JsonNumber(json, "buffer", &buffer)) buffer_ = std::clamp(static_cast<int>(buffer), 0, 3);
         // "fov": [[l, r, u, d], [l, r, u, d]] in radians (OpenXR angles).
         size_t p = json.find("\"fov\"");
         if (p != std::string::npos && json.find('[', p) != std::string::npos) {
@@ -560,7 +613,7 @@ private:
                 has_fov_ = true;
             }
         }
-        LOGI("video: config %.0fx%.0f, fov %s", w, h, has_fov_ ? "from the PC" : "own");
+        LOGI("video: config %.0fx%.0f, fov %s, buffer %d", w, h, has_fov_ ? "from the PC" : "own", buffer_.load());
         if (codec_ && w == width_ && h == height_) return;   // same stream shape: keep the decoder
         if (codec_) {
             AMediaCodec_stop(codec_);
@@ -572,10 +625,14 @@ private:
         AImageReader* reader = reader_.load();
         if (!reader) {
             if (AImageReader_newWithUsage(width_, height_, AIMAGE_FORMAT_PRIVATE,
-                                          AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, 4, &reader) != AMEDIA_OK) {
+                                          AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, 8, &reader) != AMEDIA_OK) {
                 LOGE("video: AImageReader failed");
                 return;
             }
+            AImageReader_ImageListener listener{this, [](void* ctx, AImageReader* r) {
+                                                    static_cast<Video*>(ctx)->OnImage(r);
+                                                }};
+            AImageReader_setImageListener(reader, &listener);
             reader_ = reader;
         }
         ANativeWindow* window = nullptr;
@@ -640,6 +697,15 @@ private:
     FrameRec poses_[kPoseRing];
     bool cur_pose_valid_ = false;
     XrPosef cur_pose_{};
+    std::atomic<int> buffer_{0};   // images held back (config "buffer")
+    struct Queued {
+        AImage* img;
+        std::chrono::steady_clock::time_point arrived;
+    };
+    std::mutex queue_mu_;
+    std::deque<Queued> queue_;   // filled by OnImage, emptied by Update
+    int repeats_ = 0, dropped_ = 0;
+    std::vector<float> waits_ms_;
     // render thread only
     GLuint tex_ = 0;
     AImage* cur_img_ = nullptr;
@@ -1269,17 +1335,21 @@ void Frame(App& app) {
     ++xr_frames;
     const auto now = std::chrono::steady_clock::now();
     if (now - last_log >= std::chrono::seconds(2)) {
-        int rx = 0, dec = 0, shown = 0;
-        app.video.TakeStats(&rx, &dec, &shown);
+        const Video::Stats v = app.video.TakeStats();
         const float s = std::chrono::duration<float>(now - last_log).count();
-        LOGI("frames %.0f/s, video received %.0f/s decoded %.0f/s shown %.0f/s, at render pose %.0f%%", xr_frames / s,
-             rx / s, dec / s, shown / s, xr_frames ? 100.0f * app.reprojected / xr_frames : 0.0f);
+        const float rep = xr_frames ? 100.0f * app.reprojected / xr_frames : 0.0f;
+        LOGI("frames %.0f/s, video received %.0f/s decoded %.0f/s shown %.0f/s (repeats %.0f/s, dropped %.0f/s, "
+             "buffer %d, wait %.1f ms avg %.1f p95), at render pose %.0f%%",
+             xr_frames / s, v.received / s, v.decoded / s, v.shown / s, v.repeats / s, v.dropped / s, v.buffer,
+             v.wait_avg_ms, v.wait_p95_ms, rep);
         // The same numbers for the PC: over Wi-Fi there is no logcat.
-        char st[256];
+        char st[384];
         snprintf(st, sizeof(st),
                  "{\"type\":\"link_stats\",\"display\":%.1f,\"received\":%.1f,\"decoded\":%.1f,\"shown\":%.1f,"
+                 "\"repeats\":%.1f,\"dropped\":%.1f,\"buffer\":%d,\"wait_ms\":%.1f,\"wait_p95_ms\":%.1f,"
                  "\"reprojected\":%.0f}",
-                 xr_frames / s, rx / s, dec / s, shown / s, xr_frames ? 100.0f * app.reprojected / xr_frames : 0.0f);
+                 xr_frames / s, v.received / s, v.decoded / s, v.shown / s, v.repeats / s, v.dropped / s, v.buffer,
+                 v.wait_avg_ms, v.wait_p95_ms, rep);
         app.link_stats = st;
         app.reprojected = 0;
         xr_frames = 0;

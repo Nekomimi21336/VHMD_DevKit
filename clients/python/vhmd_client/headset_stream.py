@@ -104,10 +104,11 @@ class RtpDepacketizer:
 
 class VideoServer(threading.Thread):
     def __init__(self, port: int = VIDEO_PORT, bitrate_mbps: float = 30.0, fps: float = 90.0,
-                 encoder: str = "h264_amf", log=print, host: str = "127.0.0.1") -> None:
+                 encoder: str = "h264_amf", log=print, host: str = "127.0.0.1", buffer: int = 0) -> None:
         super().__init__(name="vhmd-video", daemon=True)
         self.port, self.bitrate, self.fps, self.encoder, self.log = port, bitrate_mbps, fps, encoder, log
         self.host = host
+        self.buffer = buffer   # images the headset holds back before showing (0 = newest)
         self.frames_in = self.frames_out = self.bytes_out = self.frames_dropped = 0
 
     def run(self) -> None:
@@ -145,7 +146,7 @@ class VideoServer(threading.Thread):
                 raise OSError("no preview frames (is the driver in direct mode?)")
             w, h = frame.width, frame.height
             config = {"codec": "h264", "width": w, "height": h, "eye_width": frame.eye_width, "fov": eye_fovs(),
-                      "pose": frame.pose is not None}
+                      "pose": frame.pose is not None, "buffer": self.buffer}
             self.send(conn, KIND_CONFIG, 0, json.dumps(config).encode())
             self.log(f"video: {w}x{h}, {self.encoder} {self.bitrate:g} Mbit/s, fov {config['fov'] is not None}")
 

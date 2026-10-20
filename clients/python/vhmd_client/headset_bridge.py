@@ -134,6 +134,8 @@ def main() -> None:
     ap.add_argument("--no-video", action="store_true", help="poses only, no video")
     ap.add_argument("--bitrate", type=float, default=30.0, help="video bitrate, Mbit/s")
     ap.add_argument("--encoder", default="h264_amf", help="ffmpeg H.264 encoder (h264_amf, h264_nvenc, libx264, ...)")
+    ap.add_argument("--buffer", type=int, default=0, choices=(0, 1, 2),
+                    help="frames the headset holds back: 0 = newest (lowest latency), 1 = smoother (+1 frame)")
     args = ap.parse_args()
 
     if not args.no_adb:
@@ -147,7 +149,7 @@ def main() -> None:
     host = "127.0.0.1" if args.usb_only else "0.0.0.0"
     video = None
     if not args.no_video:
-        video = VideoServer(host=host, bitrate_mbps=args.bitrate, encoder=args.encoder,
+        video = VideoServer(host=host, bitrate_mbps=args.bitrate, encoder=args.encoder, buffer=args.buffer,
                             log=lambda m: print(m, flush=True))
         video.start()
 
@@ -181,8 +183,9 @@ def main() -> None:
             h = stats.headset
             if h:
                 line += (f"  |  headset: received {h.get('received', 0):.0f} decoded {h.get('decoded', 0):.0f} "
-                         f"shown {h.get('shown', 0):.0f}/s at {h.get('display', 0):.0f} Hz, "
-                         f"{h.get('reprojected', 0):.0f}% reprojected")
+                         f"shown {h.get('shown', 0):.0f}/s at {h.get('display', 0):.0f} Hz "
+                         f"(repeats {h.get('repeats', 0):.0f}/s, buffer {h.get('buffer', 0)}, "
+                         f"wait {h.get('wait_ms', 0):.1f} ms), {h.get('reprojected', 0):.0f}% reprojected")
             if line:
                 print(line, flush=True)
 
