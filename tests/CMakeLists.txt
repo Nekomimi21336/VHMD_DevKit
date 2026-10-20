@@ -11,6 +11,18 @@ target_compile_options(vhmd_unit_tests PRIVATE ${VHMD_WARNINGS})
 target_compile_definitions(vhmd_unit_tests PRIVATE VHMD_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME unit COMMAND vhmd_unit_tests)
 
+if(WIN32)
+  # Hardware video encoding (D3D11 video processor + Media Foundation) without
+  # SteamVR: encodes a moving test pattern and checks what a client receives.
+  # Skipped (exit 77) when the machine has no hardware H.264 encoder.
+  add_executable(vhmd_stream_selftest
+    windows/stream_selftest.cpp
+    ${PROJECT_SOURCE_DIR}/driver/src/windows/stream_encoder.cpp)
+  target_link_libraries(vhmd_stream_selftest PRIVATE vhmd_core d3d11 dxgi mfplat mfuuid)
+  add_test(NAME stream_selftest COMMAND vhmd_stream_selftest)
+  set_tests_properties(stream_selftest PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
 if(UNIX AND NOT APPLE)
   # Direct-mode frame capture against a real Vulkan device (no SteamVR).
   # Skipped (exit 77) when no Vulkan driver is available.

@@ -200,6 +200,16 @@ ConfigLoadResult LoadConfigFromJson(std::string_view text) {
             Get(*p, "windowFps", c.preview.window_fps, w, "preview.");
             c.preview.window_fps = std::clamp(c.preview.window_fps, 1.0, 240.0);
         }
+        if (auto st = root.find("stream"); st != root.end() && st->is_object()) {
+            Get(*st, "enabled", c.preview.stream_enabled, w, "stream.");
+            int port = c.preview.stream_port;
+            Get(*st, "port", port, w, "stream.");
+            if (port < 1 || port > 65535) {
+                w.emplace_back("stream.port: out of range");
+                port = 39583;
+            }
+            c.preview.stream_port = static_cast<uint16_t>(port);
+        }
         if (auto t = root.find("timeout"); t != root.end() && t->is_object()) {
             Get(*t, "ms", c.timeout_ms, w, "timeout.");
             c.timeout_ms = std::max(c.timeout_ms, 1.0);

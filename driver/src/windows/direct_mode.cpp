@@ -93,6 +93,10 @@ struct DirectModeComponent::Impl {
     // Shared-memory readback (2 staging textures, mapped by the readback thread).
     ComPtr<ID3D11Texture2D> staging[2];
     float staging_pose[2][7] = {};   // render pose of what each staging texture holds
+    // Video for VHMD Link: both eyes side by side, UNORM so the video processor takes it.
+    ComPtr<ID3D11Texture2D> stream_src;
+    uint32_t stream_w = 0, stream_h = 0;
+    DXGI_FORMAT stream_fmt = DXGI_FORMAT_UNKNOWN;
     bool staging_pose_ok[2] = {};
     int staging_pending = -1; // index waiting to be read back, -1 = none (guarded by mu)
     uint32_t staging_w = 0, staging_h = 0;
@@ -141,8 +145,14 @@ bool DirectModeComponent::Init(std::string& error) {
     adapter->GetDesc1(&ad);
     adapter_luid_ = (uint64_t(uint32_t(ad.AdapterLuid.HighPart)) << 32) | ad.AdapterLuid.LowPart;
     const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
-    HRESULT hr = D3D11CreateDevice(adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels,
+    // Video support: the stream encoder's video processor needs it; retried without
+    // for adapters that do not offer it (the stream is then unavailable).
+    HRESULT hr = D3D11CreateDevice(adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr,
+                                   D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT, levels,
                                    UINT(std::size(levels)), D3D11_SDK_VERSION, &impl_->device, nullptr, &impl_->ctx);
+    if (FAILED(hr))
+        hr = D3D11CreateDevice(adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels,
+                               UINT(std::size(levels)), D3D11_SDK_VERSION, &impl_->device, nullptr, &impl_->ctx);
     if (FAILED(hr)) return error = "D3D11CreateDevice failed (" + std::to_string(hr) + ")", false;
     // The compositor thread, the window thread and the readback thread share the context.
     ComPtr<ID3D11Multithread> mt;
@@ -150,11 +160,16 @@ bool DirectModeComponent::Init(std::string& error) {
     char name[128] = {};
     WideCharToMultiByte(CP_UTF8, 0, ad.Description, -1, name, sizeof(name) - 1, nullptr, nullptr);
     Log(LogLevel::Info, "direct mode: D3D11 on adapter %u '%s'", index, name);
+    if (capture_.stream.enabled) {
+        stream_ = std::make_unique<StreamEncoder>(impl_->device.Get(), impl_->ctx.Get(), adapter_luid_, capture_.stream);
+        stream_->SetRefreshRate(refresh_hz_);
+    }
     return true;
 }
 
 void DirectModeComponent::Start() {
     if (running_.exchange(true)) return;
+    if (stream_) stream_->Start();
     vsync_thread_ = std::thread(&DirectModeComponent::VsyncLoop, this);
     window_thread_ = std::thread(&DirectModeComponent::WindowLoop, this);
     readback_thread_ = std::thread(&DirectModeComponent::ReadbackLoop, this);
@@ -162,6 +177,7 @@ void DirectModeComponent::Start() {
 }
 
 void DirectModeComponent::Stop() {
+    if (stream_) stream_->Stop();
     if (!running_.exchange(false)) return;
     vsync_cv_.notify_all();
     impl_->readback_cv.notify_all();
@@ -360,7 +376,8 @@ void DirectModeComponent::CopyPreview(const SubmitLayerPerEye_t (&layer)[2]) {
     };
     const bool want_shm = preview_active_ && due(impl_->next_shm, capture_.fps);
     const bool want_win = window_visible_ && due(impl_->next_win, window_fps_);
-    if (!want_shm && !want_win) return; // nobody is looking: no GPU work at all
+    const bool want_stream = stream_ && stream_->Wanted();   // every frame, at the display rate
+    if (!want_shm && !want_win && !want_stream) return; // nobody is looking: no GPU work at all
 
     std::unique_lock<std::mutex> lock(impl_->mu);
     auto l = impl_->textures.find(layer[0].hTexture), r = impl_->textures.find(layer[1].hTexture);
@@ -379,6 +396,44 @@ void DirectModeComponent::CopyPreview(const SubmitLayerPerEye_t (&layer)[2]) {
     const uint32_t y1 = uint32_t(std::max(b.vMin, b.vMax) * float(ed.Height));
     const uint32_t ew = std::max(1u, x1 - x0), eh = std::max(1u, y1 - y0);
     const DXGI_FORMAT fmt = Typed(ed.Format);
+
+    if (want_stream) {
+        // Both eyes into one UNORM texture (same bits: the values stay sRGB encoded)
+        // for the encoder's video processor.
+        const DXGI_FORMAT sf = IsBgra(ed.Format) ? DXGI_FORMAT_B8G8R8A8_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM;
+        if (!impl_->stream_src || impl_->stream_w != ew * 2 || impl_->stream_h != eh || impl_->stream_fmt != sf) {
+            D3D11_TEXTURE2D_DESC st{};
+            st.Width = ew * 2;
+            st.Height = eh;
+            st.MipLevels = 1;
+            st.ArraySize = 1;
+            st.Format = sf;
+            st.SampleDesc.Count = 1;
+            st.Usage = D3D11_USAGE_DEFAULT;
+            st.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+            impl_->stream_src.Reset();
+            if (SUCCEEDED(impl_->device->CreateTexture2D(&st, nullptr, &impl_->stream_src))) {
+                impl_->stream_w = ew * 2;
+                impl_->stream_h = eh;
+                impl_->stream_fmt = sf;
+            }
+        }
+        if (impl_->stream_src) {
+            const D3D11_BOX lbox{x0, y0, 0, x0 + ew, y0 + eh, 1};
+            impl_->ctx->CopySubresourceRegion(impl_->stream_src.Get(), 0, 0, 0, 0, l->second.tex.Get(), 0, &lbox);
+            const auto& sb = layer[1].bounds;
+            D3D11_TEXTURE2D_DESC sd{};
+            r->second.tex->GetDesc(&sd);
+            const uint32_t sx0 = uint32_t(std::min(sb.uMin, sb.uMax) * float(sd.Width));
+            const uint32_t sy0 = uint32_t(std::min(sb.vMin, sb.vMax) * float(sd.Height));
+            const D3D11_BOX rbox{sx0, sy0, 0, std::min(sx0 + ew, sd.Width), std::min(sy0 + eh, sd.Height), 1};
+            impl_->ctx->CopySubresourceRegion(impl_->stream_src.Get(), 0, ew, 0, 0, r->second.tex.Get(), 0, &rbox);
+            float pose[7];
+            const bool pose_ok = PoseFromMatrix(layer[0].mHmdPose, pose);
+            stream_->Submit(impl_->stream_src.Get(), ew, eh, pose_ok ? pose : nullptr);
+        }
+    }
+    if (!want_shm && !want_win) return;
 
     if (!impl_->atlas || impl_->atlas_w != ew * 2 || impl_->atlas_h != eh || impl_->atlas_format != fmt) {
         D3D11_TEXTURE2D_DESC ad{};
@@ -485,6 +540,7 @@ DirectModeStats DirectModeComponent::Stats() const {
     }
     s.window_visible = window_visible_;
     s.window_frames = impl_->window_frames;
+    if (stream_) s.stream = stream_->Stats();
     return s;
 }
 

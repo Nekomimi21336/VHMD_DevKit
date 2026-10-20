@@ -37,6 +37,10 @@
     "vulkanDevice": -1,     // Vulkan physical device index; -1 = first (must be the GPU SteamVR uses)
     "autoStart": false      // false = capture only while a tool asks ({"op":"preview","mode":"on"}; preview_viewer.py does)
   },
+  // Windows direct mode: hardware-encoded video (H.264 / HEVC) of the eye images for
+  // the VHMD Link headset app, on 127.0.0.1:port (headset_bridge forwards it).
+  // Encodes only while a client is connected.
+  "stream": { "enabled": true, "port": 39583 },
   "vmt": {
     "enabled": false,      // accept VMT compatible OSC on the same port
     "indexMap": { }        // e.g. { "0": "tracker_0", "1": "left_hand" }

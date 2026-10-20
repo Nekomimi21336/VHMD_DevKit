@@ -1,6 +1,10 @@
-"""Video for the VHMD Link headset app: VHMD's eye images (the direct-mode
-preview in shared memory, both eyes side by side) encoded to H.264 by ffmpeg
-with the GPU's encoder and sent to the headset over TCP.
+"""Video for the VHMD Link headset app, sent to the headset over TCP.
+
+Preferred source: the driver's own hardware encoder (Windows direct mode,
+127.0.0.1:39583, see driver/src/windows/stream_encoder.h): GPU textures are
+encoded inside the driver and the messages below arrive ready to forward.
+Fallback (older driver, Linux): VHMD's eye images from the direct-mode preview
+in shared memory, encoded to H.264 by ffmpeg with the GPU's encoder.
 
 ffmpeg sends RTP to a local UDP port: the RTP marker bit tells exactly where
 each frame ends, so a frame goes out as soon as it is encoded (Annex B access
@@ -37,6 +41,7 @@ from .client import VHMDClient
 from .preview import PreviewReader
 
 VIDEO_PORT = 39581
+DRIVER_STREAM_PORT = 39583
 HEADER = struct.Struct("<4sIIIQQ7fI")
 assert HEADER.size == 64
 KIND_CONFIG, KIND_FRAME = 1, 2
@@ -104,11 +109,15 @@ class RtpDepacketizer:
 
 class VideoServer(threading.Thread):
     def __init__(self, port: int = VIDEO_PORT, bitrate_mbps: float = 30.0, fps: float = 90.0,
-                 encoder: str = "h264_amf", log=print, host: str = "127.0.0.1", buffer: int = 0) -> None:
+                 encoder: str = "h264_amf", log=print, host: str = "127.0.0.1", buffer: int = 0,
+                 codec: str = "hevc", eye_width: int = 0, source: str = "auto") -> None:
         super().__init__(name="vhmd-video", daemon=True)
         self.port, self.bitrate, self.fps, self.encoder, self.log = port, bitrate_mbps, fps, encoder, log
         self.host = host
         self.buffer = buffer   # images the headset holds back before showing (0 = newest)
+        self.codec = codec     # driver encoder: "hevc" or "h264" (the ffmpeg fallback is always H.264)
+        self.eye_width = eye_width   # 0: the headset's own (headset.json), else the source's
+        self.source = source   # "auto" (driver, else ffmpeg), "driver", "ffmpeg"
         self.frames_in = self.frames_out = self.bytes_out = self.frames_dropped = 0
 
     def run(self) -> None:
@@ -128,6 +137,59 @@ class VideoServer(threading.Thread):
                 conn.close()
 
     def stream(self, conn: socket.socket) -> None:
+        if self.source in ("auto", "driver"):
+            try:
+                drv = socket.create_connection(("127.0.0.1", DRIVER_STREAM_PORT), timeout=1.0)
+            except OSError:
+                drv = None
+                if self.source == "driver":
+                    raise OSError(f"the driver's encoder is not on 127.0.0.1:{DRIVER_STREAM_PORT}")
+            if drv:
+                return self.relay(conn, drv)
+        return self.stream_ffmpeg(conn)
+
+    def relay(self, conn: socket.socket, drv: socket.socket) -> None:
+        """The driver encodes; forward its messages as they are."""
+        from . import headset_info
+        eye = self.eye_width
+        if not eye:
+            info = headset_info.load()
+            eye = int(info["render"][0]) if info else 0
+        settings = {"bitrate_mbps": self.bitrate, "codec": self.codec, "eye_width": eye, "buffer": self.buffer}
+        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 << 20)
+        drv.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        drv.settimeout(None)
+        drv.sendall((json.dumps(settings) + "\n").encode())
+        self.log(f"video: from the driver's encoder ({json.dumps(settings)})")
+
+        def recvn(n: int) -> bytes:
+            b = bytearray()
+            while len(b) < n:
+                c = drv.recv(n - len(b))
+                if not c:
+                    raise OSError("the driver closed the stream")
+                b += c
+            return bytes(b)
+
+        try:
+            while True:
+                hdr = recvn(HEADER.size)
+                magic, kind, size, *_ = HEADER.unpack(hdr)
+                if magic != b"VHV1":
+                    raise ValueError("bad stream framing from the driver")
+                payload = recvn(size)
+                if kind == KIND_CONFIG:
+                    self.log(f"video: {payload.decode(errors='replace')}")
+                conn.sendall(hdr + payload)
+                if kind == KIND_FRAME:
+                    self.frames_in += 1
+                    self.frames_out += 1
+                    self.bytes_out += size
+        finally:
+            drv.close()
+
+    def stream_ffmpeg(self, conn: socket.socket) -> None:
         if not shutil.which("ffmpeg"):
             raise OSError("ffmpeg not found on PATH")
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)

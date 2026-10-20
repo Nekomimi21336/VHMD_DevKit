@@ -380,12 +380,16 @@ PFNGLEGLIMAGETARGETTEXTURE2DOESPROC pGlEglImageTargetTexture2D = nullptr;
 
 class Video {
 public:
-    void Start() { thread_ = std::thread([this] { Run(); }); }
+    void Start() {
+        thread_ = std::thread([this] { Run(); });
+        drain_thread_ = std::thread([this] { DrainLoop(); });
+    }
     void Stop() {
         stop_ = true;
         int fd = fd_.exchange(-1);
         if (fd >= 0) shutdown(fd, SHUT_RDWR);
         if (thread_.joinable()) thread_.join();
+        if (drain_thread_.joinable()) drain_thread_.join();
         if (codec_) {
             AMediaCodec_stop(codec_);
             AMediaCodec_delete(codec_);
@@ -477,12 +481,13 @@ public:
     XrFovf Fov(int eye) const { return fov_[eye]; }
     bool Connected() const { return fd_.load() >= 0; }
     struct Stats {
-        int received, decoded, shown, repeats, dropped, buffer;
+        int received, decoded, shown, repeats, dropped, buffer, rx_close, dec_close;
         float wait_avg_ms, wait_p95_ms;   // decoded image waiting before it is shown
     };
     Stats TakeStats() {
         std::lock_guard<std::mutex> l(queue_mu_);
-        Stats s{received_.exchange(0), decoded_.exchange(0), shown_, repeats_, dropped_, buffer_.load(), 0, 0};
+        Stats s{received_.exchange(0), decoded_.exchange(0), shown_, repeats_, dropped_, buffer_.load(),
+                rx_close_.exchange(0), dec_close_.exchange(0), 0, 0};
         if (!waits_ms_.empty()) {
             float sum = 0;
             for (float w : waits_ms_) sum += w;
@@ -536,9 +541,9 @@ private:
                     Configure(std::string(payload.begin(), payload.end()));
                 else if (h.kind == kKindFrame && codec_) {
                     RememberPose(h);
+                    NoteGap(last_rx_, rx_close_);
                     Feed(payload, h.frame_index);
                 }
-                Drain();
             }
             LOGI("video: disconnected");
             int old = fd_.exchange(-1);
@@ -564,10 +569,18 @@ private:
         f.pose.orientation = {h.pose[4], h.pose[5], h.pose[6], h.pose[3]};
     }
 
+    // Arrivals closer than a third of a frame (two at once): counts bunching.
+    static void NoteGap(std::chrono::steady_clock::time_point& last, std::atomic<int>& close) {
+        const auto t = std::chrono::steady_clock::now();
+        if (t - last < std::chrono::milliseconds(4)) ++close;
+        last = t;
+    }
+
     // Reader thread: a decoded image is ready.
     void OnImage(AImageReader* r) {
         AImage* in = nullptr;
         if (AImageReader_acquireNextImage(r, &in) != AMEDIA_OK || !in) return;
+        NoteGap(last_dec_, dec_close_);
         std::lock_guard<std::mutex> l(queue_mu_);
         queue_.push_back({in, std::chrono::steady_clock::now()});
         while (queue_.size() > 4) {   // the render loop is not taking them: keep the newest
@@ -613,8 +626,11 @@ private:
                 has_fov_ = true;
             }
         }
-        LOGI("video: config %.0fx%.0f, fov %s, buffer %d", w, h, has_fov_ ? "from the PC" : "own", buffer_.load());
-        if (codec_ && w == width_ && h == height_) return;   // same stream shape: keep the decoder
+        const std::string mime = json.find("\"codec\":\"hevc\"") != std::string::npos ? "video/hevc" : "video/avc";
+        LOGI("video: config %s %.0fx%.0f, fov %s, buffer %d", mime.c_str(), w, h, has_fov_ ? "from the PC" : "own",
+             buffer_.load());
+        if (codec_ && w == width_ && h == height_ && mime == mime_) return;   // same stream: keep the decoder
+        std::lock_guard<std::mutex> cl(codec_mu_);   // the drain thread uses codec_
         if (codec_) {
             AMediaCodec_stop(codec_);
             AMediaCodec_delete(codec_);
@@ -637,9 +653,14 @@ private:
         }
         ANativeWindow* window = nullptr;
         AImageReader_getWindow(reader, &window);
-        codec_ = AMediaCodec_createDecoderByType("video/avc");
+        mime_ = mime;
+        codec_ = AMediaCodec_createDecoderByType(mime.c_str());
+        if (!codec_) {
+            LOGE("video: no %s decoder", mime.c_str());
+            return;
+        }
         AMediaFormat* f = AMediaFormat_new();
-        AMediaFormat_setString(f, AMEDIAFORMAT_KEY_MIME, "video/avc");
+        AMediaFormat_setString(f, AMEDIAFORMAT_KEY_MIME, mime.c_str());
         AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_WIDTH, width_);
         AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_HEIGHT, height_);
         AMediaFormat_setInt32(f, "low-latency", 1);
@@ -653,7 +674,7 @@ private:
             codec_ = nullptr;
             return;
         }
-        LOGI("video: H.264 decoder started");
+        LOGI("video: %s decoder started", mime_.c_str());
     }
 
     void Feed(const std::vector<uint8_t>& au, uint64_t index) {
@@ -667,31 +688,40 @@ private:
         ++received_;
     }
 
-    void Drain() {
-        if (!codec_) return;
-        for (;;) {
+    // Own thread: each decoded frame goes to the reader the moment it is ready.
+    // (Draining right after feeding the next frame held every late frame back by
+    // one, and frames came out in pairs.) MediaCodec allows input and output on
+    // different threads; codec_mu_ only guards against Configure replacing it.
+    void DrainLoop() {
+        while (!stop_) {
+            std::unique_lock<std::mutex> cl(codec_mu_);
+            if (!codec_) {
+                cl.unlock();
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                continue;
+            }
             AMediaCodecBufferInfo info;
-            ssize_t o = AMediaCodec_dequeueOutputBuffer(codec_, &info, 0);
+            const ssize_t o = AMediaCodec_dequeueOutputBuffer(codec_, &info, 2000);
             if (o >= 0) {
                 AMediaCodec_releaseOutputBuffer(codec_, static_cast<size_t>(o), true);
                 ++decoded_;
-            } else if (o == AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED || o == AMEDIACODEC_INFO_OUTPUT_BUFFERS_CHANGED) {
-                continue;
-            } else {
-                break;
             }
         }
     }
 
-    std::thread thread_;
+    std::thread thread_, drain_thread_;
+    std::mutex codec_mu_;
     std::atomic<bool> stop_{false};
     std::atomic<int> fd_{-1};
     std::atomic<AImageReader*> reader_{nullptr};
     AMediaCodec* codec_ = nullptr;
     int width_ = 0, height_ = 0;
+    std::string mime_;
     XrFovf fov_[2] = {};
     std::atomic<bool> has_fov_{false};
     std::atomic<int> received_{0}, decoded_{0};
+    std::chrono::steady_clock::time_point last_rx_{}, last_dec_{};
+    std::atomic<int> rx_close_{0}, dec_close_{0};
     int shown_ = 0;
     std::mutex pose_mu_;
     FrameRec poses_[kPoseRing];
@@ -1361,9 +1391,9 @@ void Frame(App& app) {
         const float s = std::chrono::duration<float>(now - last_log).count();
         const float rep = xr_frames ? 100.0f * app.reprojected / xr_frames : 0.0f;
         LOGI("frames %.0f/s, video received %.0f/s decoded %.0f/s shown %.0f/s (repeats %.0f/s, dropped %.0f/s, "
-             "buffer %d, wait %.1f ms avg %.1f p95), at render pose %.0f%%",
+             "buffer %d, wait %.1f ms avg %.1f p95), at render pose %.0f%%, bunched: received %.0f/s decoded %.0f/s",
              xr_frames / s, v.received / s, v.decoded / s, v.shown / s, v.repeats / s, v.dropped / s, v.buffer,
-             v.wait_avg_ms, v.wait_p95_ms, rep);
+             v.wait_avg_ms, v.wait_p95_ms, rep, v.rx_close / s, v.dec_close / s);
         // The same numbers for the PC: over Wi-Fi there is no logcat.
         char st[384];
         snprintf(st, sizeof(st),

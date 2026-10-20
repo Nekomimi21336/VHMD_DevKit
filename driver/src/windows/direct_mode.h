@@ -21,6 +21,8 @@
 
 #include <openvr_driver.h>
 
+#include "windows/stream_encoder.h"
+
 namespace vhmd {
 
 struct CaptureSettings {
@@ -30,6 +32,7 @@ struct CaptureSettings {
     uint32_t max_eye_width = 960;
     int vulkan_device = -1;            // here: DXGI adapter index, -1 = default adapter
     bool start_active = false;
+    StreamSettings stream;             // hardware-encoded video for VHMD Link
 };
 
 struct CaptureStats {
@@ -50,6 +53,7 @@ struct DirectModeStats {
     CaptureStats capture;
     bool window_visible = false;
     uint64_t window_frames = 0;
+    StreamStats stream;
 };
 
 class DirectModeComponent : public vr::IVRDriverDirectModeComponent {
@@ -76,7 +80,10 @@ public:
 
     DirectModeStats Stats() const;
     // Changes the vsync clock (frame rate) while running.
-    void SetRefreshRate(double hz) { refresh_hz_ = hz; }
+    void SetRefreshRate(double hz) {
+        refresh_hz_ = hz;
+        if (stream_) stream_->SetRefreshRate(hz);
+    }
     double RefreshRate() const { return refresh_hz_; }
     void SetPreviewActive(bool active);
     void SetWindowVisible(bool visible);
@@ -93,6 +100,7 @@ private:
     double window_fps_;
     uint64_t adapter_luid_ = 0;
     std::unique_ptr<Impl> impl_;
+    std::unique_ptr<StreamEncoder> stream_;
 
     mutable std::mutex mu_;
     DirectModeStats stats_;

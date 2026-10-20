@@ -132,8 +132,12 @@ def main() -> None:
     ap.add_argument("--no-adb", action="store_true", help="do not run adb reverse")
     ap.add_argument("--usb-only", action="store_true", help="listen on 127.0.0.1 only (adb reverse), no network")
     ap.add_argument("--no-video", action="store_true", help="poses only, no video")
-    ap.add_argument("--bitrate", type=float, default=30.0, help="video bitrate, Mbit/s")
-    ap.add_argument("--encoder", default="h264_amf", help="ffmpeg H.264 encoder (h264_amf, h264_nvenc, libx264, ...)")
+    ap.add_argument("--bitrate", type=float, default=40.0, help="video bitrate, Mbit/s")
+    ap.add_argument("--codec", default="hevc", choices=("hevc", "h264"), help="codec of the driver's encoder")
+    ap.add_argument("--eye-width", type=int, default=0, help="video width per eye (default: the headset's)")
+    ap.add_argument("--video-source", default="auto", choices=("auto", "driver", "ffmpeg"),
+                    help="auto: the driver's hardware encoder if it runs, else ffmpeg on the preview")
+    ap.add_argument("--encoder", default="h264_amf", help="ffmpeg fallback: H.264 encoder (h264_amf, h264_nvenc, ...)")
     ap.add_argument("--buffer", type=int, default=0, choices=(0, 1, 2),
                     help="frames the headset holds back: 0 = newest (lowest latency), 1 = smoother (+1 frame)")
     args = ap.parse_args()
@@ -150,6 +154,7 @@ def main() -> None:
     video = None
     if not args.no_video:
         video = VideoServer(host=host, bitrate_mbps=args.bitrate, encoder=args.encoder, buffer=args.buffer,
+                            codec=args.codec, eye_width=args.eye_width, source=args.video_source,
                             log=lambda m: print(m, flush=True))
         video.start()
 

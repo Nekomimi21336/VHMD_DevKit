@@ -152,6 +152,15 @@ HmdDevice::HmdDevice(std::shared_ptr<DeviceState> state, const DisplayConfig& di
         cs.vulkan_device = preview.vulkan_device;
         cs.start_active = preview.auto_start;
 #if defined(VHMD_WINDOWS_DIRECT_MODE)
+        cs.stream.enabled = preview.stream_enabled;
+        cs.stream.port = preview.stream_port;
+        // The fields of view VHMD renders with, as OpenXR angles, for the headset.
+        for (int e = 0; e < 2; ++e) {
+            const float* t = display.eye_tan[e];
+            const float half = display.fov_deg * 0.5f * 3.14159265f / 180.0f;
+            for (int i = 0; i < 4; ++i)
+                cs.stream.fov[e][i] = t[0] != 0.0f ? std::atan(t[i]) : (i == 0 || i == 3 ? -half : half);
+        }
         direct_ = std::make_unique<DirectModeComponent>(display.display_frequency, cs, preview_window, preview.window_fps);
         std::string err;
         if (!direct_->Init(err)) {
@@ -237,6 +246,11 @@ std::string HmdDevice::DisplayStatusJson() const {
         if (!s.last_error.empty()) j["error"] = s.last_error;
 #if defined(VHMD_WINDOWS_DIRECT_MODE)
         j["preview_window"] = {{"visible", s.window_visible}, {"frames", s.window_frames}};
+        j["stream"] = {{"client", s.stream.client},    {"state", s.stream.state},
+                       {"encoder", s.stream.encoder},  {"width", s.stream.width},
+                       {"height", s.stream.height},    {"submitted", s.stream.submitted},
+                       {"encoded", s.stream.encoded},  {"dropped", s.stream.dropped},
+                       {"bytes", s.stream.bytes}};
 #endif
         j["preview"] = {{"state", s.capture.state},
                         {"submitted", s.capture.submitted},

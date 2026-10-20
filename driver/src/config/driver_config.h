@@ -63,6 +63,10 @@ struct PreviewConfig {
     // Capture only while a tool asks for it (config op "preview"), unless set.
     bool auto_start = false;
     double window_fps = 30.0; // Windows direct mode: refresh rate of the preview window
+    // Windows direct mode: hardware-encoded video for VHMD Link on 127.0.0.1:stream_port
+    // (config section "stream"), encoding only while a client is connected.
+    bool stream_enabled = true;
+    uint16_t stream_port = 39583;
 };
 
 struct DriverConfig {
