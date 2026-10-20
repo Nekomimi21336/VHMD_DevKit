@@ -235,6 +235,23 @@ def main() -> int:
         rep.check("own controller types (no impersonation)",
                   all(d["controller_type"].startswith("vhmd_") for d in vh.values()),
                   str(sorted({d["controller_type"] for d in vh.values()})))
+
+        # All vhmd devices share one tracking universe with a driver-provided
+        # chaperone. Without it the seated zero pose is an all-zero matrix and
+        # OpenXR's LOCAL space comes out upside down.
+        universes = set()
+        for d in vh.values():
+            try:
+                universes.add(system.getUint64TrackedDeviceProperty(d["index"], openvr.Prop_CurrentUniverseId_Uint64))
+            except openvr.OpenVRError:
+                universes.add(None)
+        seated_ok, seated = openvr.VRChaperoneSetup().getLiveSeatedZeroPoseToRawTrackingPose()
+        identity = all(abs(seated.m[r][c] - (1.0 if r == c else 0.0)) < 1e-6 for r in range(3) for c in range(4))
+        calib = openvr.VRChaperone().getCalibrationState()
+        rep.check("tracking universe set and calibrated (seated zero = identity)",
+                  len(universes) == 1 and None not in universes and seated_ok and identity
+                  and calib == openvr.ChaperoneCalibrationState_OK,
+                  f"universe {[hex(u) if u is not None else None for u in universes]}, calibration state {calib}")
         idx_by_id = {d["id"]: d["index"] for d in status["devices"] if d["index"] >= 0}
 
         # --- 3. pose round trip ----------------------------------------------

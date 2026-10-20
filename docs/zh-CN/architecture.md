@@ -110,6 +110,7 @@
 | 控制器类型 | `vhmd_hmd`, `vhmd_controller`, `vhmd_tracker`(自有类型，不使用其他厂商名称) |
 | 制造商名 | `VirtualHMD (development)` |
 | 追踪系统名 | `vhmd` |
+| 追踪宇宙(universe) | `0x56484D44`(所有设备共用)。HMD 提供驱动自带的 chaperone(坐姿与站姿原点均在原点，2 × 2 m，边界不显示) |
 | 序列号 | `VHMD-HMD-0`、`VHMD-CTL-L/R`、`VHMD-HAND-L/R`(手部模式)、`VHMD-TRK-0`〜 |
 | 渲染模型 | HMD 使用 SteamVR 自带的 `generic_hmd`。控制器和追踪器使用驱动在启动时生成的带标签模型(`resources/rendermodels/vhmd_<serial>_<label>/`，含指尖等部件)。无法生成时使用 `{vhmd}vhmd_controller` / `generic_tracker` |
 | 状态图标 | 控制器、追踪器使用带简短标记的图标(`resources/icons/labels/`，启动时生成) |

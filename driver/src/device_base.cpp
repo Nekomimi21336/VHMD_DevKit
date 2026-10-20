@@ -147,6 +147,7 @@ void VirtualDevice::SetCommonProperties(vr::PropertyContainerHandle_t c, const c
     p->SetStringProperty(c, vr::Prop_ModelNumber_String, model);
     p->SetStringProperty(c, vr::Prop_ManufacturerName_String, "VirtualHMD (development)");
     p->SetStringProperty(c, vr::Prop_TrackingSystemName_String, "vhmd");
+    p->SetUint64Property(c, vr::Prop_CurrentUniverseId_Uint64, kUniverseId);
     p->SetStringProperty(c, vr::Prop_SerialNumber_String, Serial().c_str());
     p->SetStringProperty(c, vr::Prop_RenderModelName_String, render_model);
     p->SetStringProperty(c, vr::Prop_RegisteredDeviceType_String, ("vhmd/" + Serial()).c_str());

@@ -3,8 +3,9 @@
 Opens a headless OpenXR session (XR_MND_headless, no graphics) on SteamVR's
 own OpenXR loader, binds a pose action to XR_EXT_eye_gaze_interaction
 (/user/eyes_ext/input/gaze_ext/pose) and locates it in VIEW and STAGE space
-while gaze messages are sent to the driver. Plain ctypes, so no extra Python
-package is needed. Prints one JSON line: {"results": [...], "info": {...}}.
+while gaze messages are sent to the driver. Also checks that the head pose in
+LOCAL space matches STAGE (the vhmd universe is calibrated at identity).
+Plain ctypes, so no extra Python package is needed. Prints one JSON line: {"results": [...], "info": {...}}.
 
     python tests/integration/openxr_eye_check.py [--port 39570]
 """
@@ -93,7 +94,7 @@ TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING, TYPE_ACTION_STATE_GET_INFO = 51, 58
 TYPE_SESSION_ACTION_SETS_ATTACH_INFO, TYPE_ACTIONS_SYNC_INFO = 60, 61
 TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT = 1000030000
 FORM_FACTOR_HMD, ACTION_TYPE_POSE, VIEW_CONFIG_STEREO = 1, 4, 2
-SPACE_VIEW, SPACE_STAGE = 1, 3
+SPACE_VIEW, SPACE_LOCAL, SPACE_STAGE = 1, 2, 3
 STATE_READY, STATE_SYNCHRONIZED, STATE_FOCUSED = 2, 3, 5
 LOCATION_VALID = 0x1 | 0x2      # orientation + position valid
 LOCATION_TRACKED = 0x4 | 0x8    # orientation + position tracked
@@ -182,7 +183,7 @@ class EyeGazeSession:
                                                                       self.action.value, 0, IDENTITY)),
                                        byref(self.gaze_space)), "xrCreateActionSpace")
         self.spaces = {}
-        for name, kind in (("view", SPACE_VIEW), ("stage", SPACE_STAGE)):
+        for name, kind in (("view", SPACE_VIEW), ("local", SPACE_LOCAL), ("stage", SPACE_STAGE)):
             s = H()
             self.ok(xr.xrCreateReferenceSpace(self.sess, byref(RefSpaceCI(TYPE_REFERENCE_SPACE_CREATE_INFO, None, kind,
                                                                           IDENTITY)), byref(s)), "xrCreateReferenceSpace")
@@ -231,9 +232,10 @@ class EyeGazeSession:
                                      byref(st))
         return bool(st.isActive)
 
-    def locate(self, base):
+    def locate(self, base, space=None):
         loc = SpaceLoc(TYPE_SPACE_LOCATION, None, 0)
-        r = self.xr.xrLocateSpace(self.gaze_space, self.spaces[base], self.now(), byref(loc))
+        space = self.gaze_space if space is None else self.spaces[space]
+        r = self.xr.xrLocateSpace(space, self.spaces[base], self.now(), byref(loc))
         q, p = loc.pose.orientation, loc.pose.position
         return r, loc.locationFlags, (p.x, p.y, p.z), (q.w, q.x, q.y, q.z)
 
@@ -278,6 +280,23 @@ def main() -> int:
                         "ok": xr.state == STATE_FOCUSED and xr.gaze_active(), "detail": f"session state {xr.state}"})
 
         tracked = LOCATION_VALID | LOCATION_TRACKED
+
+        # Head pose in LOCAL vs STAGE: equal while the seated zero pose is at
+        # the origin (an uncalibrated universe turned LOCAL upside down).
+        head_pos, head_rot = (1.0, 1.6, 2.0), math3d.from_euler(yaw=90)
+        t1 = time.perf_counter()
+        while time.perf_counter() - t1 < 1.0:
+            client.pose("hmd", head_pos, head_rot)
+            xr.sync()
+            time.sleep(0.02)
+        _, _, lp, lq = xr.locate("local", space="view")
+        _, _, sp, sq = xr.locate("stage", space="view")
+        up_local, up_stage = math3d.rotate(lq, (0, 1, 0)), math3d.rotate(sq, (0, 1, 0))
+        results.append({"name": "OpenXR: head pose in LOCAL space matches STAGE (upright, same origin)",
+                        "ok": dist(lp, sp) < TOL_M and dist(up_local, up_stage) < 0.002 and dist(sp, head_pos) < TOL_M,
+                        "detail": f"local pos {tuple(round(x, 3) for x in lp)} up {tuple(round(x, 2) for x in up_local)}, "
+                                  f"stage pos {tuple(round(x, 3) for x in sp)} up {tuple(round(x, 2) for x in up_stage)}"})
+
         for label, pos, rot, origin, target in CASES:
             # Gaze pose: position = origin, -Z = direction to the target.
             want_dir_view = normalize(tuple(t - o for t, o in zip(target, origin)))

@@ -2,8 +2,11 @@
 
 ## 未リリース
 
+### 修正
+- OpenXR の LOCAL / LOCAL_FLOOR 空間で HMD が上下逆さまになる問題。vhmd のデバイスにトラッキングユニバースが無く、SteamVR の着座原点が全ゼロの行列になっていた。全デバイスにユニバース ID を設定し、HMD がドライバ提供のチャペロン(原点 = 原点、境界は非表示)を渡すようにした。
+
 ### テスト
-- 視線がアプリまで届くことを確認する統合テストを追加: OpenVR(`IVRInput` の視線取得、`eye_check.py`)と OpenXR(`XR_EXT_eye_gaze_interaction`、描画なしのセッション、`openxr_eye_check.py`)。統合テストは 42 項目に。
+- 視線がアプリまで届くことを確認する統合テストを追加: OpenVR(`IVRInput` の視線取得、`eye_check.py`)と OpenXR(`XR_EXT_eye_gaze_interaction`、描画なしのセッション、`openxr_eye_check.py`)。統合テストは 44 項目に(ユニバースと較正、OpenXR の LOCAL 空間の確認を含む)。
 
 ### ドキュメント
 - 視線の座標空間を確定: ドライバに渡す origin / target は HMD ローカル空間(SteamVR が HMD の姿勢を掛けてアプリに渡す)。

@@ -34,6 +34,25 @@ float GetFloat(const char* key, float fallback) {
     return err == vr::VRSettingsError_None && std::isfinite(v) ? v : fallback;
 }
 
+// Same layout as Steam/config/chaperone_info.vrchap: a 2 x 2 m play area
+// around the origin, seated and standing zero poses at identity.
+std::string ChaperoneJson(uint64_t universe) {
+    using nlohmann::json;
+    const double h = 1.0, top = 2.5;
+    auto wall = [&](double x0, double z0, double x1, double z1) {
+        return json::array({{x0, 0.0, z0}, {x0, top, z0}, {x1, top, z1}, {x1, 0.0, z1}});
+    };
+    const json zero = {{"translation", {0.0, 0.0, 0.0}}, {"yaw", 0.0}};
+    json u = {
+        {"universeID", std::to_string(universe)},
+        {"play_area", {2 * h, 2 * h}},
+        {"collision_bounds", {wall(-h, -h, -h, h), wall(-h, h, h, h), wall(h, h, h, -h), wall(h, -h, -h, -h)}},
+        {"seated", zero},
+        {"standing", zero},
+    };
+    return json{{"jsonid", "chaperone_info"}, {"version", 5}, {"universes", json::array({u})}}.dump();
+}
+
 } // namespace
 
 DisplayConfig DisplayConfig::FromSettings() {
@@ -252,6 +271,12 @@ void HmdDevice::OnActivate(vr::PropertyContainerHandle_t c) {
     }
     p->SetStringProperty(c, vr::Prop_InputProfilePath_String, "{vhmd}/input/vhmd_hmd_profile.json");
     p->SetStringProperty(c, vr::Prop_ControllerType_String, "vhmd_hmd");
+
+    // Calibration for our universe: seated and standing zero at the tracking
+    // origin, so poses sent over UDP are what apps see in every space. The
+    // bounds are never drawn (they would show up in captured frames).
+    p->SetStringProperty(c, vr::Prop_DriverProvidedChaperoneJson_String, ChaperoneJson(kUniverseId).c_str());
+    p->SetBoolProperty(c, vr::Prop_DriverProvidedChaperoneVisibility_Bool, false);
 
     vr::VRDriverInput()->CreateBooleanComponent(c, "/input/system/click", &system_click_);
 

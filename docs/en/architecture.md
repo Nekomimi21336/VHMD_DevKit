@@ -110,6 +110,7 @@ The OpenVR-independent parts are bundled into the static library `vhmd_core`, wh
 | Controller types | `vhmd_hmd`, `vhmd_controller`, `vhmd_tracker` (custom; no other vendors' names are used) |
 | Manufacturer name | `VirtualHMD (development)` |
 | Tracking system name | `vhmd` |
+| Tracking universe | `0x56484D44` (shared by all devices). The HMD provides a driver chaperone (seated and standing zero at the origin, 2 × 2 m, bounds hidden) |
 | Serials | `VHMD-HMD-0`, `VHMD-CTL-L/R`, `VHMD-HAND-L/R` (hand mode), `VHMD-TRK-0` onward |
 | Render models | The HMD uses SteamVR's bundled `generic_hmd`. Controllers and trackers use labeled models that the driver generates at start-up (`resources/rendermodels/vhmd_<serial>_<label>/`, with components such as fingertips). If generation fails, `{vhmd}vhmd_controller` / `generic_tracker` |
 | Status icons | Controllers and trackers get icons with a short label (`resources/icons/labels/`, generated at start-up) |

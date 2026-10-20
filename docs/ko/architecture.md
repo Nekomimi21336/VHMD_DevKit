@@ -110,6 +110,7 @@ OpenVR 비의존 부분은 정적 라이브러리 `vhmd_core`로 묶여 있으�
 | 컨트롤러 타입 | `vhmd_hmd`, `vhmd_controller`, `vhmd_tracker`(독자 타입. 타사 이름은 사용하지 않음) |
 | 제조사 이름 | `VirtualHMD (development)` |
 | 트래킹 시스템 이름 | `vhmd` |
+| 트래킹 유니버스 | `0x56484D44`(모든 디바이스 공통). HMD가 드라이버 제공 채퍼론(착석·입석 원점 = 원점, 2 × 2 m, 경계는 표시 안 함)을 전달 |
 | 시리얼 | `VHMD-HMD-0`, `VHMD-CTL-L/R`, `VHMD-HAND-L/R`(핸드 모드), `VHMD-TRK-0`~ |
 | 렌더 모델 | HMD는 SteamVR 동봉 `generic_hmd`. 컨트롤러와 트래커는 드라이버가 시작 시 생성하는 라벨 포함 모델(`resources/rendermodels/vhmd_<serial>_<label>/`, 손끝 등의 부품 포함). 생성할 수 없을 때는 `{vhmd}vhmd_controller` / `generic_tracker` |
 | 상태 아이콘 | 컨트롤러·트래커는 짧은 기호 포함(`resources/icons/labels/`, 시작 시 생성) |

@@ -110,6 +110,7 @@ OpenVR 非依存部分は静的ライブラリ `vhmd_core` にまとまってお
 | コントローラタイプ | `vhmd_hmd`, `vhmd_controller`, `vhmd_tracker`(独自。他社名は使用しない) |
 | メーカー名 | `VirtualHMD (development)` |
 | トラッキングシステム名 | `vhmd` |
+| トラッキングユニバース | `0x56484D44`(全デバイス共通)。HMD がドライバ提供のチャペロン(着座・立位の原点 = 原点、2 × 2 m、境界は非表示)を渡す |
 | シリアル | `VHMD-HMD-0`、`VHMD-CTL-L/R`、`VHMD-HAND-L/R`(ハンドモード)、`VHMD-TRK-0`〜 |
 | レンダーモデル | HMD は SteamVR 同梱の `generic_hmd`。コントローラーとトラッカーはドライバが起動時に生成するラベル付きモデル(`resources/rendermodels/vhmd_<serial>_<label>/`、指先などの部品付き)。生成できないときは `{vhmd}vhmd_controller` / `generic_tracker` |
 | ステータスアイコン | コントローラー・トラッカーは短い記号入り(`resources/icons/labels/`、起動時に生成) |

@@ -17,6 +17,11 @@
 
 namespace vhmd {
 
+// Tracking universe shared by all vhmd devices ("VHMD" in ASCII). Without one,
+// SteamVR has no seated/standing calibration for them: the seated zero pose
+// comes back as an all-zero matrix and OpenXR's LOCAL space is upside down.
+inline constexpr uint64_t kUniverseId = 0x56484D44;
+
 class VirtualDevice : public vr::ITrackedDeviceServerDriver {
 public:
     explicit VirtualDevice(std::shared_ptr<DeviceState> state);

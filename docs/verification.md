@@ -344,8 +344,34 @@ SteamVR 起動中の挙動(設定の掃除を飛ばして警告、`-Restore` は
 
 - `valid: false` で、OpenVR は `bValid` / `bTracked` が false、OpenXR は位置フラグが 0 になる。
 - OpenVR の立位・着座・未較正の 3 空間はこの環境では同じ値(着座の原点が立位と一致しているため)。
-- **別件で見つかったこと**: OpenXR の LOCAL 空間では、視線だけでなく頭(VIEW)の姿勢も Z 軸まわりに 180° 回った値になる(上方向が −Y)。STAGE と OpenVR は正常。ヘッドレスセッション特有かどうかは未確認(`docs/decisions.md` の未対応事項に記載)。
+- **別件で見つかったこと**: OpenXR の LOCAL 空間では、視線だけでなく頭(VIEW)の姿勢も Z 軸まわりに 180° 回った値になっていた(上方向が −Y)。原因と修正は次の節。
 - Linux の OpenXR 経路(`libopenxr_loader.so` + `XR_KHR_convert_timespec_time`)はコードのみで、実機では未確認。
+
+### OpenXR の LOCAL 空間が逆さまになる問題(2026-10-20、Windows 11、SteamVR 2.17.10)
+
+**症状**: OpenXR で頭(VIEW)を LOCAL / LOCAL_FLOOR 空間で見ると、STAGE に対して Z 軸まわりに 180° 回っていた。HMD が (1, 1.6, 2) で左 90° のとき、LOCAL では (−1, −1.6, 2)、上方向が (0, −1, 0)。
+
+| 確認したこと | 結果 |
+|---|---|
+| 描画なし(`XR_MND_headless`)と描画あり(`XR_KHR_opengl_enable`)のセッション | どちらも同じく逆さま → ヘッドレス特有ではない |
+| ドライバの姿勢(`DriverPose_t` の補助回転) | `qWorldFromDriverRotation` / `qDriverFromHeadRotation` とも w = 1 で正常 |
+| `IVRChaperoneSetup::GetLiveSeatedZeroPoseToRawTrackingPose` | **失敗(false)で、行列がすべて 0** |
+| `IVRChaperone::GetCalibrationState` | **200(Error: ユニバース ID が無効)**、プレイエリア 0 × 0 |
+| vhmd デバイスの `Prop_CurrentUniverseId_Uint64` | 未設定 |
+
+全ゼロの行列を一般的な方法でクォータニオンに変換すると (w=0, z=1)、つまり Z 軸まわり 180° になる。数値がこれと一致するため、SteamVR の OpenXR ランタイムが「較正なしのユニバース」の着座原点(全ゼロ)から LOCAL を作っていたと判断した。OpenVR の `GetSeatedZeroPoseToStandingAbsoluteTrackingPose` は単位行列を返すので、OpenVR アプリには影響がなかった。
+
+**修正**: 全デバイスにユニバース ID `0x56484D44` を設定し、HMD がドライバ提供のチャペロン(`Prop_DriverProvidedChaperoneJson_String`。着座・立位の原点 = 原点、2 × 2 m)を渡すようにした。境界は非表示。
+
+| 修正後 | 結果 |
+|---|---|
+| 較正状態 / プレイエリア | 1(OK) / 2.0 × 2.0 m |
+| 着座原点の行列 | 単位行列(成功) |
+| OpenXR の LOCAL / LOCAL_FLOOR | STAGE と一致(上方向 +Y) |
+| vrserver.txt | `Found universe 1447578948 in chaperone file` |
+| ユーザーの `chaperone_info.vrchap` | 変更なし(ドライバ提供のチャペロンはメモリ上で使われる) |
+
+統合テストに「ユニバースと較正(着座原点 = 単位行列)」と「OpenXR の LOCAL = STAGE」を追加。新しく起動した SteamVR で `run_integration.py` **44/44 合格**、Linux(WSL)でもビルドと単体テストが通ることを確認。
 
 ## 2. 手動検証手順(要件 10.2)
 

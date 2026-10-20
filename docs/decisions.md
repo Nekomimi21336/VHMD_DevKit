@@ -22,6 +22,7 @@
 | HMD の `shouldApplyHeadModel` | 既定 `false`(`hmd.headModel` で切替) | `true` だと回転時に位置が最大 93 mm ずれることを実測。プロトコルの `pos` は頭の位置と定義 |
 | 起動直後のポーズ送信 | `Activate` から 100 ms 待つ | 待たないと vrserver.txt に `PoseUpdated from driver vhmd for device index N which is owned by driver (-1)` が出ることを実測 |
 | 視線 | `CreateEyeTrackingComponent(container, "/eyetracking")` + `Prop_SupportsXrEyeGazeInteraction_Bool` | ヘッダに API あり。パス名 `/eyetracking` は SteamVR 同梱 `driver_vrlink.dll` 内の文字列で確認(公式ドキュメントでは未確認)。`VREyeTrackingData_t` の座標空間はヘッダに記載なし → **HMD ローカル空間**(origin は目の位置、target は注視点)であることを実測で確認。SteamVR が HMD の姿勢を掛けてアプリに渡す |
+| トラッキングユニバースとチャペロン | 全デバイスに `Prop_CurrentUniverseId_Uint64 = 0x56484D44` を設定し、HMD が `Prop_DriverProvidedChaperoneJson_String` で着座・立位の原点を原点(2 × 2 m)として渡す。境界は `Prop_DriverProvidedChaperoneVisibility_Bool = false` で描かない | ユニバース未設定だと SteamVR に較正データが無く(較正状態 200 = Error)、着座の原点が全ゼロの行列になり、OpenXR の LOCAL / LOCAL_FLOOR 空間が Z 軸まわりに 180° 回る(頭が逆さま)ことを実測。描画ありのセッションでも同じ。設定後は LOCAL = STAGE。境界を描かないのは、取り出す映像に写り込ませないため。ユーザーの `chaperone_info.vrchap` は書き換わらない |
 | 指スケルトン | `CreateSkeletonComponent`。コントローラーは既定 `VRSkeletalTracking_Partial`、ハンド側(ハンドモード)は `Full` | VRChat は Full をハンドトラッキング(メニューはジェスチャー)、Partial をコントローラー(ボタン操作)として扱うことを実測。ボーン生成はサンプルの `hand_simulation.cpp` を third_party からそのままコンパイル |
 | コントローラー ⇄ ハンドの切り替え | 手ごとにコントローラーとハンドの 2 デバイスを持ち、片方だけを接続中として報告(`hand_mode` 操作) | OpenVR にはデバイスを外す API が無く、骨格の精度も作成後に変えられないため。SteamVR と VRChat を止めずに切り替わることを確認 |
 | スケルトンの aux ボーン | 長さ 0 のクォータニオンは単位クォータニオンに置換 | サンプルの手モデルは aux ボーン 26〜30 を 0 のまま返すことを検証中に発見 |
@@ -43,7 +44,6 @@
 |---|---|---|
 | 実画面表示 | 対象外(ダミーディスプレイ)。Windows の既定ではデスクトップにウィンドウが開く。ウィンドウを出したくない場合は `display.mode = direct` | — |
 | 表情(フェイシャルトラッキング) | 対象外。OpenVR に表情の API が無く、SteamVR の OpenXR ランタイムもフェイス系拡張を提供していないため、SteamVR との接続という本ツールの役割の外(調査: `docs/face_tracking_research.md`) | — |
-| OpenXR の LOCAL 空間 | ヘッドレスの OpenXR セッションで、LOCAL 空間が STAGE に対して Z 軸まわりに 180° 回転して見える(頭の上下が逆。STAGE と VIEW は正常、OpenVR の seated は正常)。ヘッドレス特有か、vhmd の HMD 全般かは**未確認** | 描画ありの OpenXR アプリで確認、原因(ユニバース ID 未設定など)の調査 |
 | トラッカーのみモード (`hmd.enabled=false`) | ドライバが HMD を追加しないことは確認。この PC では実ヘッドセット(PICO 4S)が未接続のため、SteamVR に HMD が無く他デバイスも有効化されない → **未検証** | 実 HMD 接続時に `docs/verification.md` の手順で確認 |
 | VMT の Joint / Follow / Skeleton / ルーム行列 | 未実装(破棄してログ) | `protocol/osc.cpp` に追加 |
 | 実行時のデバイス削除 | OpenVR にはデバイス削除 API が無い。追加は最初のパケットで行う(オンデマンド)。使わなくなったデバイスは切断として報告する | — |
