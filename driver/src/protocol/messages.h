@@ -35,12 +35,14 @@ struct PoseMessage {
     bool follow = false;
     // false => the sender explicitly reports the device as not tracked.
     bool valid = true;
+    std::string src; // sender name ("src"), for control ownership; "" = unnamed
 };
 
 struct InputMessage {
     std::string id;
     // name -> value. Booleans are sent as 0/1.
     std::vector<std::pair<std::string, float>> values;
+    std::string src;
 };
 
 struct SkeletonMessage {
@@ -51,6 +53,7 @@ struct SkeletonMessage {
     // ... or finger curl/splay (thumb, index, middle, ring, pinky).
     std::optional<std::array<float, 5>> curl;
     std::optional<std::array<float, 5>> splay;
+    std::string src;
 };
 
 struct GazeMessage {
@@ -58,6 +61,7 @@ struct GazeMessage {
     Vec3 origin{};
     Vec3 target{};
     bool valid = true;
+    std::string src;
 };
 
 struct ConfigMessage {
@@ -67,6 +71,10 @@ struct ConfigMessage {
     std::string mode; // optional mode argument ("hand_mode")
     std::optional<double> hz; // optional number ("refresh_rate")
     std::optional<double> seq; // echoed back in replies
+    // "control": the sender that drives the devices ("" = anyone) and, optionally,
+    // which devices (none = all). Without "source" the op only reports.
+    std::optional<std::string> source;
+    std::vector<std::string> devices;
 };
 
 using Message = std::variant<PoseMessage, InputMessage, SkeletonMessage, GazeMessage, ConfigMessage>;

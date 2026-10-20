@@ -19,12 +19,19 @@ class VHMDClient:
 
     >>> with VHMDClient() as c:
     ...     c.pose("hmd", (0, 1.7, 0), (1, 0, 0, 0))
+
+    source: a name sent with every device message ("src"). When control is
+    given to a source (:meth:`control`), the driver applies only that source's
+    messages, e.g. VHMDClient(source="auto") for an automation script and
+    "manual" for a person (the FPS tool, the VHMD Link headset).
     """
 
     MAX_DATAGRAM = 60000
 
-    def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, timeout: float = 1.0):
+    def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, timeout: float = 1.0,
+                 source: Optional[str] = None):
         self.addr = (host, port)
+        self.source = source
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("0.0.0.0" if host not in ("127.0.0.1", "localhost") else "127.0.0.1", 0))
         self.sock.settimeout(timeout)
@@ -43,6 +50,8 @@ class VHMDClient:
 
     def send(self, msg: Mapping[str, Any]) -> None:
         """Send (or queue, inside :meth:`batch`) one raw protocol message."""
+        if self.source is not None and msg.get("type") != "config" and "src" not in msg:
+            msg = {**msg, "src": self.source}
         if self._batch is not None:
             self._batch.append(dict(msg))
         else:
@@ -193,6 +202,19 @@ class VHMDClient:
             if reply.get("seq") == seq:
                 return reply
             # Unrelated datagram (e.g. a haptic event): ignore and keep waiting.
+
+    def control(self, source: Optional[str] = None, devices: Optional[Iterable[str]] = None) -> Dict[str, Any]:
+        """Who drives the devices. With a source, gives it control ("" = anyone
+        again), of the listed devices only if given; the driver releases the
+        inputs the previous sender held. The reply has "control" (owners and
+        the senders seen) and "poses" (latest pose per device), so a sender
+        taking over can continue from where the devices are."""
+        args: Dict[str, Any] = {}
+        if source is not None:
+            args["source"] = source
+        if devices:
+            args["devices"] = list(devices)
+        return self.request("control", **args)
 
     def status(self) -> Dict[str, Any]:
         return self.request("list")

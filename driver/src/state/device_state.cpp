@@ -50,7 +50,10 @@ void DeviceState::SubmitInput(const InputMessage& m, Clock::time_point now) {
     // tick). No "unchanged" filtering here: several names can alias the same
     // component ("b", "secondary", "/input/b/click"), so a per-name cache
     // would drop real changes.
-    for (const auto& [name, value] : m.values) pending_inputs_[name] = value;
+    for (const auto& [name, value] : m.values) {
+        pending_inputs_[name] = value;
+        seen_inputs_.insert(name);
+    }
 }
 
 void DeviceState::SubmitSkeleton(const SkeletonMessage& m) {
@@ -142,6 +145,28 @@ DeviceStats DeviceState::Stats(Clock::time_point now) const {
     }
     s.sender_latency_ms = latency_ms_;
     return s;
+}
+
+void DeviceState::Handover(Clock::time_point now) {
+    std::lock_guard<std::mutex> lock(mu_);
+    for (const auto& name : seen_inputs_) {
+        if (name == "proximity" || name == "battery" || name == "charging") continue;
+        pending_inputs_[name] = 0.0f;
+    }
+    latest_.vel.reset();
+    latest_.angvel.reset();
+    latest_.acc.reset();
+    latest_.angacc.reset();
+    latest_.age.reset();
+    if (last_update_) last_update_ = now;
+}
+
+bool DeviceState::LatestPose(Vec3& pos, Quat& rot) const {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (!last_update_ || pose_packets_ == 0) return false;
+    pos = latest_.pos;
+    rot = latest_.rot;
+    return true;
 }
 
 void DeviceState::Reset(Clock::time_point now) {

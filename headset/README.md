@@ -6,7 +6,7 @@
 |---|---|---|
 | 1 | 頭・両手の姿勢と入力を VHMD に送る(Wi-Fi が基本、USB は予備) | 動作確認済み(Pico 4 Ultra、Pico OS 5.15.7) |
 | 2 | VHMD が描いた映像をヘッドセットに表示する(描画時の姿勢で補正、視野角・解像度をヘッドセットに合わせる) | 動作確認済み |
-| 3 | ドライバ側でマニュアル(ヘッドセット)とオート(自動操作)を SteamVR を止めずに切り替える | 未着手 |
+| 3 | ドライバ側でマニュアル(ヘッドセット)とオート(自動操作)を SteamVR を止めずに切り替える | 動作確認済み |
 
 ## しくみ
 
@@ -50,6 +50,23 @@ python -m vhmd_client.mode vhmd --headset      # 元に戻すときは --no-head
 
 - SteamVR の設定 `vhmd_display`: 目ごとの視野角(`leftTanLeft` ... `rightTanDown`、ドライバが非対称な視野角に対応)、`renderWidth` / `renderHeight`、`ipdMeters`、`displayFrequency`。
 - VHMD の設定のプロファイル: ダイレクトモード、`display.refreshHz` と `preview.fps` をヘッドセットのリフレッシュレートに、`preview.maxEyeWidth` をヘッドセットの目の幅に。プロファイルは `%LOCALAPPDATA%` にあり切り替えのたびに作り直すので、ドライバをビルドし直してインストール済みの設定が既定値に戻っても消えません。
+
+### マニュアルとオート(段階 3)
+
+VHMD は SteamVR の HMD のまま、誰が動かすかだけを切り替えます(SteamVR も VR アプリも止まりません)。
+
+```powershell
+python -m vhmd_client.control auto       # 自動操作のプログラムに渡す
+python -m vhmd_client.control manual     # 人に戻す
+python -m vhmd_client.control auto --devices left_hand right_hand   # 手だけ渡す
+python -m vhmd_client.control            # 今の状態と、送ってきている送り手
+```
+
+- 送り手はメッセージに `src` を付けて名乗ります。VHMD Link と FPS 操作ツールは `manual`、自動操作は `VHMDClient(source="auto")`。
+- 操作権を持たない送り手のメッセージは捨てられます(数は `control` / `status` に出る)。操作権が移るとき、前の送り手が押していたボタン・トリガーは離した状態に戻ります。
+- 自動操作に渡すときの応答と `control` の問い合わせには各デバイスの最新の姿勢が入るので、引き継ぐ側は今の位置から続けられます。FPS 操作ツールの「マニュアルに戻す」はこれを使い、自動操作が置いた位置から操作を再開します。
+- ヘッドセットで X と A を 1.5 秒押し続けると、操作権を `manual` に取り戻します(装着している人がいつでも戻れるように)。
+- 確認(Pico 4 Ultra、Wi-Fi): 操作権なしではヘッドセットの姿勢、`control auto` で自動操作の姿勢(1.0, 1.5, -0.5)に即座に切り替わり、`control manual` で戻る。そのあいだ相手側のメッセージは捨てられた(ヘッドセット 540 件、自動操作 30 件)。X + A の長押しは、装着しての確認がまだ。
 
 ## 使い方
 

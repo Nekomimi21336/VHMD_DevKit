@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <map>
+#include <set>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -67,6 +68,14 @@ public:
     // Reset to the configured default pose (config op "reset").
     void Reset(Clock::time_point now);
 
+    // Control moved to another sender: release every input the old one set
+    // (except proximity / battery), stop extrapolating its velocities and give
+    // the new sender a full timeout before the device counts as lost.
+    void Handover(Clock::time_point now);
+
+    // Latest received pose (false if nothing was received yet).
+    bool LatestPose(Vec3& pos, Quat& rot) const;
+
     const DeviceConfig& Config() const { return cfg_; }
 
 private:
@@ -84,6 +93,7 @@ private:
     PoseSmoother smoother_;
 
     std::map<std::string, float> pending_inputs_;
+    std::set<std::string> seen_inputs_;   // every input name received, for Handover
     std::optional<SkeletonMessage> skeleton_;
     std::optional<GazeMessage> gaze_;
 

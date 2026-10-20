@@ -1,5 +1,8 @@
 #include "state/router.h"
 
+#include <type_traits>
+#include <algorithm>
+
 #include <set>
 #include <utility>
 
@@ -92,6 +95,11 @@ std::optional<std::string> MessageRouter::HandleDatagram(std::string_view data, 
             parsed.errors.push_back("unknown or disabled device '" + id.substr(0, 64) + "'");
             continue;
         }
+        const std::string src = std::visit([](const auto& m) -> std::string {
+            if constexpr (std::is_same_v<std::decay_t<decltype(m)>, ConfigMessage>) return {};
+            else return m.src;
+        }, msg);
+        if (!Accept(id, src, now)) continue;   // another sender has control of this device
         // On-demand devices join SteamVR when a client first talks to them.
         // The value is buffered first, so the device starts in sync.
         const auto* pose = std::get_if<PoseMessage>(&msg);
@@ -148,6 +156,42 @@ std::optional<MessageRouter::VmtHaptic> MessageRouter::VmtHapticTarget(const std
     return std::nullopt;
 }
 
+std::string MessageRouter::OwnerOf(const std::string& id) const {
+    auto it = owners_.find(id);
+    return it != owners_.end() ? it->second : default_owner_;
+}
+
+bool MessageRouter::Accept(const std::string& id, const std::string& src, Clock::time_point now) {
+    std::lock_guard<std::mutex> lock(control_mu_);
+    SourceSeen& seen = sources_[src];
+    seen.last = now;
+    const std::string owner = OwnerOf(id);
+    if (owner.empty() || owner == src) {
+        ++seen.accepted;
+        return true;
+    }
+    ++seen.ignored;
+    return false;
+}
+
+json MessageRouter::ControlJson(Clock::time_point now) const {
+    std::lock_guard<std::mutex> lock(control_mu_);
+    json c = {{"owner", default_owner_}};
+    json per = json::object();
+    for (const auto& [id, owner] : owners_) per[id] = owner;
+    c["devices"] = std::move(per);
+    json srcs = json::object();
+    for (const auto& [name, s] : sources_) {
+        srcs[name.empty() ? "(unnamed)" : name] = {
+            {"age_s", std::chrono::duration<double>(now - s.last).count()},
+            {"accepted", s.accepted},
+            {"ignored", s.ignored},
+        };
+    }
+    c["sources"] = std::move(srcs);
+    return c;
+}
+
 std::string MessageRouter::StatusJson(Clock::time_point now, std::optional<double> seq) const {
     json j = Reply("status", seq);
     j["driver"] = "vhmd";
@@ -163,6 +207,7 @@ std::string MessageRouter::StatusJson(Clock::time_point now, std::optional<doubl
         if (!perf.is_discarded()) j["perf"] = std::move(perf);
     }
     j["packets"] = {{"total", total_packets_.load()}, {"rejected", rejected_.load()}};
+    j["control"] = ControlJson(now);
     json devs = json::array();
     for (const auto& d : devices_) {
         const auto& c = d->Config();
@@ -205,6 +250,41 @@ std::optional<std::string> MessageRouter::HandleConfig(const ConfigMessage& m, C
         for (const auto& role : AllRoles()) roles.push_back({{"name", role.short_name}, {"steamvr", role.steamvr_role}});
         r["ok"] = true;
         r["roles"] = std::move(roles);
+    } else if (m.op == "control") {
+        // {"op":"control","source":"auto"} gives every device to "auto";
+        // "devices":[...] limits it to those; "source":"" lets anyone drive again.
+        // Without "source": only reports. The reply has the latest pose of each
+        // device, so a sender taking over can continue from where it is.
+        if (m.source) {
+            std::vector<DeviceState*> changed;
+            {
+                std::lock_guard<std::mutex> lock(control_mu_);
+                for (const auto& d : devices_) {
+                    const std::string& id = d->Config().id;
+                    const bool listed = m.devices.empty() ||
+                                        std::find(m.devices.begin(), m.devices.end(), id) != m.devices.end();
+                    if (!listed) continue;
+                    if (OwnerOf(id) != *m.source) changed.push_back(d.get());
+                    if (m.devices.empty()) owners_.erase(id);
+                    else owners_[id] = *m.source;
+                }
+                if (m.devices.empty()) default_owner_ = *m.source;
+            }
+            for (DeviceState* d : changed) d->Handover(now);
+            Log(LogLevel::Info, "control: %s -> '%s' (%zu device(s) changed hands)",
+                m.devices.empty() ? "all devices" : "listed devices", m.source->c_str(), changed.size());
+            r["changed"] = changed.size();
+        }
+        r["ok"] = true;
+        r["control"] = ControlJson(now);
+        json poses = json::object();
+        for (const auto& d : devices_) {
+            Vec3 p;
+            Quat q;
+            if (d->Config().enabled && d->LatestPose(p, q))
+                poses[d->Config().id] = {{"pos", {p.x, p.y, p.z}}, {"rot", {q.w, q.x, q.y, q.z}}};
+        }
+        r["poses"] = std::move(poses);
     } else if (m.op == "reset") {
         int n = 0;
         for (const auto& d : devices_) {

@@ -5,7 +5,10 @@
 #include <atomic>
 #include <functional>
 #include <map>
+
+#include <nlohmann/json.hpp>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -85,6 +88,10 @@ public:
 
 private:
     std::optional<std::string> HandleConfig(const ConfigMessage& m, Clock::time_point now);
+    // Control ownership: true if `src` may drive device `id` (counts senders).
+    bool Accept(const std::string& id, const std::string& src, Clock::time_point now);
+    std::string OwnerOf(const std::string& id) const;   // control_mu_ held
+    nlohmann::json ControlJson(Clock::time_point now) const;
     void ReportErrors(const std::vector<std::string>& errors);
 
     DriverConfig config_;
@@ -93,6 +100,16 @@ private:
     RouterHooks hooks_;
     RateLimiter error_limiter_;
     std::atomic<uint64_t> total_packets_{0};
+
+    // Who drives the devices: per-device owners over a default; "" = anyone.
+    mutable std::mutex control_mu_;
+    std::string default_owner_;
+    std::map<std::string, std::string> owners_;
+    struct SourceSeen {
+        Clock::time_point last{};
+        uint64_t accepted = 0, ignored = 0;
+    };
+    std::map<std::string, SourceSeen> sources_;
     std::atomic<uint64_t> rejected_{0};
     std::unique_ptr<VmtState> vmt_ = std::make_unique<VmtState>();
     Clock::time_point vmt_last_alive_{};

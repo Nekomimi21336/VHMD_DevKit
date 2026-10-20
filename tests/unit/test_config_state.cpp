@@ -446,3 +446,52 @@ TEST(state_parented_pose_does_not_time_out) {
     s.SubmitPose(plain, t0);
     CHECK(s.ComputeOutput(t0 + std::chrono::seconds(10)).timed_out);
 }
+
+TEST(router_control_ownership) {
+    DriverConfig cfg = DefaultConfig();
+    std::vector<std::shared_ptr<DeviceState>> states;
+    for (const auto& d : cfg.devices) states.push_back(std::make_shared<DeviceState>(d, cfg));
+    MessageRouter router(cfg, states);
+    const auto now = Clock::now();
+    auto hmd_x = [&] { return router.Find("hmd")->ComputeOutput(now).pos.x; };
+
+    // Nobody owns the devices: every sender is accepted, named or not.
+    router.HandleDatagram(R"({"type":"pose","id":"hmd","pos":[1,1.7,0],"rot":[1,0,0,0],"src":"manual"})", now);
+    CHECK_NEAR(hmd_x(), 1.0, 1e-9);
+    router.HandleDatagram(R"({"type":"pose","id":"hmd","pos":[2,1.7,0],"rot":[1,0,0,0]})", now);
+    CHECK_NEAR(hmd_x(), 2.0, 1e-9);
+
+    // Manual holds the trigger, then control goes to "auto".
+    router.HandleDatagram(R"({"type":"input","id":"right_hand","values":{"trigger":1,"a":1},"src":"manual"})", now);
+    router.Find("right_hand")->TakeChangedInputs();
+    auto r = router.HandleDatagram(R"({"type":"config","op":"control","source":"auto","seq":1})", now);
+    CHECK(r && r->find("\"owner\":\"auto\"") != std::string::npos);
+    CHECK(r->find("\"poses\"") != std::string::npos && r->find("\"hmd\"") != std::string::npos);
+    // The hand-over released what manual was pressing.
+    auto released = router.Find("right_hand")->TakeChangedInputs();
+    CHECK(released.size() == 2);
+    for (const auto& [name, value] : released) CHECK(value == 0.0f);
+
+    // Only "auto" moves the devices now.
+    router.HandleDatagram(R"({"type":"pose","id":"hmd","pos":[3,1.7,0],"rot":[1,0,0,0],"src":"manual"})", now);
+    router.HandleDatagram(R"({"type":"pose","id":"hmd","pos":[4,1.7,0],"rot":[1,0,0,0]})", now);
+    CHECK_NEAR(hmd_x(), 2.0, 1e-9);
+    router.HandleDatagram(R"({"type":"pose","id":"hmd","pos":[5,1.7,0],"rot":[1,0,0,0],"src":"auto"})", now);
+    CHECK_NEAR(hmd_x(), 5.0, 1e-9);
+
+    // Per device: the head back to manual, the hands stay with auto.
+    router.HandleDatagram(R"({"type":"config","op":"control","source":"manual","devices":["hmd"]})", now);
+    router.HandleDatagram(R"({"type":"pose","id":"hmd","pos":[6,1.7,0],"rot":[1,0,0,0],"src":"manual"})", now);
+    CHECK_NEAR(hmd_x(), 6.0, 1e-9);
+    router.HandleDatagram(R"({"type":"pose","id":"left_hand","pos":[7,1,0],"rot":[1,0,0,0],"src":"manual"})", now);
+    CHECK(router.Find("left_hand")->ComputeOutput(now).pos.x != 7.0);
+
+    // Status reports the owners and who has been sending.
+    const std::string st = router.StatusJson(now, std::nullopt);
+    CHECK(st.find("\"control\"") != std::string::npos && st.find("\"ignored\"") != std::string::npos);
+
+    // "" lets anyone drive again.
+    router.HandleDatagram(R"({"type":"config","op":"control","source":""})", now);
+    router.HandleDatagram(R"({"type":"pose","id":"left_hand","pos":[8,1,0],"rot":[1,0,0,0]})", now);
+    CHECK_NEAR(router.Find("left_hand")->ComputeOutput(now).pos.x, 8.0, 1e-9);
+}

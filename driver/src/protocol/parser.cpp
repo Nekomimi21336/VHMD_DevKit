@@ -1,5 +1,6 @@
 #include "protocol/parser.h"
 
+#include <type_traits>
 #include <cmath>
 
 #include <nlohmann/json.hpp>
@@ -244,6 +245,12 @@ std::string ParseConfig(const json& obj, Message& out) {
     if (auto mode = obj.find("mode"); mode != obj.end() && mode->is_string()) m.mode = mode->get<std::string>();
     if (auto hz = obj.find("hz"); hz != obj.end() && hz->is_number()) m.hz = hz->get<double>();
     if (auto seq = obj.find("seq"); seq != obj.end() && seq->is_number()) m.seq = seq->get<double>();
+    if (auto src = obj.find("source"); src != obj.end() && src->is_string())
+        m.source = src->get<std::string>().substr(0, 32);
+    if (auto devs = obj.find("devices"); devs != obj.end() && devs->is_array()) {
+        for (const auto& d : *devs)
+            if (d.is_string() && m.devices.size() < 64) m.devices.push_back(d.get<std::string>().substr(0, 64));
+    }
     out = std::move(m);
     return {};
 }
@@ -259,6 +266,20 @@ std::string ParseOne(const json& obj, const ParseLimits& lim, Message& out) {
     if (t == "gaze") return ParseGaze(obj, lim, out);
     if (t == "config") return ParseConfig(obj, out);
     return "unknown type '" + t.substr(0, 32) + "'";
+}
+
+// Device messages may name their sender ("src"), for control ownership.
+std::string ParseOneWithSource(const json& obj, const ParseLimits& lim, Message& out) {
+    std::string err = ParseOne(obj, lim, out);
+    if (!err.empty()) return err;
+    auto src = obj.find("src");
+    if (src != obj.end() && src->is_string()) {
+        const std::string s = src->get<std::string>().substr(0, 32);
+        std::visit([&](auto& m) {
+            if constexpr (!std::is_same_v<std::decay_t<decltype(m)>, ConfigMessage>) m.src = s;
+        }, out);
+    }
+    return {};
 }
 
 } // namespace
@@ -284,7 +305,7 @@ ParseResult ParseJsonPacket(std::string_view data, const ParseLimits& limits) {
     }
     auto handle = [&](const json& obj, size_t index) {
         Message m;
-        std::string err = ParseOne(obj, limits, m);
+        std::string err = ParseOneWithSource(obj, limits, m);
         if (err.empty()) {
             result.messages.push_back(std::move(m));
         } else {

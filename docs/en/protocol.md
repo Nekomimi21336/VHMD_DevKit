@@ -63,6 +63,7 @@ The `vhmd` driver writes messages received over UDP into each virtual device's "
 | `acc`, `angacc` | | Acceleration [x, y, z] (m/s², rad/s²). Absolute value ≤ 1000. Passed to SteamVR as is |
 | `age` | | How many seconds old the sample already is when sent (0 to 0.5). SteamVR predicts from the time the sample was taken (`poseTimeOffset`). For senders with latency, such as camera-based estimation |
 | `ts` | | Sender's UNIX time (seconds). For diagnostics (`latency_ms` in `status`) |
+| `src` | | Sender name (up to 32 characters), on `pose` / `input` / `skeleton` / `gaze`. Only the sender holding control (`config` op `control`) is applied |
 | `valid` | | `false` explicitly signals "tracking lost". `pos`/`rot` may be omitted. Recovers on the next valid `pose` |
 
 ### `input` (controllers / trackers / HMD)
@@ -164,6 +165,7 @@ Passed to `IVRDriverInput::CreateEyeTrackingComponent("/eyetracking")` as `VREye
 | `set_role` | `id`, `role` | Writes the role into the `trackers` section of the SteamVR settings (overwrites the user's setting) |
 | `reset` | `id` (all devices if omitted) | Restores the default pose from the config file |
 | `add` | `id` (all on-demand devices if omitted) | Adds on-demand devices to SteamVR immediately (applied on the next frame). `{"ok":true,"ids":[...]}` |
+| `control` | `source` (a sender name, `""` = anyone; without it only reports), `devices` (default: all) | Chooses which sender drives the devices (SteamVR keeps running). Messages from other senders are dropped and counted. A device changing hands has the inputs the previous sender held released (except proximity / battery), stops velocity prediction and gives the new sender a full timeout. Reply: `control` (`owner`, per-device `devices`, per-sender `sources`: `age_s`, `accepted`, `ignored`) and `poses` (latest position / rotation of each device, so the sender taking over can continue from there). `status` carries `control` too |
 | `hand_mode` | `mode` (`controllers` / `hands`; without it, only returns the current mode) | Switches both hands between controllers and hand tracking (SteamVR keeps running). `{"ok":true,"mode":"hands"}`. `status` also carries `hand_mode` |
 | `preview` | `mode` (`on` / `off`) | Starts / pauses the preview (eye images in shared memory) in direct mode (Linux, or Windows with `display.mode = direct`). It is off by default, so nothing is copied or written while nobody watches (`preview_viewer.py` and `linux_check.py` start and stop it themselves) |
 | `refresh_rate` | `hz` (1-240; without it, only returns the current rate) | Changes the virtual display's frame rate (direct mode; SteamVR keeps running). `{"ok":true,"hz":30}` |

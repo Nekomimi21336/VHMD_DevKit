@@ -63,6 +63,7 @@
 | `acc`, `angacc` | | 加速度(m/s²、rad/s²)の [x, y, z]。絶対値 ≤ 1000。SteamVR にそのまま渡します |
 | `age` | | サンプルが送信時点ですでに何秒古いか(0〜0.5)。SteamVR はサンプルを取った時刻から予測します(`poseTimeOffset`)。カメラ推定など遅れのある送信元向け |
 | `ts` | | 送信側 UNIX 時刻(秒)。診断用(`status` の `latency_ms`) |
+| `src` | | 送り手の名前(32 文字まで)。`pose` / `input` / `skeleton` / `gaze` 共通。操作権(`config` の `control`)を持つ送り手だけが反映されます |
 | `valid` | | `false` で「トラッキング喪失」を明示。`pos`/`rot` は省略可。次の有効 `pose` で復帰 |
 
 ### `input`(コントローラ / トラッカー / HMD)
@@ -167,6 +168,7 @@ HMD:
 | `hand_mode` | `mode`(`controllers` / `hands`、省略時は現在のモードを返すだけ) | 左右の手をコントローラー / ハンドトラッキングで切り替え(SteamVR は止まりません)。`{"ok":true,"mode":"hands"}`。`status` にも `hand_mode` が入ります |
 | `preview` | `mode`(`on` / `off`) | ダイレクトモード(Linux、または Windows で `display.mode = direct`)で、プレビュー(共有メモリへの映像書き出し)を開始 / 停止。既定では止まっていて、見る人がいないときは GPU のコピーも書き込みもしません(`preview_viewer.py` と `linux_check.py` は自動で開始・停止) |
 | `refresh_rate` | `hz`(1〜240、省略時は現在値を返すだけ) | 仮想ディスプレイのフレームレートを変更(ダイレクトモード、SteamVR は止まりません)。`{"ok":true,"hz":30}` |
+| `control` | `source`(送り手の名前、`""` で誰でも。省略時は現在の状態を返すだけ)、`devices`(省略時は全デバイス) | どの送り手がデバイスを動かすかを決める(SteamVR は止まりません)。操作権を持たない送り手のメッセージは捨てられ、数えられます。操作権が移ったデバイスは、前の送り手が押していた入力を離した状態に戻し(装着センサー・バッテリーは除く)、速度による予測を止め、新しい送り手にタイムアウトの猶予を与えます。応答: `control`(`owner`、デバイスごとの `devices`、送り手ごとの `sources`: `age_s`・`accepted`・`ignored`)と `poses`(各デバイスの最新の位置・回転。引き継ぐ側が今の位置から続けられる)。`status` にも `control` が入ります |
 | `preview_window` | `mode`(`on` / `off`) | Windows のダイレクトモード(`display.mode = direct`)で、プレビューウィンドウ(HMD の映像)を表示 / 非表示。非表示のあいだは何もしません |
 | (`status` の `perf`) | | ドライバ自身の負荷: `update_thread_cpu_pct`、`receive_thread_cpu_pct`(1 コア比の %、1 秒ごとに更新)、`update_tick_us_avg` / `update_tick_us_max`(更新 1 回の処理時間) |
 

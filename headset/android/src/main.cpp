@@ -767,6 +767,9 @@ struct App {
     std::string system_name;
     std::chrono::steady_clock::time_point next_info{};
     int reprojected = 0;   // frames shown at their render pose (stats)
+    // X + A held: take control back to "manual" (the person wearing the headset).
+    std::chrono::steady_clock::time_point take_since{};
+    bool take_holding = false, take_sent = false;
     std::string link_stats;   // {"type":"link_stats",...} for the PC, refreshed every 2 s
 
     XrActionSet action_set = XR_NULL_HANDLE;
@@ -1123,11 +1126,13 @@ void AppendPose(std::string& out, const char* id, const XrSpaceLocation& loc) {
     char buf[256];
     const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
     if ((loc.locationFlags & need) != need) {
-        snprintf(buf, sizeof(buf), "{\"type\":\"pose\",\"id\":\"%s\",\"valid\":false}", id);
+        snprintf(buf, sizeof(buf), "{\"type\":\"pose\",\"id\":\"%s\",\"valid\":false,\"src\":\"manual\"}", id);
     } else {
         const XrPosef& p = loc.pose;
         snprintf(buf, sizeof(buf),
-                 "{\"type\":\"pose\",\"id\":\"%s\",\"pos\":[%.5f,%.5f,%.5f],\"rot\":[%.6f,%.6f,%.6f,%.6f]}", id,
+                 "{\"type\":\"pose\",\"id\":\"%s\",\"pos\":[%.5f,%.5f,%.5f],\"rot\":[%.6f,%.6f,%.6f,%.6f],"
+                 "\"src\":\"manual\"}",
+                 id,
                  p.position.x, p.position.y, p.position.z, p.orientation.w, p.orientation.x, p.orientation.y,
                  p.orientation.z);
     }
@@ -1142,7 +1147,7 @@ void AppendInputs(App& app, std::string& out, int hand) {
     const XrVector2f st = GetVec2(app, app.stick, sub);
     char buf[512];
     int n = snprintf(buf, sizeof(buf),
-                     "{\"type\":\"input\",\"id\":\"%s\",\"values\":{\"trigger\":%.3f,\"trigger_click\":%s,"
+                     "{\"type\":\"input\",\"id\":\"%s\",\"src\":\"manual\",\"values\":{\"trigger\":%.3f,\"trigger_click\":%s,"
                      "\"trigger_touch\":%s,\"grip\":%.3f,\"grip_click\":%s,\"joystick_x\":%.3f,\"joystick_y\":%.3f,"
                      "\"joystick_click\":%s,\"joystick_touch\":%s",
                      hand == kLeft ? "left_hand" : "right_hand", trig, trig >= 0.95f ? "true" : "false",
@@ -1243,6 +1248,23 @@ void Frame(App& app) {
     AppendPose(msg, "right_hand", hands[kRight]);
     AppendInputs(app, msg, kLeft);
     AppendInputs(app, msg, kRight);
+
+    // Holding X and A for 1.5 s gives control back to the person wearing the
+    // headset (an automation may have it): {"op":"control","source":"manual"}.
+    {
+        const bool both = GetBool(app, app.btn_x, XR_NULL_PATH) && GetBool(app, app.btn_a, XR_NULL_PATH);
+        const auto t = std::chrono::steady_clock::now();
+        if (!both) {
+            app.take_holding = app.take_sent = false;
+        } else if (!app.take_holding) {
+            app.take_holding = true;
+            app.take_since = t;
+        } else if (!app.take_sent && t - app.take_since >= std::chrono::milliseconds(1500)) {
+            app.take_sent = true;
+            msg += ",{\"type\":\"config\",\"op\":\"control\",\"source\":\"manual\"}";
+            LOGI("X+A held: taking control back (manual)");
+        }
+    }
 
     // Eye poses and fields of view relative to the head.
     std::vector<XrView> eye_local(app.swapchains.size(), {XR_TYPE_VIEW});

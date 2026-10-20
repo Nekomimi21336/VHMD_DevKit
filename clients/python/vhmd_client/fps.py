@@ -90,6 +90,9 @@ TEXT = {
         "no_driver": "driver not answering on {}:{}",
         "copied": "copied {} lines", "absent": "not in SteamVR", "invalid": "not tracked",
         "mode_vhmd": "VHMD mode", "mode_pico": "Pico mode",
+        "owner": "Control: {}", "owners": {"manual": "manual", "auto": "auto", "": "anyone"},
+        "to_auto": "Hand over to auto", "to_manual": "Take back (manual)",
+        "auto_active": "Auto has control: this tool's input is not used",
         "to_pico": "Switch to Pico", "to_vhmd": "Switch to VHMD",
         "switch_confirm": "Restart SteamVR in {} mode?\nRunning VR apps will close.",
         "switching": "Switching to {}: {}", "switch_failed": "Switch failed: {}",
@@ -133,6 +136,9 @@ TEXT = {
         "no_driver": "{}:{} のドライバが応答しません",
         "copied": "{} 行をコピーしました", "absent": "SteamVR に無い", "invalid": "トラッキングなし",
         "mode_vhmd": "VHMD モード", "mode_pico": "Pico モード",
+        "owner": "操作: {}", "owners": {"manual": "マニュアル", "auto": "オート", "": "誰でも"},
+        "to_auto": "オートに渡す", "to_manual": "マニュアルに戻す",
+        "auto_active": "オートが操作中: このツールの入力は使われていません",
         "to_pico": "Pico に切り替え", "to_vhmd": "VHMD に切り替え",
         "switch_confirm": "SteamVR を再起動して {} モードにします。\n実行中の VR アプリは終了します。よろしいですか?",
         "switching": "{} に切り替え中: {}", "switch_failed": "切り替えに失敗しました: {}",
@@ -508,6 +514,8 @@ class App:
         self.ui_count = 0
         self.rate_t0 = time.perf_counter()
         self.thread_message = ""     # set by worker threads, shown by Tk
+        self.owner: Optional[str] = None   # who the driver listens to for the head (None = unknown)
+        self.owner_shown: Optional[str] = "?"
 
         self.load_devices()
         if not self.hmd_active:
@@ -522,6 +530,7 @@ class App:
         self.ui_tick()
         if start_threads:
             threading.Thread(target=self.sender_loop, name="vhmd-fps-sender", daemon=True).start()
+            threading.Thread(target=self.control_loop, name="vhmd-fps-control", daemon=True).start()
             if self.display_mode == "direct" and self.hmd_active:
                 threading.Thread(target=self.preview_loop, name="vhmd-fps-preview", daemon=True).start()
 
@@ -588,6 +597,8 @@ class App:
         tk.Label(header, text="VHMD", bg=pal["card"], fg=pal["fg"], font=f["title"]).pack(side="left")
         tk.Label(header, text=t["mode_vhmd" if self.hmd_active else "mode_pico"], bg=pal["accent"],
                  fg=pal["accent_fg"], font=f["small_bold"], padx=10, pady=3).pack(side="left", padx=(12, 0))
+        self.owner_lbl = tk.Label(header, text="", bg=pal["card2"], fg=pal["fg"], font=f["small_bold"], padx=10, pady=3)
+        self.owner_lbl.pack(side="left", padx=(10, 0))
         # Status pill; also takes the keyboard focus while capturing.
         self.banner = tk.Label(header, text="", font=f["small_bold"], padx=12, pady=3)
         self.banner.pack(side="left", padx=(10, 0))
@@ -602,6 +613,8 @@ class App:
         self.capture_btn.pack(side="left")
         self.pause_btn = ttk.Button(bar, text=t["pause"], command=self.toggle_send)
         self.pause_btn.pack(side="left", padx=(8, 0))
+        self.control_btn = ttk.Button(bar, text=t["to_auto"], command=self.toggle_control)
+        self.control_btn.pack(side="left", padx=(8, 0))
         ttk.Button(bar, text=t["reset"], command=self.reset_all).pack(side="left", padx=(8, 0))
         self.take_btn = ttk.Button(bar, text=t["takeover"], command=self.take_over,
                                    state="normal" if self.vr else "disabled")
@@ -958,7 +971,9 @@ class App:
 
     def update_banner(self) -> None:
         t = self.t
-        if self.captured:
+        if self.owner not in (None, "", "manual"):
+            self.set_status(t["auto_active"], "warn")
+        elif self.captured:
             self.set_status(f"{t['captured']}  ·  {t['targets'].get(self.target, self.target)}", "warn")
         elif self.sending:
             self.set_status(t["send_on"], "ok")
@@ -969,6 +984,60 @@ class App:
             self.target_var.set(self.target)
         if self.loco_var.get() != self.loco_stick:
             self.loco_var.set(self.loco_stick)
+
+    # -- control (manual / auto) ---------------------------------------------------
+    def control_loop(self) -> None:
+        """Asks the driver every second who has control of the head."""
+        c = VHMDClient(*self.c.addr, timeout=0.5)
+        while self.running:
+            try:
+                ctl = c.control().get("control", {})
+                self.owner = ctl.get("devices", {}).get("hmd", ctl.get("owner", ""))
+            except (OSError, ValueError):
+                self.owner = None
+            time.sleep(1.0)
+
+    def toggle_control(self) -> None:
+        """Hands the devices to "auto", or takes them back; taking them back
+        continues from the poses the automation left them at."""
+        target = "manual" if self.owner not in (None, "", "manual") else "auto"
+        try:
+            reply = VHMDClient(*self.c.addr, timeout=1.0).control(target)
+        except (OSError, ValueError) as e:
+            self.message.set(f"control: {e}")
+            return
+        if target == "manual":
+            self.adopt(reply.get("poses", {}))
+        ctl = reply.get("control", {})
+        self.owner = ctl.get("devices", {}).get("hmd", ctl.get("owner", ""))
+        self.show_owner()
+
+    def adopt(self, poses: dict) -> None:
+        """Continue from these world poses (id -> {"pos", "rot"})."""
+        with self.lock:
+            p = poses.get("hmd")
+            if p and self.hmd_active:
+                self.head.pos = list(p["pos"])
+                yaw, pitch, roll = math3d.to_euler(p["rot"])
+                self.head.yaw, self.head.pitch, self.head.roll = yaw, max(-89.0, min(89.0, pitch)), roll
+            for dev_id, p in poses.items():
+                if dev_id in self.devices:
+                    self.set_world(dev_id, p["pos"], tuple(p["rot"]))
+            self.prev.clear()
+        self.refresh_table(force=True)
+
+    def show_owner(self) -> None:
+        if self.owner == self.owner_shown:
+            return
+        self.owner_shown = self.owner
+        t = self.t
+        name = "?" if self.owner is None else t["owners"].get(self.owner, self.owner)
+        auto = self.owner not in (None, "", "manual")
+        self.owner_lbl.config(text=t["owner"].format(name), bg=self.pal["warn"] if auto else self.pal["card2"],
+                              fg=self.pal["warn_fg"] if auto else self.pal["fg"])
+        self.control_btn.config(text=t["to_manual"] if auto else t["to_auto"],
+                                state="disabled" if self.owner is None else "normal")
+        self.update_banner()
 
     def foreground(self) -> bool:
         fg = user32.GetForegroundWindow()
@@ -1281,6 +1350,7 @@ class App:
         if self.thread_message:
             self.message.set(self.thread_message)
             self.thread_message = ""
+        self.show_owner()
         self.show_view()
         self.draw_map()
         self.ui_count += 1
@@ -1536,7 +1606,7 @@ def main() -> None:
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
     w, h = min(1700, int(sw * 0.9)), min(1000, int(sh * 0.85))
     root.geometry(f"{w}x{h}+{(sw - w) // 2}+{max(0, (sh - h) // 3)}")
-    with VHMDClient(args.host, args.port) as c:
+    with VHMDClient(args.host, args.port, source="manual") as c:
         App(root, c, args.rate, args.lang or ui_language(), theme=args.theme)
         root.mainloop()
 
