@@ -60,10 +60,12 @@
 | `pos` | ○ | [x, y, z] m。各分量的绝对值 ≤ 1000 |
 | `rot` | ○ | [w, x, y, z]。范数为 0 / NaN 视为非法 |
 | `vel`, `angvel` | | [x, y, z]。绝对值 ≤ 100。用于 SteamVR 的预测(缺省为 0) |
+| `acc`, `angacc` | | 加速度(m/s²、rad/s²)[x, y, z]。绝对值 ≤ 1000。直接传给 SteamVR |
+| `age` | | 样本在发送时已经过时多少秒(0〜0.5)。SteamVR 从采样时刻开始预测(`poseTimeOffset`)。适用于摄像头估计等存在延迟的发送端 |
 | `ts` | | 发送端 UNIX 时间(秒)。用于诊断(`status` 的 `latency_ms`) |
 | `valid` | | 设为 `false` 可显式表示“追踪丢失”。可省略 `pos`/`rot`。收到下一个有效的 `pose` 时恢复 |
 
-### `input`(控制器 / HMD)
+### `input`(控制器 / 追踪器 / HMD)
 
 ```json
 { "type": "input", "id": "right_hand", "name": "trigger", "value": 0.8 }
@@ -84,11 +86,38 @@
 | `a_touch`, `b_touch`, `x_touch`, `y_touch` | `/input/a/touch` 等 | bool |
 | `system`, `system_touch` | `/input/system/click` / `touch` | bool |
 | `menu` | `/input/menu/click` | bool |
+| `trackpad_x`, `trackpad_y` | `/input/trackpad/x`, `y` | -1〜1 |
+| `trackpad_click` / `trackpad_touch` | `/input/trackpad/click` / `touch` | bool |
+| `trackpad_force` | `/input/trackpad/force` | 0〜1 |
+| `grip_force` | `/input/grip/force` | 0〜1 |
+| `thumbrest_touch` | `/input/thumbrest/touch` | bool |
 
-- 别名：`primary` = 右手 `a` / 左手 `x`，`secondary` = 右手 `b` / 左手 `y`。向左手发送 `a`/`b` 时按 `x`/`y` 处理，向右手发送 `x`/`y` 时按 `a`/`b` 处理。`thumbstick_*`, `stick_*` = `joystick_*`，`squeeze` = `grip`，`application_menu` = `menu`。
+追踪器(相当于实体追踪器的 POGO 针脚输入)：
+
+| 名称 | SteamVR 输入路径 | 类型 / 范围 |
+|---|---|---|
+| `system`, `menu`, `grip` | `/input/system/click`, `/input/menu/click`, `/input/grip/click` | bool |
+| `trigger` / `trigger_click` | `/input/trigger/value` / `click` | 0〜1 / bool |
+| `trackpad_x`, `trackpad_y`, `trackpad_click`, `trackpad_touch` | `/input/trackpad/...` | -1〜1 / bool |
+
+HMD：
+
+| 名称 | SteamVR 输入路径 | 类型 / 范围 |
+|---|---|---|
+| `system` | `/input/system/click` | bool |
+| `proximity` | `/proximity` | bool。佩戴传感器(true = 佩戴中，默认值为配置项 `hmd.proximity`)。应用会以 `k_EButton_ProximitySensor`、`/user/head/proximity` 以及 OpenXR 的 `XR_EXT_user_presence` 的形式收到 |
+
+所有设备通用：
+
+| 名称 | 内容 |
+|---|---|
+| `battery` | 电池电量 0〜1(`Prop_DeviceBatteryPercentage_Float`)。控制器和追踪器在发送之前为 1.0(满电)，HMD 在发送后变为带电池的设备 |
+| `charging` | 充电中(`Prop_DeviceIsCharging_Bool`) |
+
+- 别名：`primary` = 右手 `a` / 左手 `x`，`secondary` = 右手 `b` / 左手 `y`。向左手发送 `a`/`b` 时按 `x`/`y` 处理，向右手发送 `x`/`y` 时按 `a`/`b` 处理。`thumbstick_*`, `stick_*` = `joystick_*`，`squeeze` = `grip`，`application_menu` = `menu`，`touchpad_*` = `trackpad_*`。
 - 也可以直接使用原始路径(例如 `"/input/y/click"`)。
 - 只发送 `trigger` / `grip` 时，会自动生成 `*_click`(0.75 时 ON / 0.65 时 OFF)和 `*_touch`(0.05 / 0.02)。只要显式发送过一次 `*_click` / `*_touch`，该项的自动生成即停止。
-- HMD 仅支持 `system`。
+- 触控板和握把在输入配置文件中带有 force，因此 SteamVR 会根据 force 的值生成点击。在客户端发送 `*_force` 之前，`*_click` 也会同步反映到 force 上(只发送点击也能按下)。
 - 在同一更新周期内到达的值会按名称合并为最新值。
 
 ### `skeleton`(左右控制器的手指)
@@ -176,21 +205,35 @@
 
 ## VMT 兼容 OSC(可选)
 
-这是为了直接使用 [Virtual Motion Tracker](https://gpsnmeajp.github.io/VirtualMotionTrackerDocument/) 的发送端工具而实现的子集。通过 `vmt.enabled: true` 启用。
+这是为了直接使用 [Virtual Motion Tracker](https://gpsnmeajp.github.io/VirtualMotionTrackerDocument/)(0.15)的发送端工具而实现的兼容接收端。通过 `vmt.enabled: true` 启用。
 
 | 地址 | 支持情况 |
 |---|---|
 | `/VMT/Room/Unity`, `/VMT/Raw/Unity` | ○ Unity 坐标(左手系)→ 反转 Z 后转换 |
 | `/VMT/Room/UEuler`, `/VMT/Raw/UEuler` | ○ Unity 欧拉角(度) |
 | `/VMT/Room/Driver`, `/VMT/Raw/Driver` | ○ 直接使用驱动坐标 |
-| `/VMT/Input/Button[/Touch]` | ○ buttonIndex 0=system,1=a(左手 x),2=b(左手 y),3=menu,4=joystick_click,5=trigger_click,6=grip_click |
-| `/VMT/Input/Trigger[/Touch|/Click]` | ○ triggerIndex 0=trigger, 1=grip |
-| `/VMT/Input/Joystick[/Touch|/Click]` | ○ 仅 joystickIndex 0 |
-| `/VMT/Joint/*`, `/VMT/Follow/*`, `/VMT/Skeleton/*`, `/VMT/SetRoomMatrix` 等 | × 不支持(丢弃并记录日志) |
+| `/VMT/Joint/{Unity,UEuler,Driver}` | ○ 末尾附加 serial。相对于父设备(serial，`HMD` = HMD)位置和旋转的相对姿态。父设备移动时每个周期都会跟随 |
+| `/VMT/Follow/{Unity,UEuler,Driver}` | ○ 同上。仅位置跟随父设备，旋转固定为房间朝向 |
+| `/VMT/Input/Button[/Touch]` | ○ buttonIndex 0=system,1=a(左手 x),2=b(左手 y),3=menu,4=joystick,5=trigger,6=grip(点击 / 触摸) |
+| `/VMT/Input/Trigger[/Touch|/Click]` | ○ triggerIndex 0=trigger, 1=grip, 2=grip_force |
+| `/VMT/Input/Joystick[/Touch|/Click]` | ○ joystickIndex 0=joystick, 1=trackpad |
+| `/VMT/Skeleton/{Unity,UEuler,Driver}` + `/VMT/Skeleton/Apply` | ○ 先累积骨骼(0〜30，父骨骼空间)，在 Apply 时发送。未发送的骨骼为单位旋转 |
+| `/VMT/Skeleton/Scalar` | ○ boneSet 1〜5(拇指〜小指)的弯曲。VMT 中 0 = 握紧 / 1 = 张开。mode 仅支持 0 |
+| `/VMT/SetRoomMatrix[/Temporary]`, `/VMT/Set/RoomMatrix[/Temporary]` | ○ 房间空间 → 驱动空间的 3×4 矩阵(行优先，12 个值)。仅应用于 Room 系列的姿态。两者均保持到驱动退出(不保存到文件) |
+| `/VMT/Reset` | ○ 使所有由 VMT 驱动的设备无效(注册保留) |
+| `/VMT/Subscribe/Device`, `/VMT/Unsubscribe/Device` | ○ 通过 `/VMT/Out/SubscribedDevice` 发送指定 serial 的姿态(驱动空间) |
+| `/VMT/Get/Devices/List` | ○ 返回 `/VMT/Out/Devices/List`(`index:serial` 列表) |
+| `/VMT/Set/Destination` | ○ 更改输出目标(IP、端口) |
+| `/VMT/LoadSetting` | ○ 仅通过 `/VMT/Out/Log` 应答 |
+| `/VMT/SetAutoPoseUpdate`, `/VMT/SetDiagLog`, `/VMT/RequestRestart`, `/VMT/Config`, `/VMT/Debug` | 接受但不做任何处理 |
+
+输出(默认目标 127.0.0.1:39571，与 VMT 相同)：`/VMT/Out/Alive`(每秒一次，版本为 `VHMD_<版本>`)、`/VMT/Out/Unavailable`(每秒一次，0 = 正常)、`/VMT/Out/SubscribedDevice`、`/VMT/Out/Devices/List`、`/VMT/Out/Log`、`/VMT/Out/Haptic`(应用向由 VMT 驱动的设备请求振动时)。收到至少一条 VMT 消息后才开始输出。
 
 - `index` → 设备：`vmt.indexMap`(例 `{"0": "tracker_0", "1": "left_hand"}`)，未指定时为 `tracker_<index>`。
-- `enable` 2/5 → `left_hand`，3/6 → `right_hand`，0 → 使该设备的姿态无效。
-- 不区分 Room 和 Raw(房间矩阵未实现)。
+- `enable` 2/5 → `left_hand`，3/6 → `right_hand`，0 → 使该设备的姿态无效。4(追踪参考点)和 7(VIVE 追踪器兼容)按追踪器处理。
+- 输入和骨骼消息会送达该 index 最后发送姿态的设备。
+- 与 VMT 不同，即使未设置房间矩阵，也会接受 Room 系列的姿态(使用单位矩阵)。
+- VMT 特有的按键编号(Button0〜17 等)中，不在上表中的不予接受。
 - 由于与 VMT 本体使用相同的端口 39570，请勿与 VMT 驱动同时启用。
 
 ## 客户端实现示例

@@ -41,6 +41,13 @@ struct DeviceConfig {
     bool skeleton_full = false;                   // controllers: VRSkeletalTracking_Full (else Partial)
     bool eye_tracking = true;                     // hmd only
     bool head_model = false;                      // hmd only: true = pos is the neck pivot
+    bool proximity = true;                        // hmd only: proximity sensor at start (true = worn)
+    double play_area_width = 2.0;                 // hmd only: play area in meters (x)
+    double play_area_depth = 2.0;                 // hmd only: play area in meters (z)
+    // hmd only: audio endpoints SteamVR switches to while it runs (Windows endpoint
+    // id strings, e.g. from the Sound control panel). Empty = not reported.
+    std::string audio_playback;
+    std::string audio_recording;
 };
 
 // Frame-rate limits of the virtual display (display.refreshHz, op "refresh_rate").

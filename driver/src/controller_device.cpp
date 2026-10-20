@@ -34,6 +34,13 @@ constexpr InputDef kCommonInputs[] = {
     {"joystick_y", "/input/joystick/y", Kind::Scalar2},
     {"joystick_click", "/input/joystick/click", Kind::Bool},
     {"joystick_touch", "/input/joystick/touch", Kind::Bool},
+    {"trackpad_x", "/input/trackpad/x", Kind::Scalar2},
+    {"trackpad_y", "/input/trackpad/y", Kind::Scalar2},
+    {"trackpad_click", "/input/trackpad/click", Kind::Bool},
+    {"trackpad_touch", "/input/trackpad/touch", Kind::Bool},
+    {"trackpad_force", "/input/trackpad/force", Kind::Scalar1},
+    {"grip_force", "/input/grip/force", Kind::Scalar1},
+    {"thumbrest_touch", "/input/thumbrest/touch", Kind::Bool},
 };
 constexpr InputDef kLeftInputs[] = {
     {"x", "/input/x/click", Kind::Bool},
@@ -124,6 +131,7 @@ std::string ControllerDevice::CanonicalInputName(const std::string& raw, bool le
     // Aliases
     ReplacePrefix(n, "thumbstick_", "joystick_") || ReplacePrefix(n, "stick_", "joystick_");
     ReplacePrefix(n, "squeeze", "grip");
+    ReplacePrefix(n, "touchpad", "trackpad");
     ReplacePrefix(n, "application_menu", "menu");
     if (n == "trigger_value") n = "trigger";
     if (n == "grip_value") n = "grip";
@@ -209,6 +217,13 @@ void ControllerDevice::SetComponent(const std::string& canonical, float value) {
     } else {
         vr::VRDriverInput()->UpdateScalarComponent(it->second.handle, value, 0.0);
     }
+    // The profile declares force for the trackpad and grip, and SteamVR then
+    // derives their click from the force value. Until a client sends force
+    // itself, mirror the click into it so a plain click still clicks.
+    for (const char* axis : {"trackpad", "grip"}) {
+        const std::string a = axis;
+        if (canonical == a + "_click" && !explicit_[a + "_force"]) SetComponent(a + "_force", value >= 0.5f ? 1.0f : 0.0f);
+    }
 }
 
 void ControllerDevice::DeriveClickTouch(const std::string& axis, float value) {
@@ -236,11 +251,13 @@ void ControllerDevice::OnInput(const std::string& name, float value) {
     auto it = kinds.find(canonical);
     if (it != kinds.end() && !it->second.boolean) {
         // Scalar: clamp to the component's range.
-        const bool two_sided = canonical == "joystick_x" || canonical == "joystick_y";
+        const bool two_sided = canonical == "joystick_x" || canonical == "joystick_y" || canonical == "trackpad_x" ||
+                               canonical == "trackpad_y";
         value = std::clamp(value, two_sided ? -1.0f : 0.0f, 1.0f);
     }
     if (canonical.size() > 6 && (canonical.rfind("_click") == canonical.size() - 6 ||
-                                 canonical.rfind("_touch") == canonical.size() - 6)) {
+                                 canonical.rfind("_touch") == canonical.size() - 6 ||
+                                 canonical.rfind("_force") == canonical.size() - 6)) {
         explicit_[canonical] = true;
     }
     SetComponent(canonical, value);

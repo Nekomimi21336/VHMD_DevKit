@@ -38,6 +38,12 @@ private:
     void LoadConfig();
     void CreateDevices();
     void UpdateLoop();
+    // Raw poses of all SteamVR devices (any driver), refreshed each update tick;
+    // serials re-read once a second. Used for VMT Joint/Follow and subscriptions.
+    void RefreshRawPoses(Clock::time_point now);
+    bool RawPoseOf(const std::string& serial, Vec3& pos, Quat& rot) const;
+    std::string DevicesList() const;
+    void SendVmtOutputs(Clock::time_point now);
     void OnDatagram(std::string_view data, const Endpoint& from);
     int DeviceIndexFor(const std::string& id) const;
     std::string SetRole(const std::string& id, const RoleInfo& role);
@@ -61,6 +67,9 @@ private:
     UdpReceiver receiver_;
     std::mutex client_mu_;
     Endpoint last_client_;
+    std::array<vr::TrackedDevicePose_t, vr::k_unMaxTrackedDeviceCount> raw_poses_{};
+    std::array<std::string, vr::k_unMaxTrackedDeviceCount> serials_{};
+    Clock::time_point serials_read_{};
 
     // On-demand registration: queued by the receive thread, performed in RunFrame.
     std::mutex add_mu_;

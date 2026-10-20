@@ -1,6 +1,7 @@
 // Virtual generic tracker (waist, feet, knees, elbows, chest, ...).
 #pragma once
 
+#include <map>
 #include <mutex>
 #include <string>
 
@@ -25,6 +26,9 @@ public:
 
 protected:
     void OnActivate(vr::PropertyContainerHandle_t container) override;
+    // Buttons like the pogo-pin inputs of hardware trackers: system, menu, grip,
+    // trigger, trackpad (names or /input/... paths).
+    void OnInput(const std::string& name, float value) override;
 
 private:
     std::string CurrentRole();
@@ -35,6 +39,12 @@ private:
     vr::PropertyContainerHandle_t container_ = vr::k_ulInvalidPropertyContainer;
     std::mutex label_mu_;
     std::string shown_role_;
+    struct Component {
+        vr::VRInputComponentHandle_t handle = vr::k_ulInvalidInputComponentHandle;
+        bool boolean = true;
+        bool two_sided = false;
+    };
+    std::map<std::string, Component> components_;
 };
 
 } // namespace vhmd

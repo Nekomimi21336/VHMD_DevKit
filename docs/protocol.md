@@ -60,10 +60,12 @@
 | `pos` | ○ | [x, y, z] m。各成分の絶対値 ≤ 1000 |
 | `rot` | ○ | [w, x, y, z]。ノルム 0 / NaN は不正 |
 | `vel`, `angvel` | | [x, y, z]。絶対値 ≤ 100。SteamVR の予測に使われます(無ければ 0) |
+| `acc`, `angacc` | | 加速度(m/s²、rad/s²)の [x, y, z]。絶対値 ≤ 1000。SteamVR にそのまま渡します |
+| `age` | | サンプルが送信時点ですでに何秒古いか(0〜0.5)。SteamVR はサンプルを取った時刻から予測します(`poseTimeOffset`)。カメラ推定など遅れのある送信元向け |
 | `ts` | | 送信側 UNIX 時刻(秒)。診断用(`status` の `latency_ms`) |
 | `valid` | | `false` で「トラッキング喪失」を明示。`pos`/`rot` は省略可。次の有効 `pose` で復帰 |
 
-### `input`(コントローラ / HMD)
+### `input`(コントローラ / トラッカー / HMD)
 
 ```json
 { "type": "input", "id": "right_hand", "name": "trigger", "value": 0.8 }
@@ -84,11 +86,38 @@
 | `a_touch`, `b_touch`, `x_touch`, `y_touch` | `/input/a/touch` 等 | bool |
 | `system`, `system_touch` | `/input/system/click` / `touch` | bool |
 | `menu` | `/input/menu/click` | bool |
+| `trackpad_x`, `trackpad_y` | `/input/trackpad/x`, `y` | -1〜1 |
+| `trackpad_click` / `trackpad_touch` | `/input/trackpad/click` / `touch` | bool |
+| `trackpad_force` | `/input/trackpad/force` | 0〜1 |
+| `grip_force` | `/input/grip/force` | 0〜1 |
+| `thumbrest_touch` | `/input/thumbrest/touch` | bool |
 
-- 別名: `primary` = 右手 `a` / 左手 `x`、`secondary` = 右手 `b` / 左手 `y`。左手に `a`/`b` を送ると `x`/`y`、右手に `x`/`y` を送ると `a`/`b` として扱います。`thumbstick_*`, `stick_*` = `joystick_*`、`squeeze` = `grip`、`application_menu` = `menu`。
+トラッカー(実機トラッカーの POGO ピン入力に相当):
+
+| 名前 | SteamVR 入力パス | 型 / 範囲 |
+|---|---|---|
+| `system`, `menu`, `grip` | `/input/system/click`, `/input/menu/click`, `/input/grip/click` | bool |
+| `trigger` / `trigger_click` | `/input/trigger/value` / `click` | 0〜1 / bool |
+| `trackpad_x`, `trackpad_y`, `trackpad_click`, `trackpad_touch` | `/input/trackpad/...` | -1〜1 / bool |
+
+HMD:
+
+| 名前 | SteamVR 入力パス | 型 / 範囲 |
+|---|---|---|
+| `system` | `/input/system/click` | bool |
+| `proximity` | `/proximity` | bool。装着センサー(true = 装着中、既定は設定 `hmd.proximity`)。アプリには `k_EButton_ProximitySensor`、`/user/head/proximity`、OpenXR の `XR_EXT_user_presence` として届きます |
+
+全デバイス共通:
+
+| 名前 | 内容 |
+|---|---|
+| `battery` | バッテリー残量 0〜1(`Prop_DeviceBatteryPercentage_Float`)。コントローラー・トラッカーは送るまで 1.0(満充電)、HMD は送るとバッテリー付きになります |
+| `charging` | 充電中(`Prop_DeviceIsCharging_Bool`) |
+
+- 別名: `primary` = 右手 `a` / 左手 `x`、`secondary` = 右手 `b` / 左手 `y`。左手に `a`/`b` を送ると `x`/`y`、右手に `x`/`y` を送ると `a`/`b` として扱います。`thumbstick_*`, `stick_*` = `joystick_*`、`squeeze` = `grip`、`application_menu` = `menu`、`touchpad_*` = `trackpad_*`。
 - 生パス(例 `"/input/y/click"`)もそのまま使えます。
 - `trigger` / `grip` だけを送った場合、`*_click`(0.75 で ON / 0.65 で OFF)と `*_touch`(0.05 / 0.02)を自動生成します。`*_click` / `*_touch` を一度でも明示的に送るとその項目の自動生成は止まります。
-- HMD は `system` のみ。
+- トラックパッドとグリップは入力プロファイルで force 付きのため、SteamVR はクリックを force の値から作ります。クライアントが `*_force` を送るまでは、`*_click` を force にも反映します(クリックだけ送っても押せます)。
 - 同じ更新周期内に届いた値は名前ごとに最新値へまとめられます。
 
 ### `skeleton`(左右コントローラの指)
@@ -176,21 +205,35 @@
 
 ## VMT 互換 OSC(任意)
 
-[Virtual Motion Tracker](https://gpsnmeajp.github.io/VirtualMotionTrackerDocument/) の送信側ツールをそのまま使うためのサブセットです。`vmt.enabled: true` で有効化。
+[Virtual Motion Tracker](https://gpsnmeajp.github.io/VirtualMotionTrackerDocument/)(0.15)の送信側ツールをそのまま使うための互換受信です。`vmt.enabled: true` で有効化。
 
 | アドレス | 対応 |
 |---|---|
 | `/VMT/Room/Unity`, `/VMT/Raw/Unity` | ○ Unity 座標(左手系)→ Z 反転して変換 |
 | `/VMT/Room/UEuler`, `/VMT/Raw/UEuler` | ○ Unity オイラー角(度) |
 | `/VMT/Room/Driver`, `/VMT/Raw/Driver` | ○ ドライバ座標そのまま |
-| `/VMT/Input/Button[/Touch]` | ○ buttonIndex 0=system,1=a(左手 x),2=b(左手 y),3=menu,4=joystick_click,5=trigger_click,6=grip_click |
-| `/VMT/Input/Trigger[/Touch|/Click]` | ○ triggerIndex 0=trigger, 1=grip |
-| `/VMT/Input/Joystick[/Touch|/Click]` | ○ joystickIndex 0 のみ |
-| `/VMT/Joint/*`, `/VMT/Follow/*`, `/VMT/Skeleton/*`, `/VMT/SetRoomMatrix` 等 | × 未対応(破棄してログ) |
+| `/VMT/Joint/{Unity,UEuler,Driver}` | ○ 最後に serial を付ける。親デバイス(serial、`HMD` = HMD)の位置と回転に対する相対ポーズ。親が動くと毎周期追従 |
+| `/VMT/Follow/{Unity,UEuler,Driver}` | ○ 同上。位置だけ親に追従し、回転はルームの向きで固定 |
+| `/VMT/Input/Button[/Touch]` | ○ buttonIndex 0=system,1=a(左手 x),2=b(左手 y),3=menu,4=joystick,5=trigger,6=grip(クリック / タッチ) |
+| `/VMT/Input/Trigger[/Touch|/Click]` | ○ triggerIndex 0=trigger, 1=grip, 2=grip_force |
+| `/VMT/Input/Joystick[/Touch|/Click]` | ○ joystickIndex 0=joystick, 1=trackpad |
+| `/VMT/Skeleton/{Unity,UEuler,Driver}` + `/VMT/Skeleton/Apply` | ○ ボーン(0〜30、親ボーン空間)を貯めて Apply で送る。送っていないボーンは単位回転 |
+| `/VMT/Skeleton/Scalar` | ○ boneSet 1〜5(親指〜小指)の曲げ。VMT の 0 = 握り / 1 = 開き。mode は 0 のみ |
+| `/VMT/SetRoomMatrix[/Temporary]`, `/VMT/Set/RoomMatrix[/Temporary]` | ○ ルーム空間 → ドライバ空間の 3×4 行列(行優先 12 個)。Room 系のポーズにだけ適用。どちらもドライバ終了まで(ファイルには保存しない) |
+| `/VMT/Reset` | ○ VMT で動かしたデバイスをすべて無効化(登録は残る) |
+| `/VMT/Subscribe/Device`, `/VMT/Unsubscribe/Device` | ○ 指定した serial の姿勢を `/VMT/Out/SubscribedDevice` で送る(ドライバ空間) |
+| `/VMT/Get/Devices/List` | ○ `/VMT/Out/Devices/List`(`index:serial` の一覧)を返す |
+| `/VMT/Set/Destination` | ○ 出力先(IP、ポート)の変更 |
+| `/VMT/LoadSetting` | ○ `/VMT/Out/Log` で応答のみ |
+| `/VMT/SetAutoPoseUpdate`, `/VMT/SetDiagLog`, `/VMT/RequestRestart`, `/VMT/Config`, `/VMT/Debug` | 受け付けるが何もしない |
+
+出力(既定の送信先 127.0.0.1:39571、VMT と同じ): `/VMT/Out/Alive`(1 秒ごと、版は `VHMD_<版>`)、`/VMT/Out/Unavailable`(1 秒ごと、0 = 正常)、`/VMT/Out/SubscribedDevice`、`/VMT/Out/Devices/List`、`/VMT/Out/Log`、`/VMT/Out/Haptic`(VMT で動かしているデバイスにアプリが振動を要求したとき)。出力は VMT のメッセージを 1 つでも受け取ってから始まります。
 
 - `index` → デバイス: `vmt.indexMap`(例 `{"0": "tracker_0", "1": "left_hand"}`)、無指定なら `tracker_<index>`。
-- `enable` 2/5 → `left_hand`、3/6 → `right_hand`、0 → そのデバイスのポーズ無効化。
-- Room と Raw は区別しません(ルーム行列は未実装)。
+- `enable` 2/5 → `left_hand`、3/6 → `right_hand`、0 → そのデバイスのポーズ無効化。4(トラッキングリファレンス)と 7(VIVE トラッカー互換)はトラッカーとして扱います。
+- 入力とスケルトンのメッセージは、その index が最後にポーズを送ったデバイスに届きます。
+- VMT と違い、ルーム行列を設定しなくても Room 系のポーズは受け付けます(単位行列)。
+- VMT 独自のボタン番号(Button0〜17 など)のうち、上の表にないものは受け付けません。
 - VMT 本体と同じポート 39570 を使うため、VMT ドライバと同時に有効化しないでください。
 
 ## クライアント実装の例

@@ -3,6 +3,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -67,6 +68,8 @@ protected:
     virtual void OnActivate(vr::PropertyContainerHandle_t container) = 0;
     virtual void OnDeactivate() {}
     virtual void OnInput(const std::string& /*name*/, float /*value*/) {}
+    // "battery" (0..1) and "charging" for every device kind; true if handled.
+    bool HandleCommonInput(const std::string& name, float value);
     virtual void OnSkeleton(const SkeletonMessage& /*m*/) {}
     virtual void OnGaze(const GazeMessage& /*m*/) {}
     // Called every tick after inputs were applied (e.g. skeleton refresh).
@@ -84,6 +87,11 @@ protected:
 public:
     // Driver install folder (set once by the provider before devices activate).
     static void SetInstallPath(const std::string& path);
+    // Raw pose of another device by serial ("HMD" = the active HMD), for poses
+    // sent relative to a parent (VMT Joint / Follow). Set by the provider; called
+    // on the update thread.
+    using ParentLookup = std::function<bool(const std::string& serial, Vec3& pos, Quat& rot)>;
+    static void SetParentLookup(ParentLookup lookup);
 
 protected:
     DeviceState& State() { return *state_; }

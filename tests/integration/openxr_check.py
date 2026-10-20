@@ -1,13 +1,15 @@
-"""Eye gaze check through SteamVR's OpenXR runtime, run as its own process by run_integration.py.
+"""OpenXR check through SteamVR's OpenXR runtime, run as its own process by run_integration.py.
 
 Opens a headless OpenXR session (XR_MND_headless, no graphics) on SteamVR's
 own OpenXR loader, binds a pose action to XR_EXT_eye_gaze_interaction
 (/user/eyes_ext/input/gaze_ext/pose) and locates it in VIEW and STAGE space
 while gaze messages are sent to the driver. Also checks that the head pose in
-LOCAL space matches STAGE (the vhmd universe is calibrated at identity).
+LOCAL space matches STAGE (the vhmd universe is calibrated at identity), that
+the HMD proximity sensor arrives as XR_EXT_user_presence events, and that the
+hand skeleton arrives as XR_EXT_hand_tracking joints.
 Plain ctypes, so no extra Python package is needed. Prints one JSON line: {"results": [...], "info": {...}}.
 
-    python tests/integration/openxr_eye_check.py [--port 39570]
+    python tests/integration/openxr_check.py [--port 39570]
 """
 
 from __future__ import annotations
@@ -83,6 +85,17 @@ StateGI = S("XrActionStateGetInfo", [("type", c_int32), ("next", c_void_p), ("ac
 StatePose = S("XrActionStatePose", [("type", c_int32), ("next", c_void_p), ("isActive", c_uint32)])
 SpaceLoc = S("XrSpaceLocation", [("type", c_int32), ("next", c_void_p), ("locationFlags", c_uint64), ("pose", Pose)])
 Timespec = S("timespec", [("tv_sec", c_int64), ("tv_nsec", c_int64)])
+PresenceProps = S("XrSystemUserPresencePropertiesEXT", [("type", c_int32), ("next", c_void_p), ("supportsUserPresence", c_uint32)])
+PresenceChanged = S("XrEventDataUserPresenceChangedEXT", [("type", c_int32), ("next", c_void_p), ("session", H),
+                                                          ("isUserPresent", c_uint32)])
+HandProps = S("XrSystemHandTrackingPropertiesEXT", [("type", c_int32), ("next", c_void_p), ("supportsHandTracking", c_uint32)])
+HandTrackerCI = S("XrHandTrackerCreateInfoEXT", [("type", c_int32), ("next", c_void_p), ("hand", c_int32),
+                                                 ("handJointSet", c_int32)])
+HandJointsLocateInfo = S("XrHandJointsLocateInfoEXT", [("type", c_int32), ("next", c_void_p), ("baseSpace", H),
+                                                       ("time", c_int64)])
+HandJointLocation = S("XrHandJointLocationEXT", [("locationFlags", c_uint64), ("pose", Pose), ("radius", c_float)])
+HandJointLocations = S("XrHandJointLocationsEXT", [("type", c_int32), ("next", c_void_p), ("isActive", c_uint32),
+                                                   ("jointCount", c_uint32), ("jointLocations", POINTER(HandJointLocation))])
 
 # XrStructureType / enum values from openxr.h
 TYPE_EXTENSION_PROPERTIES, TYPE_INSTANCE_CREATE_INFO, TYPE_SYSTEM_GET_INFO, TYPE_SYSTEM_PROPERTIES = 2, 3, 4, 5
@@ -93,6 +106,11 @@ TYPE_REFERENCE_SPACE_CREATE_INFO, TYPE_ACTION_SPACE_CREATE_INFO, TYPE_SPACE_LOCA
 TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING, TYPE_ACTION_STATE_GET_INFO = 51, 58
 TYPE_SESSION_ACTION_SETS_ATTACH_INFO, TYPE_ACTIONS_SYNC_INFO = 60, 61
 TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT = 1000030000
+TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT, TYPE_HAND_TRACKER_CREATE_INFO_EXT = 1000051000, 1000051001
+TYPE_HAND_JOINTS_LOCATE_INFO_EXT, TYPE_HAND_JOINT_LOCATIONS_EXT = 1000051002, 1000051003
+TYPE_EVENT_DATA_USER_PRESENCE_CHANGED_EXT, TYPE_SYSTEM_USER_PRESENCE_PROPERTIES_EXT = 1000470000, 1000470001
+HAND_LEFT, HAND_JOINT_COUNT, JOINT_WRIST, JOINT_INDEX_TIP, JOINT_MIDDLE_TIP = 1, 26, 1, 10, 15
+OPTIONAL_EXTS = (b"XR_EXT_user_presence", b"XR_EXT_hand_tracking")
 FORM_FACTOR_HMD, ACTION_TYPE_POSE, VIEW_CONFIG_STEREO = 1, 4, 2
 SPACE_VIEW, SPACE_LOCAL, SPACE_STAGE = 1, 2, 3
 STATE_READY, STATE_SYNCHRONIZED, STATE_FOCUSED = 2, 3, 5
@@ -126,6 +144,7 @@ class EyeGazeSession:
     def __init__(self):
         self.xr = load_loader()
         self.inst, self.sess, self.state = H(), H(), 0
+        self.presence_events = []
 
     def ok(self, result, what):
         if result < 0:
@@ -147,21 +166,33 @@ class EyeGazeSession:
     def open(self):
         xr = self.xr
         wanted = [b"XR_EXT_eye_gaze_interaction", b"XR_MND_headless", TIME_EXT]
-        missing = [e.decode() for e in wanted if e not in self.extensions()]
+        available = self.extensions()
+        missing = [e.decode() for e in wanted if e not in available]
         if missing:
             raise Skip("runtime lacks " + ", ".join(missing))
+        self.optional = {e.decode() for e in OPTIONAL_EXTS if e in available}
+        wanted += [e for e in OPTIONAL_EXTS if e in available]
         names = (c_char_p * len(wanted))(*wanted)
-        ci = InstanceCI(TYPE_INSTANCE_CREATE_INFO, None, 0, AppInfo(b"vhmd_openxr_eye_check", 1, b"none", 0, 1 << 48),
+        ci = InstanceCI(TYPE_INSTANCE_CREATE_INFO, None, 0, AppInfo(b"vhmd_openxr_check", 1, b"none", 0, 1 << 48),
                         0, None, len(wanted), names)
         self.ok(xr.xrCreateInstance(byref(ci), byref(self.inst)), "xrCreateInstance")
         system = H()
         self.ok(xr.xrGetSystem(self.inst, byref(SystemGI(TYPE_SYSTEM_GET_INFO, None, FORM_FACTOR_HMD)), byref(system)),
                 "xrGetSystem")
-        eye = EyeProps(TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT, None, 0)
+        presence = PresenceProps(TYPE_SYSTEM_USER_PRESENCE_PROPERTIES_EXT, None, 0)
+        hands = HandProps(TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT, None, 0)
+        chain = None
+        if "XR_EXT_user_presence" in self.optional:
+            presence.next, chain = chain, ctypes.addressof(presence)
+        if "XR_EXT_hand_tracking" in self.optional:
+            hands.next, chain = chain, ctypes.addressof(hands)
+        eye = EyeProps(TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT, chain, 0)
         props = SysProps(TYPE_SYSTEM_PROPERTIES, ctypes.addressof(eye))
         self.ok(xr.xrGetSystemProperties(self.inst, system, byref(props)), "xrGetSystemProperties")
         self.system_name = props.systemName.decode(errors="replace")
         self.supports_eye_gaze = bool(eye.supportsEyeGazeInteraction)
+        self.supports_presence = bool(presence.supportsUserPresence)
+        self.supports_hands = bool(hands.supportsHandTracking)
         # XR_MND_headless: no graphics binding in the create info.
         self.ok(xr.xrCreateSession(self.inst, byref(SessionCI(TYPE_SESSION_CREATE_INFO, None, 0, system.value)),
                                    byref(self.sess)), "xrCreateSession")
@@ -198,6 +229,18 @@ class EyeGazeSession:
                     "xrGetInstanceProcAddr")
             self._convert = CFUNCTYPE(c_int32, H, POINTER(Timespec), POINTER(c_int64))(fn.value)
         self.active = (ActiveSet * 1)(ActiveSet(self.aset.value, 0))
+        self.hand_tracker = None
+        if self.supports_hands:
+            for name in ("xrCreateHandTrackerEXT", "xrLocateHandJointsEXT"):
+                self.ok(xr.xrGetInstanceProcAddr(self.inst, name.encode(), byref(fn)), "xrGetInstanceProcAddr " + name)
+                if name == "xrCreateHandTrackerEXT":
+                    create = CFUNCTYPE(c_int32, H, POINTER(HandTrackerCI), POINTER(H))(fn.value)
+                else:
+                    self._locate_joints = CFUNCTYPE(c_int32, H, POINTER(HandJointsLocateInfo),
+                                                    POINTER(HandJointLocations))(fn.value)
+            self.hand_tracker = H()
+            self.ok(create(self.sess, byref(HandTrackerCI(TYPE_HAND_TRACKER_CREATE_INFO_EXT, None, HAND_LEFT, 0)),
+                           byref(self.hand_tracker)), "xrCreateHandTrackerEXT")
 
     def now(self):
         t = c_int64()
@@ -215,6 +258,8 @@ class EyeGazeSession:
             ev = EventBuf(TYPE_EVENT_DATA_BUFFER, None)
             if self.xr.xrPollEvent(self.inst, byref(ev)) != 0:  # XR_EVENT_UNAVAILABLE
                 return
+            if ev.type == TYPE_EVENT_DATA_USER_PRESENCE_CHANGED_EXT:
+                self.presence_events.append(bool(cast(byref(ev), POINTER(PresenceChanged)).contents.isUserPresent))
             if ev.type == TYPE_EVENT_DATA_SESSION_STATE_CHANGED:
                 self.state = cast(byref(ev), POINTER(StateChanged)).contents.state
                 if self.state == STATE_READY:
@@ -238,6 +283,18 @@ class EyeGazeSession:
         r = self.xr.xrLocateSpace(space, self.spaces[base], self.now(), byref(loc))
         q, p = loc.pose.orientation, loc.pose.position
         return r, loc.locationFlags, (p.x, p.y, p.z), (q.w, q.x, q.y, q.z)
+
+    def hand_joints(self, base="stage"):
+        """(isActive, [(flags, (x, y, z))] * 26) for the left hand."""
+        joints = (HandJointLocation * HAND_JOINT_COUNT)()
+        locs = HandJointLocations(TYPE_HAND_JOINT_LOCATIONS_EXT, None, 0, HAND_JOINT_COUNT, joints)
+        r = self._locate_joints(self.hand_tracker, byref(HandJointsLocateInfo(TYPE_HAND_JOINTS_LOCATE_INFO_EXT, None,
+                                                                              self.spaces[base].value, self.now())),
+                                byref(locs))
+        if r < 0:
+            raise XrError(f"xrLocateHandJointsEXT failed ({r})")
+        return bool(locs.isActive), [(j.locationFlags, (j.pose.position.x, j.pose.position.y, j.pose.position.z))
+                                     for j in joints]
 
     def close(self):
         if self.sess.value:
@@ -343,6 +400,61 @@ def main() -> int:
                 break
         results.append({"name": "OpenXR: gaze valid=false clears the location flags", "ok": flags is not None
                         and flags & tracked == 0, "detail": f"flags {flags:#x}" if flags is not None else ""})
+
+        # HMD proximity sensor -> XR_EXT_user_presence events.
+        if "XR_EXT_user_presence" in xr.optional:
+            def presence_becomes(value):
+                xr.presence_events.clear()
+                t1, last = time.perf_counter(), 0.0
+                while time.perf_counter() - t1 < 3.0:
+                    if time.perf_counter() - last > 0.1:
+                        client.proximity(value)
+                        last = time.perf_counter()
+                    xr.sync()
+                    if value in xr.presence_events:
+                        return True
+                    time.sleep(0.02)
+                return False
+
+            removed, worn = presence_becomes(False), presence_becomes(True)
+            results.append({"name": "OpenXR: proximity sensor arrives as XR_EXT_user_presence events",
+                            "ok": xr.supports_presence and removed and worn,
+                            "detail": f"supportsUserPresence={xr.supports_presence} removed={removed} worn={worn}"})
+        else:
+            info["openxr_user_presence"] = "extension not offered by the runtime"
+
+        # Hand skeleton -> XR_EXT_hand_tracking joints (hand tracking twins, Full skeleton).
+        if xr.hand_tracker is not None:
+            client.hand_mode("hands")
+
+            def spread(curl):
+                """Index/middle fingertip distance from the wrist once the hand settles."""
+                t1, last, value, active = time.perf_counter(), 0.0, None, False
+                while time.perf_counter() - t1 < 4.0:
+                    if time.perf_counter() - last > 0.05:
+                        client.pose("left_hand", (-0.2, 1.2, -0.3))
+                        client.skeleton_curl("left_hand", [curl] * 5)
+                        last = time.perf_counter()
+                    xr.sync()
+                    active, joints = xr.hand_joints()
+                    if active and time.perf_counter() - t1 > 1.0:
+                        wrist = joints[JOINT_WRIST][1]
+                        value = (dist(joints[JOINT_INDEX_TIP][1], wrist) + dist(joints[JOINT_MIDDLE_TIP][1], wrist)) / 2
+                        break
+                    time.sleep(0.02)
+                return active, value
+
+            open_active, open_d = spread(0.0)
+            fist_active, fist_d = spread(1.0)
+            client.hand_mode("controllers")
+            ok = (xr.supports_hands and open_active and fist_active and open_d is not None and fist_d is not None
+                  and open_d - fist_d > 0.03)
+            results.append({"name": "OpenXR: hand skeleton arrives as XR_EXT_hand_tracking joints (fist closes the hand)",
+                            "ok": ok, "detail": f"active open={open_active} fist={fist_active}, fingertip-wrist "
+                                               f"open={open_d if open_d is None else round(open_d, 3)} m "
+                                               f"fist={fist_d if fist_d is None else round(fist_d, 3)} m"})
+        else:
+            info["openxr_hand_tracking"] = "not supported by the runtime"
     except Skip as e:
         info["openxr_skipped"] = str(e)
     except XrError as e:

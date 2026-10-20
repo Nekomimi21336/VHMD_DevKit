@@ -88,13 +88,26 @@ class VHMDClient:
         vel: Optional[Sequence[float]] = None,
         angvel: Optional[Sequence[float]] = None,
         ts: Optional[float] = None,
+        acc: Optional[Sequence[float]] = None,
+        angacc: Optional[Sequence[float]] = None,
+        age: Optional[float] = None,
     ) -> None:
-        """Pose in meters / quaternion (w, x, y, z), SteamVR space."""
+        """Pose in meters / quaternion (w, x, y, z), SteamVR space.
+
+        acc / angacc: acceleration (m/s^2, rad/s^2). age: how old the sample
+        already is (seconds, 0..0.5); SteamVR then predicts from when it was taken.
+        """
         msg: Dict[str, Any] = {"type": "pose", "id": device_id, "pos": list(pos), "rot": list(rot)}
         if vel is not None:
             msg["vel"] = list(vel)
         if angvel is not None:
             msg["angvel"] = list(angvel)
+        if acc is not None:
+            msg["acc"] = list(acc)
+        if angacc is not None:
+            msg["angacc"] = list(angacc)
+        if age is not None:
+            msg["age"] = age
         msg["ts"] = time.time() if ts is None else ts
         self.send(msg)
 
@@ -104,6 +117,17 @@ class VHMDClient:
 
     def input(self, device_id: str, name: str, value: float | bool) -> None:
         self.send({"type": "input", "id": device_id, "name": name, "value": value})
+
+    def proximity(self, worn: bool) -> None:
+        """HMD proximity sensor: True = the headset is worn."""
+        self.input("hmd", "proximity", worn)
+
+    def battery(self, device_id: str, level: float, charging: Optional[bool] = None) -> None:
+        """Battery level 0..1 (and charging state) shown by SteamVR."""
+        values: Dict[str, float | bool] = {"battery": level}
+        if charging is not None:
+            values["charging"] = charging
+        self.inputs(device_id, values)
 
     def inputs(self, device_id: str, values: Mapping[str, float | bool]) -> None:
         self.send({"type": "input", "id": device_id, "values": dict(values)})

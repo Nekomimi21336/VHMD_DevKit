@@ -394,3 +394,35 @@ TEST(udp_loopback_roundtrip) {
     CHECK(!dup.Open("127.0.0.1", server.LocalPort(), err));
     CHECK(!dup.Open("not-an-ip", 0, err));
 }
+
+TEST(config_hmd_proximity_and_play_area) {
+    auto d = DefaultConfig();
+    for (const auto& dev : d.devices) {
+        if (dev.kind == DeviceKind::Hmd) CHECK(dev.proximity && dev.play_area_width == 2.0 && dev.play_area_depth == 2.0);
+    }
+    auto r = LoadConfigFromJson(R"({"hmd":{"proximity":false,"playArea":[3.5,2.5]}})");
+    for (const auto& dev : r.config.devices) {
+        if (dev.kind == DeviceKind::Hmd) CHECK(!dev.proximity && dev.play_area_width == 3.5 && dev.play_area_depth == 2.5);
+    }
+    auto bad = LoadConfigFromJson(R"({"hmd":{"playArea":[0.1,500]}})");
+    CHECK(!bad.warnings.empty());
+}
+
+TEST(state_pose_age_becomes_time_offset) {
+    auto c = DefaultConfig();
+    DeviceConfig cfg;
+    for (const auto& dev : c.devices) {
+        if (dev.id == "tracker_0") cfg = dev;
+    }
+    DeviceState s(cfg, c);
+    PoseMessage m;
+    m.id = "tracker_0";
+    m.pos = {0, 1, 0};
+    m.age = 0.05;
+    m.acc = Vec3{0, -1, 0};
+    const auto t0 = Clock::now();
+    s.SubmitPose(m, t0);
+    auto out = s.ComputeOutput(t0 + std::chrono::milliseconds(10));
+    CHECK_NEAR(out.time_offset, -0.06, 1e-6);
+    CHECK_NEAR(out.acc.y, -1.0, 1e-12);
+}

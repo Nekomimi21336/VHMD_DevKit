@@ -373,6 +373,30 @@ SteamVR 起動中の挙動(設定の掃除を飛ばして警告、`-Restore` は
 
 統合テストに「ユニバースと較正(着座原点 = 単位行列)」と「OpenXR の LOCAL = STAGE」を追加。新しく起動した SteamVR で `run_integration.py` **44/44 合格**、Linux(WSL)でもビルドと単体テストが通ることを確認。
 
+### Windows だけで確認できる範囲の実装(2026-10-20、Windows 11、SteamVR 2.17.10)
+
+SteamVR が受け付ける機能のうち、Windows の検証環境だけで確認できるものを実装した。統合テストは既定の設定で **58/58**、`vmt.enabled: true` で **67/67**。C++ 単体テスト 53 件、Linux(WSL)でもビルドと単体テストが通る。
+
+| 機能 | アプリ側で確認したこと |
+|---|---|
+| HMD の装着センサー(`/proximity`、`Prop_ContainsProximitySensor_Bool`) | レガシー API の `k_EButton_ProximitySensor`、SteamVR Input の `/user/head/proximity`、OpenXR の `XR_EXT_user_presence` イベント(外す / 着ける) |
+| バッテリー(`battery` / `charging` 入力) | `Prop_DeviceBatteryPercentage_Float` = 0.42、`Prop_DeviceIsCharging_Bool` = true が読める。コントローラー・トラッカーは既定で満充電、HMD はバッテリーなし |
+| トラックパッド、グリップの force、サムレスト | SteamVR Input のアクションで位置(0.5, −0.25)・クリック・force 0.7・タッチ |
+| トラッカーの入力 | `/user/waist` に割り当てたトリガー 0.8、トラックパッド、グリップ |
+| サンプルの遅れ(`age` → `poseTimeOffset`) | 1 m/s で動くトラッカーに `age` 50 ms を付けると、アプリから見た位置が約 6 cm 先に進む(期待 5 cm + 受信からの時間) |
+| プレイエリアの設定 | `GetPlayAreaSize` = 2.0 × 2.0 m(`hmd.playArea`) |
+| 入力名の多言語化(`resources/localization/localization.json`) | トリガーの入力元の名前が日本語(「右手 VirtualHMD コントローラー トリガー」) |
+| OpenXR のハンドトラッキング | `XR_EXT_hand_tracking` の関節が取れ、指先と手首の距離が開き 18.9 cm → 握り 8.1 cm |
+| VMT 互換 OSC | Room / Raw とルーム行列、Joint / Follow(親が動くと追従)、`/VMT/Out/Alive`・`SubscribedDevice`・`Devices/List` が 39571 番に届く、Reset |
+| オーディオデバイス(`hmd.audio`) | `Prop_Audio_DefaultPlaybackDeviceId_String` などが設定どおり読める(ダミーの ID で確認) |
+
+見つかったこと:
+- **トラックパッドやグリップの入力プロファイルに `force` を書くと、SteamVR はクリックを force の値から作る。** クリックだけ送るクライアントのために、force を送るまではクリックを force にも反映するようにした。
+- **アクションマニフェストを設定したアプリには、レガシー入力(`getControllerState`)が来ない。** 装着センサーのレガシー側の確認は、レガシー専用のテスト(`input_check.py`)に置いた。
+- **HMD の装着センサーには、レガシーバインディング(`/user/head/proximity` → `head_proximity`)が必要。** SteamVR 同梱の Rift のプロファイルと同じ形にした。
+- pyopenvr の `getActionOrigins` は `byref()` に整数を渡して落ち、`getOriginLocalizedName` はサイズ問い合わせ(バッファなし)で SteamVR 側がアクセス違反になる。テストでは関数テーブルを直接呼んだ。SteamVR はこの名前を日本語 Windows では ANSI コードページで返した。
+- **仮想カメラ(`IVRCameraComponent`)は動かなかったため取り下げた。** SteamVR はカメラコンポーネントを取得し `GetCameraFrameBounds` まで呼ぶが、`AcquireVideoStreamingService` は `OperationFailed` で、フレームバッファの設定や `StartVideoStream` は一度も呼ばれない。vrcompositor.txt には `Error connecting to camera block queue` → `D3D11 Camera Initialization failure`。カメラ関連のプロパティを足しても、SteamVR のカメラ設定を有効にして再起動しても、アプリの種類を変えても同じ。実機カメラ(Lighthouse の HMD など)向けの経路と判断した。確認のため一時的に有効にした SteamVR のカメラ設定は元(無効)に戻した。
+
 ## 2. 手動検証手順(要件 10.2)
 
 GUI 操作が必要なため未実施の項目です。結果欄に記入してください。

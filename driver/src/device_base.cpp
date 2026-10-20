@@ -1,5 +1,6 @@
 #include "device_base.h"
 
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -17,8 +18,11 @@ constexpr auto kInactiveRefresh = std::chrono::seconds(1);
 
 bool SamePose(const vr::DriverPose_t& a, const vr::DriverPose_t& b) {
     for (int i = 0; i < 3; ++i) {
-        if (a.vecPosition[i] != b.vecPosition[i] || a.vecVelocity[i] != 0.0 || a.vecAngularVelocity[i] != 0.0) return false;
+        if (a.vecPosition[i] != b.vecPosition[i] || a.vecVelocity[i] != 0.0 || a.vecAngularVelocity[i] != 0.0 ||
+            a.vecAcceleration[i] != 0.0 || a.vecAngularAcceleration[i] != 0.0)
+            return false;
     }
+    if (a.poseTimeOffset != 0.0) return false;
     return a.qRotation.w == b.qRotation.w && a.qRotation.x == b.qRotation.x && a.qRotation.y == b.qRotation.y &&
            a.qRotation.z == b.qRotation.z && a.poseIsValid == b.poseIsValid && a.deviceIsConnected == b.deviceIsConnected &&
            a.result == b.result;
@@ -42,6 +46,13 @@ vr::DriverPose_t MakeDriverPose(const OutputPose& out, bool head_model) {
     pose.vecAngularVelocity[0] = out.angvel.x;
     pose.vecAngularVelocity[1] = out.angvel.y;
     pose.vecAngularVelocity[2] = out.angvel.z;
+    pose.vecAcceleration[0] = out.acc.x;
+    pose.vecAcceleration[1] = out.acc.y;
+    pose.vecAcceleration[2] = out.acc.z;
+    pose.vecAngularAcceleration[0] = out.angacc.x;
+    pose.vecAngularAcceleration[1] = out.angacc.y;
+    pose.vecAngularAcceleration[2] = out.angacc.z;
+    pose.poseTimeOffset = out.time_offset;
     pose.poseIsValid = out.pose_valid;
     pose.deviceIsConnected = out.connected;
     pose.result = out.pose_valid ? vr::TrackingResult_Running_OK : vr::TrackingResult_Running_OutOfRange;
@@ -53,7 +64,10 @@ vr::DriverPose_t MakeDriverPose(const OutputPose& out, bool head_model) {
 VirtualDevice::VirtualDevice(std::shared_ptr<DeviceState> state) : state_(std::move(state)) {
     serial_ = state_->Config().serial;
     key_ = state_->Config().id;
-    last_pose_ = MakeDriverPose(OutputPose{state_->Config().default_pos, state_->Config().default_rot}, false);
+    OutputPose initial;
+    initial.pos = state_->Config().default_pos;
+    initial.rot = state_->Config().default_rot;
+    last_pose_ = MakeDriverPose(initial, false);
 }
 
 VirtualDevice::VirtualDevice(std::shared_ptr<DeviceState> state, std::string serial, std::string key_suffix)
@@ -99,10 +113,40 @@ vr::DriverPose_t VirtualDevice::GetPose() {
     return last_pose_;
 }
 
+namespace {
+VirtualDevice::ParentLookup& ParentLookupFn() {
+    static VirtualDevice::ParentLookup fn;
+    return fn;
+}
+
+// Joint: the pose is in the parent's frame. Follow: the offset is added to the
+// parent's position and the rotation is kept (already in room orientation).
+void ApplyParent(OutputPose& out) {
+    Vec3 pp;
+    Quat pq;
+    const auto& lookup = ParentLookupFn();
+    if (!lookup || !lookup(out.parent, pp, pq)) {
+        out.pose_valid = false;
+        return;
+    }
+    if (out.follow) {
+        out.pos = pp + out.pos;
+    } else {
+        out.pos = pp + Rotate(pq, out.pos);
+        out.rot = Multiply(pq, out.rot);
+    }
+    out.vel = {};
+    out.angvel = {};
+}
+} // namespace
+
+void VirtualDevice::SetParentLookup(ParentLookup lookup) { ParentLookupFn() = std::move(lookup); }
+
 void VirtualDevice::Update(Clock::time_point now) {
     // Read the shared buffers first (DeviceState has its own lock).
     Frame f;
     f.out = state_->ComputeOutput(now);
+    if (!f.out.parent.empty() && f.out.pose_valid) ApplyParent(f.out);
     f.inputs = state_->TakeChangedInputs();
     f.skeleton = state_->TakeSkeleton();
     f.gaze = state_->TakeGaze();
@@ -134,7 +178,9 @@ void VirtualDevice::Publish(Clock::time_point now, const Frame& f) {
     }
     // Inputs are applied even while inactive so the device is current when it
     // becomes active; skeleton and per-tick work are skipped until then.
-    for (const auto& [name, value] : f.inputs) OnInput(name, value);
+    for (const auto& [name, value] : f.inputs) {
+        if (!HandleCommonInput(name, value)) OnInput(name, value);
+    }
     if (!active) return;
     if (switched) OnBecameActive();
     if (f.skeleton) OnSkeleton(*f.skeleton);
@@ -154,7 +200,24 @@ void VirtualDevice::SetCommonProperties(vr::PropertyContainerHandle_t c, const c
     p->SetStringProperty(c, vr::Prop_ResourceRoot_String, "vhmd");
     p->SetBoolProperty(c, vr::Prop_WillDriftInYaw_Bool, false);
     p->SetBoolProperty(c, vr::Prop_DeviceIsWireless_Bool, false);
-    p->SetBoolProperty(c, vr::Prop_DeviceProvidesBatteryStatus_Bool, false);
+    // Controllers and trackers report a battery (full until a client says otherwise);
+    // HmdDevice turns this off until it gets a battery value.
+    p->SetBoolProperty(c, vr::Prop_DeviceProvidesBatteryStatus_Bool, true);
+    p->SetFloatProperty(c, vr::Prop_DeviceBatteryPercentage_Float, 1.0f);
+    p->SetBoolProperty(c, vr::Prop_DeviceIsCharging_Bool, false);
+}
+
+bool VirtualDevice::HandleCommonInput(const std::string& name, float value) {
+    if (name != "battery" && name != "charging") return false;
+    auto* p = vr::VRProperties();
+    const auto c = p->TrackedDeviceToPropertyContainer(index_);
+    if (name == "battery") {
+        p->SetBoolProperty(c, vr::Prop_DeviceProvidesBatteryStatus_Bool, true);
+        p->SetFloatProperty(c, vr::Prop_DeviceBatteryPercentage_Float, std::clamp(value, 0.0f, 1.0f));
+    } else {
+        p->SetBoolProperty(c, vr::Prop_DeviceIsCharging_Bool, value >= 0.5f);
+    }
+    return true;
 }
 
 void VirtualDevice::SetIcons(vr::PropertyContainerHandle_t c, const std::string& prefix) {

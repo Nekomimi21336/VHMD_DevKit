@@ -1,0 +1,37 @@
+{
+  "controller_type": "vhmd_tracker",
+  "name": "vhmd integration test bindings (tracker)",
+  "bindings": {
+    "/actions/test": {
+      "sources": [
+        {
+          "path": "/user/waist/input/trigger",
+          "mode": "trigger",
+          "inputs": {
+            "pull": {
+              "output": "/actions/test/in/tracker_trigger"
+            }
+          }
+        },
+        {
+          "path": "/user/waist/input/trackpad",
+          "mode": "trackpad",
+          "inputs": {
+            "position": {
+              "output": "/actions/test/in/tracker_trackpad"
+            }
+          }
+        },
+        {
+          "path": "/user/waist/input/grip",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/test/in/tracker_grip"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

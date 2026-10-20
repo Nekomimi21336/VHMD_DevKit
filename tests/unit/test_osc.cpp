@@ -132,3 +132,85 @@ TEST(osc_bundle_and_garbage) {
     auto w = ParseOscPacket(OscBuilder("/VMT/Room/Driver").S("x").Build(), map);
     CHECK(w.messages.empty());
 }
+
+TEST(osc_input_names_extended) {
+    VmtMapping map;
+    map.index_to_id = {"right_hand"};
+    auto touch = ParseOscPacket(OscBuilder("/VMT/Input/Button/Touch").I(0).I(4).F(0).I(1).Build(), map);
+    CHECK(std::get<InputMessage>(touch.messages.at(0)).values.at(0).first == "joystick_touch");
+    auto click = ParseOscPacket(OscBuilder("/VMT/Input/Button").I(0).I(5).F(0).I(1).Build(), map);
+    CHECK(std::get<InputMessage>(click.messages.at(0)).values.at(0).first == "trigger_click");
+    auto pad = ParseOscPacket(OscBuilder("/VMT/Input/Joystick").I(0).I(1).F(0).F(0.5f).F(-0.5f).Build(), map);
+    CHECK(std::get<InputMessage>(pad.messages.at(0)).values.at(0).first == "trackpad_x");
+    auto force = ParseOscPacket(OscBuilder("/VMT/Input/Trigger").I(0).I(2).F(0).F(0.3f).Build(), map);
+    CHECK(std::get<InputMessage>(force.messages.at(0)).values.at(0).first == "grip_force");
+}
+
+TEST(osc_joint_and_follow) {
+    VmtMapping map;
+    VmtState state;
+    auto j = ParseOscPacket(OscBuilder("/VMT/Joint/Driver").I(3).I(1).F(0).F(0).F(0.1f).F(0).F(0).F(0).F(0).F(1).S("HMD").Build(),
+                            map, {}, &state);
+    const auto* jp = std::get_if<PoseMessage>(&j.messages.at(0));
+    CHECK(jp && jp->parent == "HMD" && !jp->follow && jp->id == "tracker_3");
+    auto f = ParseOscPacket(OscBuilder("/VMT/Follow/Unity").I(3).I(1).F(0).F(0).F(0).F(1).F(0).F(0).F(0).F(1).S("VHMD-CTL-L").Build(),
+                            map, {}, &state);
+    const auto* fp = std::get_if<PoseMessage>(&f.messages.at(0));
+    CHECK(fp && fp->follow && fp->parent == "VHMD-CTL-L");
+    if (fp) CHECK_NEAR(fp->pos.z, -1.0, 1e-6); // Unity +Z forward -> driver -Z
+    auto missing = ParseOscPacket(OscBuilder("/VMT/Joint/Driver").I(3).I(1).F(0).F(0).F(0).F(0).F(0).F(0).F(0).F(1).Build(),
+                                  map, {}, &state);
+    CHECK(missing.messages.empty() && !missing.errors.empty());
+}
+
+TEST(osc_room_matrix_applies_to_room_only) {
+    VmtMapping map;
+    VmtState state;
+    // Room -> driver: translate by (1, 0, 0) and turn 90 degrees about +Y.
+    auto set = ParseOscPacket(OscBuilder("/VMT/SetRoomMatrix").F(0).F(0).F(1).F(1).F(0).F(1).F(0).F(0).F(-1).F(0).F(0).F(0).Build(),
+                              map, {}, &state);
+    CHECK(set.errors.empty());
+    auto room = ParseOscPacket(OscBuilder("/VMT/Room/Driver").I(0).I(1).F(0).F(0).F(0).F(-1).F(0).F(0).F(0).F(1).Build(),
+                               map, {}, &state);
+    const auto* rp = std::get_if<PoseMessage>(&room.messages.at(0));
+    CHECK(rp != nullptr);
+    if (rp) {
+        CHECK_NEAR(rp->pos.x, 0.0, 1e-6); // (0,0,-1) rotated -> (-1,0,0), + (1,0,0)
+        CHECK_NEAR(rp->pos.z, 0.0, 1e-6);
+    }
+    auto raw = ParseOscPacket(OscBuilder("/VMT/Raw/Driver").I(0).I(1).F(0).F(0).F(0).F(-1).F(0).F(0).F(0).F(1).Build(),
+                              map, {}, &state);
+    CHECK_NEAR(std::get<PoseMessage>(raw.messages.at(0)).pos.z, -1.0, 1e-6);
+}
+
+TEST(osc_skeleton_buffer_scalar_and_reset) {
+    VmtMapping map;
+    VmtState state;
+    // Index 0 registered as the right hand (enable 3).
+    ParseOscPacket(OscBuilder("/VMT/Room/Driver").I(0).I(3).F(0).F(0).F(1).F(0).F(0).F(0).F(0).F(1).Build(), map, {}, &state);
+    for (int b = 0; b < 31; ++b) {
+        ParseOscPacket(OscBuilder("/VMT/Skeleton/Driver").I(0).I(b).F(0).F(0.01f).F(0).F(0).F(0).F(0).F(1).Build(), map, {}, &state);
+    }
+    auto apply = ParseOscPacket(OscBuilder("/VMT/Skeleton/Apply").I(0).F(0).Build(), map, {}, &state);
+    const auto* s = std::get_if<SkeletonMessage>(&apply.messages.at(0));
+    CHECK(s && s->id == "right_hand" && s->rotations.size() == 31 && s->positions.size() == 31);
+    auto scalar = ParseOscPacket(OscBuilder("/VMT/Skeleton/Scalar").I(0).I(2).F(0.25f).I(0).I(0).Build(), map, {}, &state);
+    const auto* c = std::get_if<SkeletonMessage>(&scalar.messages.at(0));
+    CHECK(c && c->curl.has_value());
+    if (c && c->curl) CHECK_NEAR((*c->curl)[1], 0.75, 1e-6); // index finger, VMT 0 = fist
+    auto reset = ParseOscPacket(OscBuilder("/VMT/Reset").Build(), map, {}, &state);
+    CHECK(reset.messages.size() == 1 && !std::get<PoseMessage>(reset.messages.at(0)).valid);
+}
+
+TEST(osc_control_and_encoder) {
+    VmtMapping map;
+    VmtState state;
+    CHECK(ParseOscPacket(OscBuilder("/VMT/Subscribe/Device").S("HMD").Build(), map, {}, &state).errors.empty());
+    CHECK(state.subscriptions.count("HMD") == 1);
+    CHECK(ParseOscPacket(OscBuilder("/VMT/Set/Destination").S("127.0.0.1").I(40000).Build(), map, {}, &state).errors.empty());
+    CHECK(state.dest_port == 40000 && state.dest_ip == 0x7F000001);
+    CHECK(!ParseOscPacket(OscBuilder("/VMT/Set/Destination").S("1.2.3").I(1).Build(), map, {}, &state).errors.empty());
+    CHECK(ParseOscPacket(OscBuilder("/VMT/SetAutoPoseUpdate").I(1).Build(), map, {}, &state).errors.empty());
+    // Encoder output matches what an OSC sender would build.
+    CHECK(EncodeOscMessage("/VMT/Out/Log", {int32_t{0}, std::string("ok")}) == OscBuilder("/VMT/Out/Log").I(0).S("ok").Build());
+}

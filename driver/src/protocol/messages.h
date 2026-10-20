@@ -22,7 +22,17 @@ struct PoseMessage {
     Quat rot{};
     std::optional<Vec3> vel;
     std::optional<Vec3> angvel;
+    std::optional<Vec3> acc;    // linear acceleration (m/s^2)
+    std::optional<Vec3> angacc; // angular acceleration (rad/s^2)
+    // How old the sample already is when sent (seconds). SteamVR then predicts
+    // from the time the sample was taken (DriverPose_t::poseTimeOffset).
+    std::optional<double> age;
     std::optional<double> ts; // sender timestamp (unix seconds), diagnostics only
+    // Pose relative to another device (VMT Joint / Follow): serial of the parent
+    // ("HMD" = the active HMD). Joint: pos/rot are in the parent's frame.
+    // Follow: pos is added to the parent's position, rot is absolute.
+    std::string parent;
+    bool follow = false;
     // false => the sender explicitly reports the device as not tracked.
     bool valid = true;
 };
@@ -64,6 +74,8 @@ using Message = std::variant<PoseMessage, InputMessage, SkeletonMessage, GazeMes
 struct ParseLimits {
     double max_abs_position = 1000.0;  // meters
     double max_abs_velocity = 100.0;   // m/s and rad/s
+    double max_abs_acceleration = 1000.0; // m/s^2 and rad/s^2
+    double max_pose_age = 0.5;         // s
     float max_abs_input = 1.0f;
     size_t max_batch = 256;
     size_t max_packet_bytes = 65507;

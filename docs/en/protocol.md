@@ -60,10 +60,12 @@ The `vhmd` driver writes messages received over UDP into each virtual device's "
 | `pos` | ○ | [x, y, z] m. Absolute value of each component ≤ 1000 |
 | `rot` | ○ | [w, x, y, z]. Zero norm / NaN is invalid |
 | `vel`, `angvel` | | [x, y, z]. Absolute value ≤ 100. Used for SteamVR's prediction (0 if absent) |
+| `acc`, `angacc` | | Acceleration [x, y, z] (m/s², rad/s²). Absolute value ≤ 1000. Passed to SteamVR as is |
+| `age` | | How many seconds old the sample already is when sent (0 to 0.5). SteamVR predicts from the time the sample was taken (`poseTimeOffset`). For senders with latency, such as camera-based estimation |
 | `ts` | | Sender's UNIX time (seconds). For diagnostics (`latency_ms` in `status`) |
 | `valid` | | `false` explicitly signals "tracking lost". `pos`/`rot` may be omitted. Recovers on the next valid `pose` |
 
-### `input` (controllers / HMD)
+### `input` (controllers / trackers / HMD)
 
 ```json
 { "type": "input", "id": "right_hand", "name": "trigger", "value": 0.8 }
@@ -84,11 +86,38 @@ Values are numbers (-1 to 1) or booleans. A button counts as pressed at 0.5 or a
 | `a_touch`, `b_touch`, `x_touch`, `y_touch` | `/input/a/touch` etc. | bool |
 | `system`, `system_touch` | `/input/system/click` / `touch` | bool |
 | `menu` | `/input/menu/click` | bool |
+| `trackpad_x`, `trackpad_y` | `/input/trackpad/x`, `y` | -1 to 1 |
+| `trackpad_click` / `trackpad_touch` | `/input/trackpad/click` / `touch` | bool |
+| `trackpad_force` | `/input/trackpad/force` | 0 to 1 |
+| `grip_force` | `/input/grip/force` | 0 to 1 |
+| `thumbrest_touch` | `/input/thumbrest/touch` | bool |
 
-- Aliases: `primary` = right-hand `a` / left-hand `x`, `secondary` = right-hand `b` / left-hand `y`. Sending `a`/`b` to the left hand is treated as `x`/`y`, and sending `x`/`y` to the right hand as `a`/`b`. `thumbstick_*`, `stick_*` = `joystick_*`, `squeeze` = `grip`, `application_menu` = `menu`.
+Trackers (equivalent to the POGO pin inputs of real trackers):
+
+| Name | SteamVR input path | Type / range |
+|---|---|---|
+| `system`, `menu`, `grip` | `/input/system/click`, `/input/menu/click`, `/input/grip/click` | bool |
+| `trigger` / `trigger_click` | `/input/trigger/value` / `click` | 0 to 1 / bool |
+| `trackpad_x`, `trackpad_y`, `trackpad_click`, `trackpad_touch` | `/input/trackpad/...` | -1 to 1 / bool |
+
+HMD:
+
+| Name | SteamVR input path | Type / range |
+|---|---|---|
+| `system` | `/input/system/click` | bool |
+| `proximity` | `/proximity` | bool. Proximity (wear) sensor (true = being worn; the default is the `hmd.proximity` setting). Reaches apps as `k_EButton_ProximitySensor`, `/user/head/proximity`, and OpenXR's `XR_EXT_user_presence` |
+
+All devices:
+
+| Name | Description |
+|---|---|
+| `battery` | Battery level 0 to 1 (`Prop_DeviceBatteryPercentage_Float`). Controllers and trackers report 1.0 (fully charged) until a value is sent; the HMD becomes battery-powered once a value is sent |
+| `charging` | Charging (`Prop_DeviceIsCharging_Bool`) |
+
+- Aliases: `primary` = right-hand `a` / left-hand `x`, `secondary` = right-hand `b` / left-hand `y`. Sending `a`/`b` to the left hand is treated as `x`/`y`, and sending `x`/`y` to the right hand as `a`/`b`. `thumbstick_*`, `stick_*` = `joystick_*`, `squeeze` = `grip`, `application_menu` = `menu`, `touchpad_*` = `trackpad_*`.
 - Raw paths (e.g. `"/input/y/click"`) can also be used as is.
 - If only `trigger` / `grip` is sent, `*_click` (ON at 0.75 / OFF at 0.65) and `*_touch` (0.05 / 0.02) are generated automatically. Once `*_click` / `*_touch` is sent explicitly even once, auto-generation stops for that item.
-- The HMD supports `system` only.
+- The trackpad and grip have force in the input profile, so SteamVR derives clicks from the force value. Until the client sends `*_force`, `*_click` is also mirrored to force (sending only the click still registers a press).
 - Values arriving within the same update cycle are coalesced to the latest value per name.
 
 ### `skeleton` (fingers of the left/right controllers)
@@ -176,21 +205,35 @@ Valid messages in a batch are applied even if other elements are invalid.
 
 ## VMT-compatible OSC (optional)
 
-A subset that lets you use sender tools for [Virtual Motion Tracker](https://gpsnmeajp.github.io/VirtualMotionTrackerDocument/) as they are. Enable with `vmt.enabled: true`.
+A compatible receiver that lets you use sender tools for [Virtual Motion Tracker](https://gpsnmeajp.github.io/VirtualMotionTrackerDocument/) (0.15) as they are. Enable with `vmt.enabled: true`.
 
 | Address | Support |
 |---|---|
 | `/VMT/Room/Unity`, `/VMT/Raw/Unity` | ○ Unity coordinates (left-handed) → converted by flipping Z |
 | `/VMT/Room/UEuler`, `/VMT/Raw/UEuler` | ○ Unity Euler angles (degrees) |
 | `/VMT/Room/Driver`, `/VMT/Raw/Driver` | ○ Driver coordinates as is |
-| `/VMT/Input/Button[/Touch]` | ○ buttonIndex 0=system,1=a (left hand x),2=b (left hand y),3=menu,4=joystick_click,5=trigger_click,6=grip_click |
-| `/VMT/Input/Trigger[/Touch|/Click]` | ○ triggerIndex 0=trigger, 1=grip |
-| `/VMT/Input/Joystick[/Touch|/Click]` | ○ joystickIndex 0 only |
-| `/VMT/Joint/*`, `/VMT/Follow/*`, `/VMT/Skeleton/*`, `/VMT/SetRoomMatrix` etc. | × Not supported (discarded and logged) |
+| `/VMT/Joint/{Unity,UEuler,Driver}` | ○ A serial is appended at the end. Pose relative to the position and rotation of the parent device (serial; `HMD` = the HMD). Follows the parent every cycle as it moves |
+| `/VMT/Follow/{Unity,UEuler,Driver}` | ○ Same as above, but only the position follows the parent; the rotation stays fixed to the room orientation |
+| `/VMT/Input/Button[/Touch]` | ○ buttonIndex 0=system,1=a (left hand x),2=b (left hand y),3=menu,4=joystick,5=trigger,6=grip (click / touch) |
+| `/VMT/Input/Trigger[/Touch|/Click]` | ○ triggerIndex 0=trigger, 1=grip, 2=grip_force |
+| `/VMT/Input/Joystick[/Touch|/Click]` | ○ joystickIndex 0=joystick, 1=trackpad |
+| `/VMT/Skeleton/{Unity,UEuler,Driver}` + `/VMT/Skeleton/Apply` | ○ Bones (0 to 30, in parent bone space) are accumulated and sent on Apply. Bones not sent are identity rotations |
+| `/VMT/Skeleton/Scalar` | ○ Curl for boneSet 1 to 5 (thumb to little finger). In VMT, 0 = closed / 1 = open. Only mode 0 |
+| `/VMT/SetRoomMatrix[/Temporary]`, `/VMT/Set/RoomMatrix[/Temporary]` | ○ 3×4 room space → driver space matrix (12 values, row-major). Applied to Room poses only. Both last until the driver shuts down (not saved to a file) |
+| `/VMT/Reset` | ○ Invalidates all devices driven via VMT (they stay registered) |
+| `/VMT/Subscribe/Device`, `/VMT/Unsubscribe/Device` | ○ Sends the pose of the given serial via `/VMT/Out/SubscribedDevice` (driver space) |
+| `/VMT/Get/Devices/List` | ○ Returns `/VMT/Out/Devices/List` (a list of `index:serial`) |
+| `/VMT/Set/Destination` | ○ Changes the output destination (IP, port) |
+| `/VMT/LoadSetting` | ○ Only replies via `/VMT/Out/Log` |
+| `/VMT/SetAutoPoseUpdate`, `/VMT/SetDiagLog`, `/VMT/RequestRestart`, `/VMT/Config`, `/VMT/Debug` | Accepted but ignored |
+
+Outputs (default destination 127.0.0.1:39571, same as VMT): `/VMT/Out/Alive` (every second; the version is `VHMD_<version>`), `/VMT/Out/Unavailable` (every second; 0 = OK), `/VMT/Out/SubscribedDevice`, `/VMT/Out/Devices/List`, `/VMT/Out/Log`, `/VMT/Out/Haptic` (when an app requests haptics on a device driven via VMT). Output starts only after at least one VMT message has been received.
 
 - `index` → device: `vmt.indexMap` (e.g. `{"0": "tracker_0", "1": "left_hand"}`); if not specified, `tracker_<index>`.
-- `enable` 2/5 → `left_hand`, 3/6 → `right_hand`, 0 → invalidates that device's pose.
-- Room and Raw are not distinguished (the room matrix is not implemented).
+- `enable` 2/5 → `left_hand`, 3/6 → `right_hand`, 0 → invalidates that device's pose. 4 (tracking reference) and 7 (VIVE Tracker compatible) are treated as trackers.
+- Input and skeleton messages go to the device that the index last sent a pose to.
+- Unlike VMT, Room poses are accepted even without setting a room matrix (identity matrix).
+- VMT-specific button numbers (Button0 to 17, etc.) not listed in the table above are not accepted.
 - Since it uses port 39570, the same as VMT itself, do not enable it at the same time as the VMT driver.
 
 ## Client implementation example

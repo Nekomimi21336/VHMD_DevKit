@@ -32,6 +32,11 @@
 | レガシー入力 | 独自の `legacy_bindings_vhmd_controller.json`(joystick=axis0, trigger=axis1, grip=axis2) | SteamVR 汎用バインディングには A/B が無いため |
 | アイコン | HMD は OpenVR サンプルのアイコン(BSD-3-Clause)。コントローラー・トラッカーは起動時に生成する記号入りアイコン(`LF`、`W`、`L` など) | どのトラッカーがどの部位か、ステータス画面で分からなかったため |
 | レンダーモデル | HMD は SteamVR 同梱の `generic_hmd`。コントローラー・トラッカーは起動時に生成するラベル付きの簡素なモデル(部位・`L`/`R`・ID を表示、指先などの部品付き)。ロールが変わると作り直す | 他社製品モデルは使わない。文字はドライバ内蔵のドット文字で描き、外部フォントや画像ライブラリに依存しない |
+| HMD の装着センサー | `/proximity` の Boolean コンポーネント + `Prop_ContainsProximitySensor_Bool`。入力プロファイルに `"/proximity": {"type": "button"}`、レガシーバインディングで `head_proximity` へ。既定は装着中(`hmd.proximity`) | SteamVR 同梱の Rift のプロファイルと同じ形。アプリ・OpenXR(`XR_EXT_user_presence`)まで届くことを確認 |
+| バッテリー | 全デバイスで `battery` / `charging` 入力を受け、`Prop_DeviceBatteryPercentage_Float` / `Prop_DeviceIsCharging_Bool` を更新。コントローラー・トラッカーは既定で満充電、HMD は値が来るまでバッテリーなし | 実機の無線デバイスに合わせた |
+| トラックパッドとグリップの force | 入力プロファイルで `force: true`。クライアントが `*_force` を送るまでは `*_click` を force にも反映 | force があると SteamVR はクリックを force から作り、クリックだけ送っても押せなかったため(実測) |
+| サンプルの遅れ | `pose` の `age`(秒)を `poseTimeOffset = -(age + 受信からの時間)` として渡す。`ts` は従来どおり診断用 | 送信側と時計を合わせなくてよく、既存のクライアントの挙動も変わらない |
+| VMT 互換 OSC | VMT 0.15 の API(Joint / Follow / スケルトン / ルーム行列 / 出力)を実装。状態(ルーム行列、スケルトンのバッファ、購読)はルーターが持つ。Joint / Follow の親の姿勢は `GetRawTrackedDevicePoses` で毎周期取り直す(VMT の AutoPoseUpdate 相当)。出力は VMT と同じ 127.0.0.1:39571 へ | VMT の送信側ツールをそのまま使えるように。ルーム行列はファイルに保存しない(VMT と違う点) |
 | 姿勢の送信頻度 | 変化のない姿勢(速度 0)は 250 ms ごとの再送、待機中のデバイスは 1 秒ごと | 毎周期の送信は SteamVR 側の負荷になっていた(待機時の 1 回の処理 42 → 9 µs) |
 | 映像の書き出し | 既定では止めておき、`preview` 操作(または `preview.autoStart`)で開始 | 誰も見ていないのに 1 フレーム約 8 MB を毎秒 15 回コピーしていたため |
 | 更新周期 | 既定 120 Hz、Windows は高分解能 Waitable Timer | `timeBeginPeriod` はシステム全体に影響するため不使用 |
@@ -43,6 +48,9 @@
 | 項目 | 状態 / 理由 | 将来の案 |
 |---|---|---|
 | 実画面表示 | 対象外(ダミーディスプレイ)。Windows の既定ではデスクトップにウィンドウが開く。ウィンドウを出したくない場合は `display.mode = direct` | — |
+| 仮想カメラ(`IVRCameraComponent`) | 実装したが SteamVR がストリームを開始しなかったため取り下げ。コンポーネントは取得されるが、カメラサービスがフレームバッファを設定せず、vrcompositor が `Error connecting to camera block queue` で失敗する(`docs/verification.md`) | 実機カメラ向けの経路と判断。SteamVR の今後の版で再確認 |
+| 空間アンカー(`IVRDriverSpatialAnchors`) | 未実装 | ドライバが対応していなくても SteamVR が汎用のアンカーを提供する。仮想の空間には固定すべき現実の場所が無く、得るものが少ない |
+| ウォッチドッグ(`IVRWatchdogProvider`) | 未実装 | SteamVR が閉じているあいだに SteamVR を自動起動する仕組みで、開発用ツールで有効にするには影響が大きい |
 | 表情(フェイシャルトラッキング) | 対象外。OpenVR に表情の API が無く、SteamVR の OpenXR ランタイムもフェイス系拡張を提供していないため、SteamVR との接続という本ツールの役割の外(調査: `docs/face_tracking_research.md`) | — |
 | トラッカーのみモード (`hmd.enabled=false`) | ドライバが HMD を追加しないことは確認。この PC では実ヘッドセット(PICO 4S)が未接続のため、SteamVR に HMD が無く他デバイスも有効化されない → **未検証** | 実 HMD 接続時に `docs/verification.md` の手順で確認 |
 | VMT の Joint / Follow / Skeleton / ルーム行列 | 未実装(破棄してログ) | `protocol/osc.cpp` に追加 |

@@ -85,6 +85,7 @@ private:
     std::unique_ptr<DirectModeComponent> direct_;
     vr::VRInputComponentHandle_t system_click_ = vr::k_ulInvalidInputComponentHandle;
     vr::VRInputComponentHandle_t eye_tracking_ = vr::k_ulInvalidInputComponentHandle;
+    vr::VRInputComponentHandle_t proximity_ = vr::k_ulInvalidInputComponentHandle;
 };
 
 } // namespace vhmd

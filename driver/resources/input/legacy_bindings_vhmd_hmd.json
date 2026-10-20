@@ -1,0 +1,20 @@
+{
+  "name": "VirtualHMD HMD Legacy Bindings",
+  "controller_type": "vhmd_hmd",
+  "description": "Legacy (pre SteamVR Input) mapping for the virtual HMD: proximity sensor.",
+  "bindings": {
+    "/actions/legacy": {
+      "sources": [
+        {
+          "path": "/user/head/proximity",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/legacy/in/head_proximity"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

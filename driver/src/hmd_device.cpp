@@ -34,19 +34,19 @@ float GetFloat(const char* key, float fallback) {
     return err == vr::VRSettingsError_None && std::isfinite(v) ? v : fallback;
 }
 
-// Same layout as Steam/config/chaperone_info.vrchap: a 2 x 2 m play area
-// around the origin, seated and standing zero poses at identity.
-std::string ChaperoneJson(uint64_t universe) {
+// Same layout as Steam/config/chaperone_info.vrchap: a width x depth play
+// area around the origin, seated and standing zero poses at identity.
+std::string ChaperoneJson(uint64_t universe, double width, double depth) {
     using nlohmann::json;
-    const double h = 1.0, top = 2.5;
+    const double hx = width / 2, hz = depth / 2, top = 2.5;
     auto wall = [&](double x0, double z0, double x1, double z1) {
         return json::array({{x0, 0.0, z0}, {x0, top, z0}, {x1, top, z1}, {x1, 0.0, z1}});
     };
     const json zero = {{"translation", {0.0, 0.0, 0.0}}, {"yaw", 0.0}};
     json u = {
         {"universeID", std::to_string(universe)},
-        {"play_area", {2 * h, 2 * h}},
-        {"collision_bounds", {wall(-h, -h, -h, h), wall(-h, h, h, h), wall(h, h, h, -h), wall(h, -h, -h, -h)}},
+        {"play_area", {width, depth}},
+        {"collision_bounds", {wall(-hx, -hz, -hx, hz), wall(-hx, hz, hx, hz), wall(hx, hz, hx, -hz), wall(hx, -hz, -hx, -hz)}},
         {"seated", zero},
         {"standing", zero},
     };
@@ -242,6 +242,7 @@ void* HmdDevice::GetComponent(const char* name_and_version) {
 void HmdDevice::OnActivate(vr::PropertyContainerHandle_t c) {
     auto* p = vr::VRProperties();
     SetCommonProperties(c, "VHMD Virtual HMD", "generic_hmd");
+    p->SetBoolProperty(c, vr::Prop_DeviceProvidesBatteryStatus_Bool, false); // until a "battery" input arrives
     SetIcons(c, "headset");
     p->SetFloatProperty(c, vr::Prop_UserIpdMeters_Float, display_cfg_.ipd_meters);
     p->SetFloatProperty(c, vr::Prop_UserHeadToEyeDepthMeters_Float, 0.0f);
@@ -275,10 +276,31 @@ void HmdDevice::OnActivate(vr::PropertyContainerHandle_t c) {
     // Calibration for our universe: seated and standing zero at the tracking
     // origin, so poses sent over UDP are what apps see in every space. The
     // bounds are never drawn (they would show up in captured frames).
-    p->SetStringProperty(c, vr::Prop_DriverProvidedChaperoneJson_String, ChaperoneJson(kUniverseId).c_str());
+    const auto& cfg = State().Config();
+    p->SetStringProperty(c, vr::Prop_DriverProvidedChaperoneJson_String,
+                         ChaperoneJson(kUniverseId, cfg.play_area_width, cfg.play_area_depth).c_str());
     p->SetBoolProperty(c, vr::Prop_DriverProvidedChaperoneVisibility_Bool, false);
 
+    // Audio devices to switch to while SteamVR runs, if configured.
+    if (!cfg.audio_playback.empty()) {
+        p->SetStringProperty(c, vr::Prop_Audio_DefaultPlaybackDeviceId_String, cfg.audio_playback.c_str());
+    }
+    if (!cfg.audio_recording.empty()) {
+        p->SetStringProperty(c, vr::Prop_Audio_DefaultRecordingDeviceId_String, cfg.audio_recording.c_str());
+    }
+
+
     vr::VRDriverInput()->CreateBooleanComponent(c, "/input/system/click", &system_click_);
+
+    // Proximity sensor ("is the headset worn"), as on real headsets. SteamVR uses it
+    // for the activity level / standby and apps see it as k_EButton_ProximitySensor
+    // and OpenXR XR_EXT_user_presence.
+    p->SetBoolProperty(c, vr::Prop_ContainsProximitySensor_Bool, true);
+    if (vr::VRDriverInput()->CreateBooleanComponent(c, "/proximity", &proximity_) == vr::VRInputError_None) {
+        vr::VRDriverInput()->UpdateBooleanComponent(proximity_, State().Config().proximity, 0.0);
+    } else {
+        proximity_ = vr::k_ulInvalidInputComponentHandle;
+    }
 
     if (State().Config().eye_tracking) {
         const auto err = vr::VRDriverInput()->CreateEyeTrackingComponent(c, "/eyetracking", &eye_tracking_);
@@ -300,6 +322,9 @@ void HmdDevice::OnDeactivate() {
 void HmdDevice::OnInput(const std::string& name, float value) {
     if ((name == "system" || name == "/input/system/click") && system_click_ != vr::k_ulInvalidInputComponentHandle) {
         vr::VRDriverInput()->UpdateBooleanComponent(system_click_, value >= 0.5f, 0.0);
+    }
+    if ((name == "proximity" || name == "/proximity") && proximity_ != vr::k_ulInvalidInputComponentHandle) {
+        vr::VRDriverInput()->UpdateBooleanComponent(proximity_, value >= 0.5f, 0.0);
     }
 }
 

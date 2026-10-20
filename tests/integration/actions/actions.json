@@ -1,14 +1,75 @@
 {
   "default_bindings": [
-    { "controller_type": "vhmd_controller", "binding_url": "bindings_vhmd_controller.json" },
-    { "controller_type": "vhmd_hmd", "binding_url": "bindings_vhmd_hmd.json" }
+    {
+      "controller_type": "vhmd_controller",
+      "binding_url": "bindings_vhmd_controller.json"
+    },
+    {
+      "controller_type": "vhmd_hmd",
+      "binding_url": "bindings_vhmd_hmd.json"
+    },
+    {
+      "controller_type": "vhmd_tracker",
+      "binding_url": "bindings_vhmd_tracker.json"
+    }
   ],
   "actions": [
-    { "name": "/actions/test/in/skeleton_left", "type": "skeleton", "skeleton": "/skeleton/hand/left" },
-    { "name": "/actions/test/in/skeleton_right", "type": "skeleton", "skeleton": "/skeleton/hand/right" },
-    { "name": "/actions/test/in/trigger", "type": "vector1" },
-    { "name": "/actions/test/in/gaze", "type": "eyetracking" }
+    {
+      "name": "/actions/test/in/skeleton_left",
+      "type": "skeleton",
+      "skeleton": "/skeleton/hand/left"
+    },
+    {
+      "name": "/actions/test/in/skeleton_right",
+      "type": "skeleton",
+      "skeleton": "/skeleton/hand/right"
+    },
+    {
+      "name": "/actions/test/in/trigger",
+      "type": "vector1"
+    },
+    {
+      "name": "/actions/test/in/gaze",
+      "type": "eyetracking"
+    },
+    {
+      "name": "/actions/test/in/trackpad",
+      "type": "vector2"
+    },
+    {
+      "name": "/actions/test/in/trackpad_click",
+      "type": "boolean"
+    },
+    {
+      "name": "/actions/test/in/grip_force",
+      "type": "vector1"
+    },
+    {
+      "name": "/actions/test/in/thumbrest",
+      "type": "boolean"
+    },
+    {
+      "name": "/actions/test/in/proximity",
+      "type": "boolean"
+    },
+    {
+      "name": "/actions/test/in/tracker_trigger",
+      "type": "vector1"
+    },
+    {
+      "name": "/actions/test/in/tracker_trackpad",
+      "type": "vector2"
+    },
+    {
+      "name": "/actions/test/in/tracker_grip",
+      "type": "boolean"
+    }
   ],
-  "action_sets": [ { "name": "/actions/test", "usage": "leftright" } ],
+  "action_sets": [
+    {
+      "name": "/actions/test",
+      "usage": "leftright"
+    }
+  ],
   "localization": []
 }

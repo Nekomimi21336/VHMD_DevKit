@@ -32,11 +32,12 @@
 
 - **3점 VR이 기본**: HMD + 좌우 컨트롤러는 SteamVR 시작 시점부터 항상 존재
 - **트래커는 온디맨드**: 처음 보낸 시점에 SteamVR에 추가되며, 그 포즈에서 동기화된 상태로 시작(최대 16대)
-- **간단한 외부 API**: UDP + JSON(`127.0.0.1:39570`). 데이터그램 1개로 모든 디바이스를 한 번에 갱신 가능. 선택적으로 VMT 호환 OSC
-- **컨트롤러 입력 일체**: 트리거 / 그립 / 스틱 / A·B·X·Y / 시스템 / 메뉴, 진동 피드백 반환, 손가락 스켈레톤(굽힘 값 또는 본 직접 지정)
+- **간단한 외부 API**: UDP + JSON(`127.0.0.1:39570`). 데이터그램 1개로 모든 디바이스를 한 번에 갱신 가능. 선택적으로 VMT 호환 OSC(Joint / Follow / 스켈레톤 / 룸 행렬 / 출력 메시지를 포함한 VMT 0.15의 API)
+- **컨트롤러 입력 일체**: 트리거 / 그립(force 지원) / 스틱 / 트랙패드 / 섬레스트 / A·B·X·Y / 시스템 / 메뉴, 진동 피드백 반환, 손가락 스켈레톤(굽힘 값 또는 본 직접 지정). 트래커에도 버튼·트리거·트랙패드
+- **디바이스 상태**: HMD 착용 센서(SteamVR의 대기 상태와 OpenXR의 `XR_EXT_user_presence`에 반영), 배터리 잔량과 충전 중 표시, 자세의 가속도와 샘플 지연(`poseTimeOffset`)
 - **컨트롤러와 핸드 트래킹 전환**: `hand_mode`로 SteamVR을 멈추지 않고 전환(VRChat에서는 버튼 조작 ⇄ 핸드 트래킹 조작). 보내는 ID와 내용은 그대로
 - **SteamVR에서 구분하기 쉬운 표시**: 트래커 모델과 상태 아이콘에 부위(`L FOOT`, `WAIST` 등)와 ID(`TRACKER_1`), 컨트롤러에 `L` / `R`와 ID를 표시. 롤을 바꾸면 표시도 따라감
-- **시선 입력**(SteamVR의 아이 트래킹 컴포넌트)
+- **시선 입력**(SteamVR의 아이 트래킹 컴포넌트. OpenVR과 OpenXR 양쪽 모두에서 앱까지 전달되는 것을 확인)
 - **Windows / Linux** 지원. Linux는 다이렉트 모드(SteamVR이 그린 영상을 드라이버가 받는 방식)로 동작하며, 실제 GPU의 Linux판 SteamVR에서 동작 확인 완료
 - **창 없이 저부하로 실행 가능**: Windows에서도 다이렉트 모드를 선택할 수 있으며, 프리뷰 창 표시 여부와 프레임 레이트(1~240 Hz, 실행 중 변경 가능)를 지정 가능. 영상은 Python에서 가져올 수 있음(머신러닝·자동화용)
 - **Python 클라이언트**(의존성 없음)와 예제, SteamVR 위에서 동작하는 자동 검증 스크립트
@@ -221,11 +222,11 @@ SteamVR 컴포지터는 1~240 Hz의 어떤 값에도 정확히 따릅니다. 다
 
 | 종류 | 명령 | 내용 |
 |---|---|---|
-| C++ 단위 테스트 | `ctest --preset vs2022-release` | 45건(파서, 좌표 변환, 설정, 타임아웃, 라우터, UDP, 라벨 생성) |
+| C++ 단위 테스트 | `ctest --preset vs2022-release` | 53건(파서, 좌표 변환, 설정, 타임아웃, 라우터, UDP, 라벨 생성, VMT 호환 OSC) |
 | Python 단위 테스트 | `python -m pytest tests/python` | 14건(클라이언트, 프리뷰 읽기) |
 | Linux 캡처 셀프 테스트 | `ctest`(Linux) | 실제 Vulkan으로 공유 이미지 → 공유 메모리를 확인(SteamVR 불필요) |
 | Linux 실제 장비 확인 | `python3 tests/integration/linux_check.py` | 다이렉트 모드의 표시 경로 + 통합 테스트, 리포트 출력 |
-| SteamVR 통합 테스트 | `python tests/integration/run_integration.py` | 44개 항목(열거, 온디맨드 추가, 오차, 지연, 입력, 스켈레톤, 핸드 모드 전환, 시선(OpenVR / OpenXR), 잘못된 패킷, 부하, 종료 처리) |
+| SteamVR 통합 테스트 | `python tests/integration/run_integration.py` | 58개 항목(열거, 온디맨드 추가, 오차, 지연, 입력, 스켈레톤, 핸드 모드 전환, 시선, 착용 센서, 배터리, OpenXR 핸드 트래킹, 잘못된 패킷, 부하, 종료 처리). `vmt.enabled: true`이면 VMT 호환 OSC 9개 항목이 추가됨 |
 | 시작/종료 반복 | `python tests/integration/stress_restart.py --cycles 30` | 매번 드라이버의 종료 처리와 크래시 여부를 확인 |
 | 장시간 안정성 | `python tests/integration/soak_test.py --minutes 30` | 프레임 레이트, 자세 오차, 메모리 증가, 경고를 일정 간격으로 기록 |
 

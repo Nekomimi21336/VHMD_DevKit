@@ -32,11 +32,12 @@ No hardware needed: poses and inputs sent from an external process over UDP/JSON
 
 - **3-point VR is the baseline**: the HMD and left/right controllers are always present from the moment SteamVR starts
 - **Trackers on demand**: a tracker is added to SteamVR the first time you send to it, and starts in sync with that pose (up to 16)
-- **Simple external API**: UDP + JSON (`127.0.0.1:39570`). A single datagram can update all devices at once. Optional VMT-compatible OSC
-- **Full controller input set**: trigger / grip / stick / A, B, X, Y / system / menu, haptics sent back to the client, finger skeleton (curl values or direct bone specification)
+- **Simple external API**: UDP + JSON (`127.0.0.1:39570`). A single datagram can update all devices at once. Optional VMT-compatible OSC (the VMT 0.15 API, including Joint / Follow / skeleton / room matrix / output messages)
+- **Full controller input set**: trigger / grip (with force) / stick / trackpad / thumbrest / A, B, X, Y / system / menu, haptics sent back to the client, finger skeleton (curl values or direct bone specification). Trackers also get buttons, trigger and trackpad
+- **Device state**: HMD proximity sensor (reflected in SteamVR standby and OpenXR's `XR_EXT_user_presence`), battery level and charging indicator, pose acceleration and sample age (`poseTimeOffset`)
 - **Switch between controllers and hand tracking**: `hand_mode` changes it while SteamVR runs (in VRChat: button controls ⇄ hand-tracking controls). Ids and messages stay the same
 - **Easy to tell apart in SteamVR**: tracker models and status icons show the body part (`L FOOT`, `WAIST`, ...) and the id (`TRACKER_1`); controllers show `L` / `R` and their id. The labels follow role changes
-- **Eye gaze input** (SteamVR's eye tracking component)
+- **Eye gaze input** (SteamVR's eye tracking component; verified to reach apps through both OpenVR and OpenXR)
 - **Windows / Linux** support. On Linux the driver runs in direct mode (the driver receives the frames SteamVR renders), and it has been verified on SteamVR for Linux with a real GPU
 - **Runs windowless at low load**: direct mode is available on Windows too, with a choice of whether to show a preview window and of the frame rate (1-240 Hz, changeable while running). Frames can be grabbed from Python (for machine learning and automation)
 - **Python client** (no dependencies) with samples, plus automated verification scripts that run against SteamVR
@@ -221,11 +222,11 @@ Settings are loaded when SteamVR starts. Either edit the source-side files and r
 
 | Kind | Command | Contents |
 |---|---|---|
-| C++ unit tests | `ctest --preset vs2022-release` | 45 tests (parser, coordinate conversion, config, timeouts, router, UDP, label generation) |
+| C++ unit tests | `ctest --preset vs2022-release` | 53 tests (parser, coordinate conversion, config, timeouts, router, UDP, label generation, VMT-compatible OSC) |
 | Python unit tests | `python -m pytest tests/python` | 14 tests (client, preview reader) |
 | Linux capture self-test | `ctest` (Linux) | Checks shared image → shared memory with real Vulkan (no SteamVR needed) |
 | Linux on-hardware check | `python3 tests/integration/linux_check.py` | Direct-mode display path + integration tests, writes a report |
-| SteamVR integration tests | `python tests/integration/run_integration.py` | 44 items (enumeration, on-demand addition, error, latency, input, skeleton, hand mode switching, eye gaze (OpenVR / OpenXR), invalid packets, load, shutdown) |
+| SteamVR integration tests | `python tests/integration/run_integration.py` | 58 items (enumeration, on-demand addition, error, latency, input, skeleton, hand mode switching, eye gaze, proximity sensor, battery, OpenXR hand tracking, invalid packets, load, shutdown). With `vmt.enabled: true`, 9 VMT-compatible OSC items are added |
 | Repeated start/stop | `python tests/integration/stress_restart.py --cycles 30` | Checks the driver's shutdown and whether it crashed on every cycle |
 | Long-run stability | `python tests/integration/soak_test.py --minutes 30` | Records frame rate, pose error, memory growth and warnings at regular intervals |
 

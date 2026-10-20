@@ -149,10 +149,15 @@ def main() -> int:
     # process holding that app key is connected (even as a Background app),
     # the second one never gets input focus. So this runs first, in a fresh
     # process, before this script connects (see input_check.py).
-    # eye_check.py / openxr_eye_check.py read the gaze back through SteamVR Input
+    # eye_check.py / openxr_check.py read the gaze back through SteamVR Input
     # and through SteamVR's OpenXR runtime (XR_EXT_eye_gaze_interaction).
+    # Trackers registered before any client used them (the checks below add some).
+    startup = VHMDClient(port=args.port, timeout=2.0)
+    startup_trackers = sum(1 for d in startup.status()["devices"] if d["kind"] == "tracker" and d["index"] >= 0)
+    startup.close()
     input_phase = {"results": [], "info": {}}
-    for script in ("input_check.py", "skeleton_check.py", "eye_check.py", "openxr_eye_check.py"):
+    for script in ("input_check.py", "skeleton_check.py", "eye_check.py", "openxr_check.py", "features_check.py",
+                   "vmt_check.py"):
         proc = subprocess.run([sys.executable, str(HERE / script), "--port", str(args.port)],
                               capture_output=True, text=True, timeout=180)
         try:
@@ -208,7 +213,8 @@ def main() -> int:
                   str([(d["serial"], d["role"], d["controller_type"]) for d in ctl]))
         on_demand = [d for d in status["devices"] if d["enabled"] and d.get("on_demand")]
         rep.check("3-point base: only HMD + controllers registered before use",
-                  len(trk) == args.trackers - len(on_demand), f"{len(trk)} trackers at startup, {len(on_demand)} on demand")
+                  startup_trackers == args.trackers - len(on_demand),
+                  f"{startup_trackers} trackers at startup, {len(on_demand)} on demand")
 
         # Trackers join when a client first sends to them, already in sync.
         sent = {}

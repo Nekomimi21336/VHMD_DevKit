@@ -2,11 +2,20 @@
 
 ## 未リリース
 
+### 追加
+- **HMD の装着センサー**: `input` の `proximity`(既定は装着中、設定 `hmd.proximity`)。アプリには `k_EButton_ProximitySensor`、`/user/head/proximity`、OpenXR の `XR_EXT_user_presence` として届く。
+- **バッテリー表示**: 全デバイスで `battery`(0〜1)と `charging`。コントローラー・トラッカーは既定で満充電。Python の `VHMDClient.battery()`、`proximity()`。
+- **入力の追加**: コントローラーにトラックパッド(位置・クリック・タッチ・force)、グリップの force、サムレストのタッチ。トラッカーにシステム・メニュー・グリップ・トリガー・トラックパッド。
+- **姿勢の加速度とサンプルの遅れ**: `pose` の `acc` / `angacc` と `age`(SteamVR の `poseTimeOffset`)。
+- **VMT 互換 OSC を VMT 0.15 の API に拡張**: Joint / Follow(親デバイスに追従)、スケルトン(ボーン + Apply、Scalar)、ルーム行列、Reset、購読と `/VMT/Out/*` の出力(127.0.0.1:39571)、振動の `/VMT/Out/Haptic`、トラックパッドとグリップの force の割り当て。
+- 設定: プレイエリアの大きさ(`hmd.playArea`)、SteamVR が切り替えるオーディオデバイス(`hmd.audio`)。
+- 入力名の多言語化(英語・日本語・中国語・韓国語)。
+
 ### 修正
 - OpenXR の LOCAL / LOCAL_FLOOR 空間で HMD が上下逆さまになる問題。vhmd のデバイスにトラッキングユニバースが無く、SteamVR の着座原点が全ゼロの行列になっていた。全デバイスにユニバース ID を設定し、HMD がドライバ提供のチャペロン(原点 = 原点、境界は非表示)を渡すようにした。
 
 ### テスト
-- 視線がアプリまで届くことを確認する統合テストを追加: OpenVR(`IVRInput` の視線取得、`eye_check.py`)と OpenXR(`XR_EXT_eye_gaze_interaction`、描画なしのセッション、`openxr_eye_check.py`)。統合テストは 44 項目に(ユニバースと較正、OpenXR の LOCAL 空間の確認を含む)。
+- 視線がアプリまで届くことを確認する統合テストを追加: OpenVR(`IVRInput` の視線取得、`eye_check.py`)と OpenXR(`XR_EXT_eye_gaze_interaction`、描画なしのセッション、`openxr_eye_check.py`)。統合テストは 58 項目に(ユニバースと較正、OpenXR の LOCAL 空間、装着センサー、バッテリー、追加の入力、サンプルの遅れ、OpenXR のハンドトラッキングと装着状態を含む。VMT 互換 OSC を有効にすると 9 項目追加)。
 
 ### ドキュメント
 - 視線の座標空間を確定: ドライバに渡す origin / target は HMD ローカル空間(SteamVR が HMD の姿勢を掛けてアプリに渡す)。

@@ -47,7 +47,15 @@
     "pos": [0.0, 1.7, 0.0],
     "rot": [1.0, 0.0, 0.0, 0.0],
     "eyeTracking": true,
-    "headModel": false     // true = "pos" is the neck pivot and SteamVR adds its neck model
+    "headModel": false,    // true = "pos" is the neck pivot and SteamVR adds its neck model
+    // Proximity sensor at start: true = worn. Change with an input message:
+    // {"type":"input","id":"hmd","name":"proximity","value":0}
+    "proximity": true,
+    // Play area reported to SteamVR (width x depth in meters, centered on the origin).
+    "playArea": [2.0, 2.0],
+    // Audio devices SteamVR switches to while it runs (Windows endpoint ids such as
+    // "{0.0.0.00000000}.{...}"). Empty = SteamVR does not switch audio for this HMD.
+    "audio": { "playbackDevice": "", "recordingDevice": "" }
   },
   "controllers": {
     "enabled": true,

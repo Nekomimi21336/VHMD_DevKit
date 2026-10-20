@@ -90,6 +90,20 @@ std::string ParsePose(const json& obj, const ParseLimits& lim, Message& out) {
         if (!WithinAbs(v, lim.max_abs_velocity)) return std::string(key) + ": out of range";
         (key[0] == 'v' ? m.vel : m.angvel) = v;
     }
+    for (const char* key : {"acc", "angacc"}) {
+        auto it = obj.find(key);
+        if (it == obj.end() || it->is_null()) continue;
+        Vec3 v;
+        if (auto e = ReadVec3(*it, v); !e.empty()) return std::string(key) + ": " + e;
+        if (!WithinAbs(v, lim.max_abs_acceleration)) return std::string(key) + ": out of range";
+        (key[0] == 'a' && key[1] == 'c' ? m.acc : m.angacc) = v;
+    }
+    if (auto age = obj.find("age"); age != obj.end() && !age->is_null()) {
+        double a = 0.0;
+        if (auto e = ReadNumber(*age, a); !e.empty()) return "age: " + e;
+        if (a < 0.0 || a > lim.max_pose_age) return "age: out of range";
+        m.age = a;
+    }
     auto ts = obj.find("ts");
     if (ts != obj.end() && ts->is_number()) {
         double t = ts->get<double>();

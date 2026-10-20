@@ -4,7 +4,21 @@
   "bindings": {
     "/actions/test": {
       "eyetracking": [
-        { "output": "/actions/test/in/gaze", "path": "/user/head/eyetracking" }
+        {
+          "output": "/actions/test/in/gaze",
+          "path": "/user/head/eyetracking"
+        }
+      ],
+      "sources": [
+        {
+          "path": "/user/head/proximity",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/test/in/proximity"
+            }
+          }
+        }
       ]
     }
   }

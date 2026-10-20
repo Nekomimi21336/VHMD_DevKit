@@ -127,6 +127,27 @@ def main() -> int:
         results.append({"name": "haptic pulse forwarded to UDP client",
                         "ok": any(e.get("id") == "right_hand" for e in events),
                         "detail": f"{len(events)} haptic events, first: {events[0] if events else None}"})
+
+        # HMD proximity sensor through the legacy API (k_EButton_ProximitySensor,
+        # mapped by legacy_bindings_vhmd_hmd.json). Apps that set an action
+        # manifest get no legacy input, so this lives here.
+        bit = 1 << openvr.k_EButton_ProximitySensor
+
+        def proximity_is(worn):
+            t1, last = time.perf_counter(), 0.0
+            while time.perf_counter() - t1 < 2.0:
+                if time.perf_counter() - last > 0.1:
+                    client.proximity(worn)
+                    last = time.perf_counter()
+                got, st = system.getControllerState(idx["hmd"])
+                if got and bool(st.ulButtonPressed & bit) == worn:
+                    return True
+                pump()
+            return False
+
+        removed, worn = proximity_is(False), proximity_is(True)
+        results.append({"name": "HMD proximity sensor visible to legacy apps (k_EButton_ProximitySensor)",
+                        "ok": removed and worn, "detail": f"removed={removed} worn={worn}"})
     finally:
         client.close()
         openvr.shutdown()

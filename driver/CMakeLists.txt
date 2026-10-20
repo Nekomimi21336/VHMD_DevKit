@@ -14,6 +14,8 @@ add_library(vhmd_core STATIC
   src/util/thread_cpu.cpp
   src/visuals/device_visuals.cpp
 )
+# Driver version reported in status / logs: the project version from the top-level CMakeLists.txt.
+target_compile_definitions(vhmd_core PUBLIC VHMD_VERSION="${PROJECT_VERSION}")
 target_include_directories(vhmd_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(vhmd_core SYSTEM PUBLIC

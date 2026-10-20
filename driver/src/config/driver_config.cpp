@@ -238,6 +238,21 @@ ConfigLoadResult LoadConfigFromJson(std::string_view text) {
                 ApplyDeviceCommon(*h, d, w, "hmd.");
                 Get(*h, "eyeTracking", d.eye_tracking, w, "hmd.");
                 Get(*h, "headModel", d.head_model, w, "hmd.");
+                Get(*h, "proximity", d.proximity, w, "hmd.");
+                if (auto au = h->find("audio"); au != h->end() && au->is_object()) {
+                    Get(*au, "playbackDevice", d.audio_playback, w, "hmd.audio.");
+                    Get(*au, "recordingDevice", d.audio_recording, w, "hmd.audio.");
+                }
+                if (auto pa = h->find("playArea"); pa != h->end()) {
+                    if (pa->is_array() && pa->size() == 2 && (*pa)[0].is_number() && (*pa)[1].is_number() &&
+                        (*pa)[0].get<double>() >= 0.5 && (*pa)[0].get<double>() <= 100.0 &&
+                        (*pa)[1].get<double>() >= 0.5 && (*pa)[1].get<double>() <= 100.0) {
+                        d.play_area_width = (*pa)[0].get<double>();
+                        d.play_area_depth = (*pa)[1].get<double>();
+                    } else {
+                        w.push_back("hmd.playArea: expected [width, depth] in meters (0.5..100)");
+                    }
+                }
             }
         }
         if (auto ctl = root.find("controllers"); ctl != root.end() && ctl->is_object()) {

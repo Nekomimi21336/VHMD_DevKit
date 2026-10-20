@@ -1,5 +1,6 @@
 #include "device_provider.h"
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -113,6 +114,9 @@ vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* driver_context) {
         }
     }
 
+    VirtualDevice::SetParentLookup([this](const std::string& serial, Vec3& pos, Quat& rot) {
+        return RawPoseOf(serial, pos, rot);
+    });
     running_ = true;
     update_thread_ = std::thread(&DeviceProvider::UpdateLoop, this);
     return vr::VRInitError_None;
@@ -246,9 +250,11 @@ void DeviceProvider::UpdateLoop() {
             }
         }
         const auto work0 = Clock::now();
+        if (config_.vmt_enabled) RefreshRawPoses(now);
         for (auto& d : devices_) {
             if (!d->IsFollower()) d->Update(now); // followers are updated by their leader
         }
+        if (config_.vmt_enabled) SendVmtOutputs(now);
         const double work_us = duration<double, std::micro>(Clock::now() - work0).count();
         work_sum_us += work_us;
         work_max_us = std::max(work_max_us, work_us);
@@ -270,6 +276,74 @@ void DeviceProvider::UpdateLoop() {
         if (Clock::now() > next + period * 4) next = Clock::now(); // fell far behind: resync
         sleeper.SleepUntil(next);
     }
+}
+
+namespace {
+Quat MatrixRotation(const vr::HmdMatrix34_t& m) {
+    const double t = m.m[0][0] + m.m[1][1] + m.m[2][2];
+    Quat q;
+    if (t > 0) {
+        const double s = std::sqrt(t + 1.0) * 2;
+        q = {0.25 * s, (m.m[2][1] - m.m[1][2]) / s, (m.m[0][2] - m.m[2][0]) / s, (m.m[1][0] - m.m[0][1]) / s};
+    } else if (m.m[0][0] > m.m[1][1] && m.m[0][0] > m.m[2][2]) {
+        const double s = std::sqrt(1.0 + m.m[0][0] - m.m[1][1] - m.m[2][2]) * 2;
+        q = {(m.m[2][1] - m.m[1][2]) / s, 0.25 * s, (m.m[0][1] + m.m[1][0]) / s, (m.m[0][2] + m.m[2][0]) / s};
+    } else if (m.m[1][1] > m.m[2][2]) {
+        const double s = std::sqrt(1.0 + m.m[1][1] - m.m[0][0] - m.m[2][2]) * 2;
+        q = {(m.m[0][2] - m.m[2][0]) / s, (m.m[0][1] + m.m[1][0]) / s, 0.25 * s, (m.m[1][2] + m.m[2][1]) / s};
+    } else {
+        const double s = std::sqrt(1.0 + m.m[2][2] - m.m[0][0] - m.m[1][1]) * 2;
+        q = {(m.m[1][0] - m.m[0][1]) / s, (m.m[0][2] + m.m[2][0]) / s, (m.m[1][2] + m.m[2][1]) / s, 0.25 * s};
+    }
+    if (!Normalize(q)) q = {};
+    return q;
+}
+} // namespace
+
+void DeviceProvider::RefreshRawPoses(Clock::time_point now) {
+    vr::VRServerDriverHost()->GetRawTrackedDevicePoses(0.0f, raw_poses_.data(), static_cast<uint32_t>(raw_poses_.size()));
+    if (now - serials_read_ < std::chrono::seconds(1)) return;
+    serials_read_ = now;
+    auto* props = vr::VRProperties();
+    for (uint32_t i = 0; i < serials_.size(); ++i) {
+        vr::ETrackedPropertyError err = vr::TrackedProp_Success;
+        std::string serial = props->GetStringProperty(props->TrackedDeviceToPropertyContainer(i),
+                                                      vr::Prop_SerialNumber_String, &err);
+        serials_[i] = err == vr::TrackedProp_Success ? std::move(serial) : std::string();
+    }
+}
+
+bool DeviceProvider::RawPoseOf(const std::string& serial, Vec3& pos, Quat& rot) const {
+    for (uint32_t i = 0; i < serials_.size(); ++i) {
+        const bool match = serial == "HMD" ? i == vr::k_unTrackedDeviceIndex_Hmd : (!serials_[i].empty() && serials_[i] == serial);
+        if (!match) continue;
+        const auto& p = raw_poses_[i];
+        if (!p.bPoseIsValid) return false;
+        const auto& m = p.mDeviceToAbsoluteTracking;
+        pos = {m.m[0][3], m.m[1][3], m.m[2][3]};
+        rot = MatrixRotation(m);
+        return true;
+    }
+    return false;
+}
+
+std::string DeviceProvider::DevicesList() const {
+    std::string out;
+    for (uint32_t i = 0; i < serials_.size(); ++i) {
+        if (!serials_[i].empty()) out += std::to_string(i) + ":" + serials_[i] + "\n";
+    }
+    return out;
+}
+
+void DeviceProvider::SendVmtOutputs(Clock::time_point now) {
+    auto out = router_->VmtOutputs(
+        now, [this](const std::string& serial, Vec3& p, Quat& q) { return RawPoseOf(serial, p, q); },
+        [this]() { return DevicesList(); });
+    if (out.datagrams.empty() || out.port == 0) return;
+    Endpoint to;
+    to.ipv4_host_order = out.ip;
+    to.port = out.port;
+    for (const auto& d : out.datagrams) receiver_.SendTo(d, to);
 }
 
 void DeviceProvider::OnDatagram(std::string_view data, const Endpoint& from) {
@@ -317,6 +391,14 @@ void DeviceProvider::RunFrame() {
                                         {"amplitude", h->amplitude}};
                     receiver_.SendTo(j.dump(), to);
                 }
+                if (auto vmt = router_->VmtHapticTarget(h->id)) {
+                    Endpoint dest;
+                    dest.ipv4_host_order = vmt->ip;
+                    dest.port = vmt->port;
+                    receiver_.SendTo(EncodeOscMessage("/VMT/Out/Haptic", {int32_t(vmt->index), float(h->frequency),
+                                                                          float(h->amplitude), float(h->duration_s)}),
+                                     dest);
+                }
             }
         }
         for (auto& d : devices_) d->HandleEvent(event);
@@ -325,6 +407,7 @@ void DeviceProvider::RunFrame() {
 
 void DeviceProvider::Cleanup() {
     Log(LogLevel::Info, "shutting down");
+    VirtualDevice::SetParentLookup(nullptr);
     receiver_.Stop();
     running_ = false;
     if (update_thread_.joinable()) update_thread_.join();

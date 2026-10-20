@@ -13,12 +13,16 @@
 
 #include "config/driver_config.h"
 #include "config/roles.h"
+#include "protocol/osc.h"
 #include "state/device_state.h"
 #include "util/log.h"
 
 namespace vhmd {
 
-inline constexpr const char* kDriverVersion = "0.3.0";
+#ifndef VHMD_VERSION
+#define VHMD_VERSION "dev"
+#endif
+inline constexpr const char* kDriverVersion = VHMD_VERSION;
 
 struct RouterHooks {
     // Returns the SteamVR device index for a protocol id, or -1 if not added.
@@ -59,6 +63,23 @@ public:
 
     std::string StatusJson(Clock::time_point now, std::optional<double> seq) const;
 
+    // VMT outputs (/VMT/Out/...) due now, for the update thread to send to
+    // ip:port. `pose_of` finds a device's raw pose by serial ("HMD" = HMD).
+    struct VmtOutput {
+        uint32_t ip = 0;
+        uint16_t port = 0;
+        std::vector<std::string> datagrams;
+    };
+    using PoseLookup = std::function<bool(const std::string& serial, Vec3& pos, Quat& rot)>;
+    VmtOutput VmtOutputs(Clock::time_point now, const PoseLookup& pose_of, const std::function<std::string()>& devices_list);
+    // Where to send /VMT/Out/Haptic for a device VMT drives (none if VMT is not in use).
+    struct VmtHaptic {
+        int index = 0;
+        uint32_t ip = 0;
+        uint16_t port = 0;
+    };
+    std::optional<VmtHaptic> VmtHapticTarget(const std::string& id);
+
     uint64_t TotalPackets() const { return total_packets_; }
     uint64_t RejectedMessages() const { return rejected_; }
 
@@ -73,6 +94,8 @@ private:
     RateLimiter error_limiter_;
     std::atomic<uint64_t> total_packets_{0};
     std::atomic<uint64_t> rejected_{0};
+    std::unique_ptr<VmtState> vmt_ = std::make_unique<VmtState>();
+    Clock::time_point vmt_last_alive_{};
 };
 
 } // namespace vhmd

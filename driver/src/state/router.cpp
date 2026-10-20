@@ -1,5 +1,8 @@
 #include "state/router.h"
 
+#include <set>
+#include <utility>
+
 #include <nlohmann/json.hpp>
 
 #include "protocol/osc.h"
@@ -71,7 +74,7 @@ std::optional<std::string> MessageRouter::HandleDatagram(std::string_view data, 
     if (LooksLikeJson(data)) {
         parsed = ParseJsonPacket(data, config_.limits);
     } else if (config_.vmt_enabled && LooksLikeOsc(data)) {
-        parsed = ParseOscPacket(data, config_.vmt_mapping, config_.limits);
+        parsed = ParseOscPacket(data, config_.vmt_mapping, config_.limits, vmt_.get());
     } else {
         parsed.errors.emplace_back(LooksLikeOsc(data) ? "OSC packet received but vmt.enabled is false"
                                                       : "unrecognized packet format");
@@ -101,6 +104,48 @@ std::optional<std::string> MessageRouter::HandleDatagram(std::string_view data, 
     }
     ReportErrors(parsed.errors);
     return reply;
+}
+
+MessageRouter::VmtOutput MessageRouter::VmtOutputs(Clock::time_point now, const PoseLookup& pose_of,
+                                                  const std::function<std::string()>& devices_list) {
+    VmtOutput out;
+    std::set<std::string> subscriptions;
+    bool list = false;
+    std::vector<std::pair<int, std::string>> logs;
+    {
+        std::lock_guard<std::mutex> lock(vmt_->mu);
+        if (!vmt_->active) return out;
+        out.ip = vmt_->dest_ip;
+        out.port = vmt_->dest_port;
+        subscriptions = vmt_->subscriptions;
+        list = std::exchange(vmt_->devices_list_requested, false);
+        logs.swap(vmt_->logs);
+    }
+    for (const auto& [stat, msg] : logs) out.datagrams.push_back(EncodeOscMessage("/VMT/Out/Log", {stat, msg}));
+    if (list && devices_list) out.datagrams.push_back(EncodeOscMessage("/VMT/Out/Devices/List", {devices_list()}));
+    if (now - vmt_last_alive_ >= std::chrono::seconds(1)) {
+        vmt_last_alive_ = now;
+        out.datagrams.push_back(EncodeOscMessage("/VMT/Out/Alive", {std::string("VHMD_") + kDriverVersion, std::string("")}));
+        out.datagrams.push_back(EncodeOscMessage("/VMT/Out/Unavailable", {int32_t{0}, std::string("OK")}));
+    }
+    for (const auto& serial : subscriptions) {
+        Vec3 p;
+        Quat q;
+        if (!pose_of || !pose_of(serial, p, q)) continue;
+        out.datagrams.push_back(EncodeOscMessage("/VMT/Out/SubscribedDevice",
+                                                 {serial, float(p.x), float(p.y), float(p.z), float(q.x), float(q.y),
+                                                  float(q.z), float(q.w)}));
+    }
+    return out;
+}
+
+std::optional<MessageRouter::VmtHaptic> MessageRouter::VmtHapticTarget(const std::string& id) {
+    std::lock_guard<std::mutex> lock(vmt_->mu);
+    if (!vmt_->active) return std::nullopt;
+    for (const auto& [index, dev] : vmt_->index_ids) {
+        if (dev == id) return VmtHaptic{index, vmt_->dest_ip, vmt_->dest_port};
+    }
+    return std::nullopt;
 }
 
 std::string MessageRouter::StatusJson(Clock::time_point now, std::optional<double> seq) const {

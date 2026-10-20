@@ -82,8 +82,14 @@ OutputPose DeviceState::ComputeOutput(Clock::time_point now) {
     if (!out.timed_out) {
         if (latest_.vel) out.vel = *latest_.vel;
         if (latest_.angvel) out.angvel = *latest_.angvel;
+        if (latest_.acc) out.acc = *latest_.acc;
+        if (latest_.angacc) out.angacc = *latest_.angacc;
+        // Sample age when sent + time since it arrived.
+        if (latest_.age && last_update_) out.time_offset = -(*latest_.age + Seconds(now - *last_update_));
     }
 
+    out.parent = latest_.parent;
+    out.follow = latest_.follow;
     if (explicit_invalid_) out.pose_valid = false;
     if (out.timed_out) {
         switch (policy_) {

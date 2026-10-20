@@ -4,6 +4,7 @@
   "device_class": "TrackedDeviceClass_HMD",
   "resource_root": "vhmd",
   "driver_name": "vhmd",
+  "legacy_binding": "{vhmd}/input/legacy_bindings_vhmd_hmd.json",
   "input_bindingui_mode": "hmd",
   "input_source": {
     "/input/system": {
@@ -11,6 +12,11 @@
       "click": true,
       "binding_image_point": [ 250, 60 ],
       "order": 1
+    },
+    "/proximity": {
+      "type": "button",
+      "binding_image_point": [ 250, 30 ],
+      "order": 2
     }
   },
   "default_bindings": []

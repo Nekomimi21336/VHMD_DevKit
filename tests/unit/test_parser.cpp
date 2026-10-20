@@ -116,3 +116,15 @@ TEST(parser_looks_like_json) {
     CHECK(!LooksLikeJson("/VMT/Room/Unity"));
     CHECK(!LooksLikeJson(""));
 }
+
+TEST(parser_pose_acceleration_and_age) {
+    auto r = ParseJsonPacket(R"({"type":"pose","id":"tracker_0","pos":[0,1,0],"rot":[1,0,0,0],"acc":[0,-9.8,0],"angacc":[0,1,0],"age":0.02})");
+    CHECK(r.errors.empty());
+    const auto* p = std::get_if<PoseMessage>(&r.messages.at(0));
+    CHECK(p && p->acc && p->angacc && p->age);
+    if (p && p->age) CHECK_NEAR(*p->age, 0.02, 1e-12);
+    auto old = ParseJsonPacket(R"({"type":"pose","id":"tracker_0","pos":[0,1,0],"rot":[1,0,0,0],"age":2})");
+    CHECK(old.messages.empty() && !old.errors.empty());
+    auto neg = ParseJsonPacket(R"({"type":"pose","id":"tracker_0","pos":[0,1,0],"rot":[1,0,0,0],"age":-0.1})");
+    CHECK(neg.messages.empty());
+}

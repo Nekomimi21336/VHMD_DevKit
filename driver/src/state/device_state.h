@@ -25,6 +25,11 @@ struct OutputPose {
     Quat rot{};
     Vec3 vel{};
     Vec3 angvel{};
+    Vec3 acc{};
+    Vec3 angacc{};
+    double time_offset = 0.0; // DriverPose_t::poseTimeOffset (<= 0: the sample is older)
+    std::string parent;       // pose relative to this device (serial), see PoseMessage
+    bool follow = false;
     bool pose_valid = true;
     bool connected = true;
     bool timed_out = false;

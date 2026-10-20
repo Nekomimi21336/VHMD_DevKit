@@ -1,8 +1,32 @@
 #include "tracker_device.h"
 
+#include <algorithm>
+
 #include "util/log.h"
 
 namespace vhmd {
+namespace {
+
+struct TrackerInput {
+    const char* name;
+    const char* path;
+    bool boolean;
+    bool two_sided;
+};
+
+constexpr TrackerInput kTrackerInputs[] = {
+    {"system", "/input/system/click", true, false},
+    {"menu", "/input/menu/click", true, false},
+    {"grip", "/input/grip/click", true, false},
+    {"trigger", "/input/trigger/value", false, false},
+    {"trigger_click", "/input/trigger/click", true, false},
+    {"trackpad_x", "/input/trackpad/x", false, true},
+    {"trackpad_y", "/input/trackpad/y", false, true},
+    {"trackpad_click", "/input/trackpad/click", true, false},
+    {"trackpad_touch", "/input/trackpad/touch", true, false},
+};
+
+} // namespace
 
 TrackerDevice::TrackerDevice(std::shared_ptr<DeviceState> state, bool apply_role)
     : VirtualDevice(std::move(state)), apply_role_(apply_role) {}
@@ -44,6 +68,37 @@ void TrackerDevice::OnActivate(vr::PropertyContainerHandle_t c) {
         }
     }
     RefreshLabel();
+
+    auto* in = vr::VRDriverInput();
+    components_.clear();
+    for (const auto& d : kTrackerInputs) {
+        Component comp{vr::k_ulInvalidInputComponentHandle, d.boolean, d.two_sided};
+        const auto err = d.boolean ? in->CreateBooleanComponent(c, d.path, &comp.handle)
+                                   : in->CreateScalarComponent(c, d.path, &comp.handle, vr::VRScalarType_Absolute,
+                                                               d.two_sided ? vr::VRScalarUnits_NormalizedTwoSided
+                                                                           : vr::VRScalarUnits_NormalizedOneSided);
+        if (err != vr::VRInputError_None) Log(LogLevel::Warning, "%s: failed to create %s (%d)", Id().c_str(), d.path, err);
+        components_[d.name] = comp;
+    }
+}
+
+void TrackerDevice::OnInput(const std::string& name, float value) {
+    std::string key = name;
+    for (const auto& d : kTrackerInputs) {
+        if (name == d.path) key = d.name;
+    }
+    if (key == "grip_click") key = "grip";
+    const auto it = components_.find(key);
+    if (it == components_.end() || it->second.handle == vr::k_ulInvalidInputComponentHandle) {
+        Log(LogLevel::Debug, "%s: unknown input '%s'", Id().c_str(), name.c_str());
+        return;
+    }
+    auto* in = vr::VRDriverInput();
+    if (it->second.boolean) {
+        in->UpdateBooleanComponent(it->second.handle, value >= 0.5f, 0.0);
+    } else {
+        in->UpdateScalarComponent(it->second.handle, std::clamp(value, it->second.two_sided ? -1.0f : 0.0f, 1.0f), 0.0);
+    }
 }
 
 std::string TrackerDevice::CurrentRole() {
