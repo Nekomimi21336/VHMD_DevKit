@@ -1,6 +1,6 @@
 # 変更履歴
 
-## 未リリース
+## v0.4.1(2026-10-20)
 
 ### 変更
 - **インストール時に既存の環境を記録**: `install_driver` が登録前に SteamVR の設定ファイル(`openvrpaths.vrpath`、`steamvr.vrsettings`、`chaperone_info.vrchap`)、登録済みドライバの一覧、SteamVR のビルド番号を記録する(Windows: `%LOCALAPPDATA%\VHMD_DevKit\history`、Linux: `~/.local/state/vhmd_devkit/history`)。
