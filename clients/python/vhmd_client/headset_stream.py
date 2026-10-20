@@ -21,6 +21,7 @@ VHMD HMD, so the headset shows the image with the geometry it was drawn with.
 
 from __future__ import annotations
 
+import collections
 import json
 import math
 import shutil
@@ -142,7 +143,8 @@ class VideoServer(threading.Thread):
             if frame is None:
                 raise OSError("no preview frames (is the driver in direct mode?)")
             w, h = frame.width, frame.height
-            config = {"codec": "h264", "width": w, "height": h, "eye_width": frame.eye_width, "fov": eye_fovs()}
+            config = {"codec": "h264", "width": w, "height": h, "eye_width": frame.eye_width, "fov": eye_fovs(),
+                      "pose": frame.pose is not None}
             self.send(conn, KIND_CONFIG, 0, json.dumps(config).encode())
             self.log(f"video: {w}x{h}, {self.encoder} {self.bitrate:g} Mbit/s, fov {config['fov'] is not None}")
 
@@ -160,12 +162,14 @@ class VideoServer(threading.Thread):
                    "-c:v", self.encoder]
             if self.encoder.endswith("_amf"):
                 cmd += ["-usage", "ultralowlatency", "-rc", "cbr", "-async_depth", "1", "-header_spacing", "30"]
-            cmd += ["-b:v", br, "-maxrate", br, "-bufsize", br, "-g", "30", "-bf", "0",
+            # passthrough: exactly one output frame per input frame, so poses line up.
+            cmd += ["-fps_mode", "passthrough", "-b:v", br, "-maxrate", br, "-bufsize", br, "-g", "30", "-bf", "0",
                     "-f", "rtp", "-payload_type", "96", f"rtp://127.0.0.1:{rtp_port}?pkt_size=1300"]
             ffmpeg = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             stop = threading.Event()
             index = {"n": 0}
+            poses: collections.deque = collections.deque(maxlen=64)   # render pose per frame sent to ffmpeg
 
             def out_loop() -> None:
                 dep = RtpDepacketizer()
@@ -178,7 +182,8 @@ class VideoServer(threading.Thread):
                     au = dep.push(pkt)
                     if au:
                         index["n"] += 1
-                        self.send(conn, KIND_FRAME, index["n"], au)
+                        pose = poses.popleft() if poses else None
+                        self.send(conn, KIND_FRAME, index["n"], au, pose)
                         self.frames_out += 1
                         self.bytes_out += len(au)
 
@@ -195,6 +200,7 @@ class VideoServer(threading.Thread):
                     if f is None or (f.width, f.height) != (w, h):
                         continue
                     last = f.frame_index
+                    poses.append(f.pose)
                     ffmpeg.stdin.write(f.rgba)
                     ffmpeg.stdin.flush()
                     self.frames_in += 1

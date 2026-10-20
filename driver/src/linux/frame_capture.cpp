@@ -426,6 +426,7 @@ struct FrameCapture::Impl {
         hdr->timestamp_ns = RealtimeNs();
         hdr->eye_width = w / 2;
         hdr->source_format = source_format;
+        hdr->pose_flags = 0;
         std::memcpy(pixels, mapped, static_cast<size_t>(w) * h * 4);
         __atomic_thread_fence(__ATOMIC_RELEASE);
         __atomic_store_n(&hdr->seq, ++seq, __ATOMIC_RELEASE); // even: stable

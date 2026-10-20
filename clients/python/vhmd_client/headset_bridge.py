@@ -25,6 +25,7 @@ import subprocess
 import threading
 import time
 
+from . import headset_info
 from .client import DEFAULT_HOST, DEFAULT_PORT
 from .headset_stream import VIDEO_PORT, VideoServer
 
@@ -52,6 +53,23 @@ class Stats:
             return out
 
 
+def forward(data: bytes, udp: socket.socket, driver, stats: Stats) -> None:
+    """One JSON array from the app to the driver; the app's "headset" message
+    (its display: fields of view, eyes, render size, refresh rate) is kept here."""
+    if b'"type":"headset"' in data:
+        try:
+            msgs = json.loads(data)
+        except ValueError:
+            msgs = []
+        rest = [m for m in msgs if m.get("type") != "headset"]
+        for m in msgs:
+            if m.get("type") == "headset":
+                headset_info.update(m, log=lambda s: print(s, flush=True))
+        data = json.dumps(rest, separators=(",", ":")).encode()
+    udp.sendto(data, driver)
+    stats.add(data)
+
+
 def serve_client(conn: socket.socket, udp: socket.socket, driver, stats: Stats) -> None:
     conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     buf = b""
@@ -64,8 +82,7 @@ def serve_client(conn: socket.socket, udp: socket.socket, driver, stats: Stats) 
             *lines, buf = buf.split(b"\n")
             for line in lines:
                 if line:
-                    udp.sendto(line, driver)
-                    stats.add(line)
+                    forward(line, udp, driver, stats)
 
 
 def serve_udp(sock: socket.socket, udp: socket.socket, driver, stats: Stats) -> None:
@@ -76,8 +93,7 @@ def serve_udp(sock: socket.socket, udp: socket.socket, driver, stats: Stats) -> 
         if addr != peer:
             peer = addr
             print("headset sending over the network from", addr[0], flush=True)
-        udp.sendto(data, driver)
-        stats.add(data)
+        forward(data, udp, driver, stats)
 
 
 def serve_discovery(sock: socket.socket, args) -> None:

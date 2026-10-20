@@ -271,6 +271,24 @@ Mat4 Projection(const XrFovf& fov, float n, float f) {
     return m;
 }
 
+XrQuaternionf QuatMul(const XrQuaternionf& a, const XrQuaternionf& b) {
+    return {a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+            a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
+}
+
+XrVector3f Rotate(const XrQuaternionf& q, const XrVector3f& v) {
+    const XrQuaternionf p{v.x, v.y, v.z, 0};
+    const XrQuaternionf c{-q.x, -q.y, -q.z, q.w};
+    const XrQuaternionf r = QuatMul(QuatMul(q, p), c);
+    return {r.x, r.y, r.z};
+}
+
+// a then b: b given in a's frame.
+XrPosef Compose(const XrPosef& a, const XrPosef& b) {
+    const XrVector3f t = Rotate(a.orientation, b.position);
+    return {QuatMul(a.orientation, b.orientation), {a.position.x + t.x, a.position.y + t.y, a.position.z + t.z}};
+}
+
 // -- GL ---------------------------------------------------------------------
 const char* kVs = R"(#version 300 es
 uniform mat4 mvp;
@@ -327,6 +345,7 @@ void Triad(std::vector<Vertex>& v, const XrPosef& p, float len) {
 // AHardwareBuffer (no copy) and draws each eye's half of it.
 constexpr uint16_t kVideoPort = 39581;
 constexpr uint32_t kKindConfig = 1, kKindFrame = 2;
+constexpr uint64_t kPtsStepUs = 11111;   // decoder timestamps: frame index * this
 
 #pragma pack(push, 1)
 struct VideoHeader {
@@ -406,11 +425,27 @@ public:
         cur_img_ = img;
         cur_egl_ = egl;
         has_frame_ = true;
+        // Which frame this is: the decoder keeps our timestamp (frame index * step).
+        int64_t ts_ns = 0;
+        AImage_getTimestamp(img, &ts_ns);
+        const uint64_t index = static_cast<uint64_t>((ts_ns / 1000 + kPtsStepUs / 2) / kPtsStepUs);
+        {
+            std::lock_guard<std::mutex> l(pose_mu_);
+            const FrameRec& f = poses_[index % kPoseRing];
+            cur_pose_valid_ = f.valid && f.index == index;
+            cur_pose_ = f.pose;
+        }
         ++shown_;
         return true;
     }
 
     GLuint texture() const { return tex_; }
+    // Head pose the shown frame was rendered for (render thread).
+    bool FramePose(XrPosef* out) const {
+        if (!cur_pose_valid_) return false;
+        *out = cur_pose_;
+        return true;
+    }
     bool HasFov() const { return has_fov_.load(); }
     XrFovf Fov(int eye) const { return fov_[eye]; }
     bool Connected() const { return fd_.load() >= 0; }
@@ -460,14 +495,34 @@ private:
                 if (h.size && !ReadAll(fd, payload.data(), h.size)) break;
                 if (h.kind == kKindConfig)
                     Configure(std::string(payload.begin(), payload.end()));
-                else if (h.kind == kKindFrame && codec_)
+                else if (h.kind == kKindFrame && codec_) {
+                    RememberPose(h);
                     Feed(payload, h.frame_index);
+                }
                 Drain();
             }
             LOGI("video: disconnected");
             int old = fd_.exchange(-1);
             if (old >= 0) close(old);
         }
+    }
+
+    // Render pose of each frame, looked up when its decoded image is shown.
+    struct FrameRec {
+        uint64_t index = 0;
+        bool valid = false;
+        XrPosef pose{};
+    };
+    static constexpr int kPoseRing = 64;
+
+    void RememberPose(const VideoHeader& h) {
+        std::lock_guard<std::mutex> l(pose_mu_);
+        FrameRec& f = poses_[h.frame_index % kPoseRing];
+        f.index = h.frame_index;
+        f.valid = (h.flags & 1) != 0;
+        // x y z, qw qx qy qz
+        f.pose.position = {h.pose[0], h.pose[1], h.pose[2]};
+        f.pose.orientation = {h.pose[4], h.pose[5], h.pose[6], h.pose[3]};
     }
 
     static bool ReadAll(int fd, void* dst, size_t n) {
@@ -551,7 +606,7 @@ private:
         uint8_t* buf = AMediaCodec_getInputBuffer(codec_, static_cast<size_t>(i), &cap);
         const size_t n = std::min(cap, au.size());
         memcpy(buf, au.data(), n);
-        AMediaCodec_queueInputBuffer(codec_, static_cast<size_t>(i), 0, n, index * 11111, 0);
+        AMediaCodec_queueInputBuffer(codec_, static_cast<size_t>(i), 0, n, index * kPtsStepUs, 0);
         ++received_;
     }
 
@@ -581,6 +636,10 @@ private:
     std::atomic<bool> has_fov_{false};
     std::atomic<int> received_{0}, decoded_{0};
     int shown_ = 0;
+    std::mutex pose_mu_;
+    FrameRec poses_[kPoseRing];
+    bool cur_pose_valid_ = false;
+    XrPosef cur_pose_{};
     // render thread only
     GLuint tex_ = 0;
     AImage* cur_img_ = nullptr;
@@ -639,6 +698,9 @@ struct App {
     std::vector<Swapchain> swapchains;
     bool has_bd_controller = false;
     bool has_refresh_rate = false;
+    std::string system_name;
+    std::chrono::steady_clock::time_point next_info{};
+    int reprojected = 0;   // frames shown at their render pose (stats)
 
     XrActionSet action_set = XR_NULL_HANDLE;
     XrPath hand_paths[2] = {};
@@ -718,7 +780,11 @@ bool CreateInstance(App& app) {
 
     XrSystemGetInfo si{XR_TYPE_SYSTEM_GET_INFO};
     si.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
-    return Check(xrGetSystem(app.instance, &si, &app.system), "xrGetSystem");
+    if (!Check(xrGetSystem(app.instance, &si, &app.system), "xrGetSystem")) return false;
+    XrSystemProperties sp{XR_TYPE_SYSTEM_PROPERTIES};
+    xrGetSystemProperties(app.instance, app.system, &sp);
+    app.system_name = sp.systemName;
+    return true;
 }
 
 bool InitEgl(App& app) {
@@ -1028,6 +1094,35 @@ void AppendInputs(App& app, std::string& out, int hand) {
     out += buf;
 }
 
+// {"type":"headset",...}: this headset's display, so the PC can make VHMD render
+// for it (vhmd_client.headset_info). eye_local: eye poses in head space.
+void AppendHeadsetInfo(App& app, std::string& out, const std::vector<XrView>& eye_local) {
+    float refresh = 0;
+    if (app.has_refresh_rate) {
+        PFN_xrGetDisplayRefreshRateFB get = nullptr;
+        xrGetInstanceProcAddr(app.instance, "xrGetDisplayRefreshRateFB", reinterpret_cast<PFN_xrVoidFunction*>(&get));
+        if (get) get(app.session, &refresh);
+    }
+    char buf[1024];
+    int n = snprintf(buf, sizeof(buf), "{\"type\":\"headset\",\"model\":\"%s\",\"refresh\":%.1f,\"render\":[%u,%u],\"fov\":[",
+                     app.system_name.c_str(), refresh, app.view_configs[0].recommendedImageRectWidth,
+                     app.view_configs[0].recommendedImageRectHeight);
+    for (size_t i = 0; i < eye_local.size() && i < 2; ++i) {
+        const XrFovf& f = eye_local[i].fov;
+        n += snprintf(buf + n, sizeof(buf) - n, "%s[%.5f,%.5f,%.5f,%.5f]", i ? "," : "", f.angleLeft, f.angleRight,
+                      f.angleUp, f.angleDown);
+    }
+    n += snprintf(buf + n, sizeof(buf) - n, "],\"eyes\":[");
+    for (size_t i = 0; i < eye_local.size() && i < 2; ++i) {
+        const XrPosef& p = eye_local[i].pose;
+        n += snprintf(buf + n, sizeof(buf) - n, "%s[%.5f,%.5f,%.5f,%.6f,%.6f,%.6f,%.6f]", i ? "," : "", p.position.x,
+                      p.position.y, p.position.z, p.orientation.w, p.orientation.x, p.orientation.y, p.orientation.z);
+    }
+    snprintf(buf + n, sizeof(buf) - n, "]}");
+    if (out.size() > 1) out += ',';
+    out += buf;
+}
+
 void RenderEye(App& app, Swapchain& sc, uint32_t image, const XrView& view, const std::vector<Vertex>& verts,
                int eye, bool video) {
     glBindFramebuffer(GL_FRAMEBUFFER, sc.fbo);
@@ -1081,6 +1176,23 @@ void Frame(App& app) {
     AppendPose(msg, "right_hand", hands[kRight]);
     AppendInputs(app, msg, kLeft);
     AppendInputs(app, msg, kRight);
+
+    // Eye poses and fields of view relative to the head.
+    std::vector<XrView> eye_local(app.swapchains.size(), {XR_TYPE_VIEW});
+    {
+        XrViewLocateInfo li{XR_TYPE_VIEW_LOCATE_INFO};
+        li.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+        li.displayTime = fs.predictedDisplayTime;
+        li.space = app.head;
+        XrViewState vs{XR_TYPE_VIEW_STATE};
+        uint32_t n = 0;
+        xrLocateViews(app.session, &li, &vs, static_cast<uint32_t>(eye_local.size()), &n, eye_local.data());
+    }
+    const auto now_info = std::chrono::steady_clock::now();
+    if (now_info >= app.next_info) {   // now and then: UDP may drop one
+        app.next_info = now_info + std::chrono::seconds(2);
+        AppendHeadsetInfo(app, msg, eye_local);
+    }
     msg += "]\n";
     app.sender.Post(std::move(msg));
 
@@ -1117,6 +1229,12 @@ void Frame(App& app) {
         glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(verts.size() * sizeof(Vertex)), verts.data(),
                      GL_STREAM_DRAW);
         const bool video = app.video.Update(app.display);
+        // With the pose the frame was rendered for, the layer is placed where it
+        // belongs and the headset's compositor reprojects it to the current head
+        // pose; without it the image follows the head.
+        XrPosef frame_head{};
+        const bool reproject = video && app.video.FramePose(&frame_head);
+        app.reprojected += reproject ? 1 : 0;
 
         proj_views.resize(vc, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW});
         for (uint32_t i = 0; i < vc; ++i) {
@@ -1130,7 +1248,7 @@ void Frame(App& app) {
             RenderEye(app, sc, image, views[i], verts, static_cast<int>(i), video);
             XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
             xrReleaseSwapchainImage(sc.handle, &ri);
-            proj_views[i].pose = views[i].pose;
+            proj_views[i].pose = reproject && i < eye_local.size() ? Compose(frame_head, eye_local[i].pose) : views[i].pose;
             proj_views[i].fov = video && app.video.HasFov() ? app.video.Fov(static_cast<int>(i)) : views[i].fov;
             proj_views[i].subImage.swapchain = sc.handle;
             proj_views[i].subImage.imageRect = {{0, 0}, {sc.width, sc.height}};
@@ -1149,8 +1267,9 @@ void Frame(App& app) {
         int rx = 0, dec = 0, shown = 0;
         app.video.TakeStats(&rx, &dec, &shown);
         const float s = std::chrono::duration<float>(now - last_log).count();
-        LOGI("frames %.0f/s, video received %.0f/s decoded %.0f/s shown %.0f/s", xr_frames / s, rx / s, dec / s,
-             shown / s);
+        LOGI("frames %.0f/s, video received %.0f/s decoded %.0f/s shown %.0f/s, at render pose %.0f%%", xr_frames / s,
+             rx / s, dec / s, shown / s, xr_frames ? 100.0f * app.reprojected / xr_frames : 0.0f);
+        app.reprojected = 0;
         xr_frames = 0;
         last_log = now;
     }

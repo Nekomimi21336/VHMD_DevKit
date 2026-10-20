@@ -20,6 +20,9 @@ struct DisplayConfig {
     float display_frequency = 90.0f;
     float seconds_vsync_to_photons = 0.011f;
     float ipd_meters = 0.063f;
+    // Per-eye field of view as tangents (OpenXR signs: left/down < 0, right/up > 0),
+    // e.g. a physical headset's. All zero = the symmetric fov_deg.
+    float eye_tan[2][4] = {};   // [eye][left, right, up, down]
 
     // Reads the "vhmd_display" section of the SteamVR settings.
     static DisplayConfig FromSettings();

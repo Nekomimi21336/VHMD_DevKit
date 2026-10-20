@@ -4,6 +4,7 @@
 
 ### 追加
 - **ヘッドセット側アプリ VHMD Link(段階 1)**: Pico 4 Ultra などの単体型ヘッドセットで動く OpenXR のネイティブアプリ(`headset/`)。頭・両手の姿勢と入力を USB(`adb reverse`)経由で送り、PC の `python -m vhmd_client.headset_bridge` が VHMD ドライバに渡す。Gradle を使わない `build_apk.py` でビルドする。
+- **VHMD Link: 頭の動きの補正と、表示の合わせ込み**。ドライバがプレビューのフレームごとに描画時の頭の姿勢を書き(ヘッダーの後ろに追加、読み手は互換)、ヘッドセットはその姿勢で表示レイヤーを置くので、Pico の合成器が今の頭の姿勢との差を補正する。ヘッドセットが自分の視野角・解像度・IPD・リフレッシュレートを送り、`python -m vhmd_client.mode vhmd --headset` で VHMD をそれに合わせる。ドライバは目ごとの非対称な視野角(`vhmd_display` の `leftTanLeft` など)に対応。
 - **VHMD Link: Wi-Fi で接続**。アプリが LAN のブロードキャストで PC の `headset_bridge` を見つけ、姿勢・入力は UDP、映像は TCP で送る。見つからなければ USB(`adb reverse`)に切り替える。`pc_address.txt` でアドレスを固定できる。
 - **VHMD Link(段階 2): VHMD の映像をヘッドセットに表示**。PC の `headset_stream` がダイレクトモードのプレビューを ffmpeg(GPU エンコーダー)で H.264 にして USB 経由で送り、ヘッドセットはハードウェアデコーダーの出力をコピーなしでテクスチャにして表示する。
 - **VHMD と実機 HMD の切り替え(Windows)**: `python -m vhmd_client.mode pico|vhmd`、FPS 操作ツールのボタン。SteamVR の設定 `driver_pico.enable` と `driver_vhmd.configFile`(インストール済みの設定から作るプロファイル)を切り替えて SteamVR を再起動する。SnapVR などが SteamVR をすぐ起動し直す環境でも、元の SteamVR だけを止めて待つ。

@@ -31,6 +31,17 @@ MAGIC = b"VHMDPRV1"
 _HEADER = struct.Struct("<8s6I3Q2I2I")
 assert _HEADER.size == 72
 _SEQ_OFFSET = 8 + 6 * 4
+# Added later after the 72-byte header: u32 pose_flags, f32 pose[7] (x y z, qw qx qy qz).
+_POSE = struct.Struct("<I7f")
+_POSE_OFFSET = 72
+
+
+def _pose(mm, header_size: int):
+    """Render pose of the frame, or None (older driver, Linux, or not known)."""
+    if header_size < _POSE_OFFSET + _POSE.size:
+        return None
+    flags, *pose = _POSE.unpack_from(mm, _POSE_OFFSET)
+    return tuple(pose) if flags & 1 else None
 
 
 @dataclass
@@ -42,6 +53,8 @@ class Frame:
     timestamp_ns: int
     source_format: int
     rgba: bytes  # width * height * 4
+    # HMD pose the frame was rendered for (x y z, qw qx qy qz), Windows direct mode.
+    pose: Optional[tuple] = None
 
     @property
     def age_s(self) -> float:
@@ -208,11 +221,12 @@ class PreviewReader:
                 self.close()
                 continue
             data = mm[header_size:header_size + stride * height]
+            pose = _pose(mm, header_size)
             if struct.unpack_from("<Q", mm, _SEQ_OFFSET)[0] != s1:
                 continue  # torn read
             if stride != width * 4:
                 data = b"".join(data[y * stride:y * stride + width * 4] for y in range(height))
-            return Frame(width, height, eye_w, frame_index, ts, src_fmt, bytes(data))
+            return Frame(width, height, eye_w, frame_index, ts, src_fmt, bytes(data), pose)
         return None
 
     @property

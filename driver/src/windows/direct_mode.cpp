@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -91,6 +92,8 @@ struct DirectModeComponent::Impl {
 
     // Shared-memory readback (2 staging textures, mapped by the readback thread).
     ComPtr<ID3D11Texture2D> staging[2];
+    float staging_pose[2][7] = {};   // render pose of what each staging texture holds
+    bool staging_pose_ok[2] = {};
     int staging_pending = -1; // index waiting to be read back, -1 = none (guarded by mu)
     uint32_t staging_w = 0, staging_h = 0;
     std::condition_variable readback_cv;
@@ -279,6 +282,33 @@ void DirectModeComponent::GetNextSwapTextureSetIndex(vr::SharedTextureHandle_t h
     }
 }
 
+namespace {
+// HmdMatrix34_t (rotation + translation) to x y z, qw qx qy qz.
+bool PoseFromMatrix(const vr::HmdMatrix34_t& m, float out[7]) {
+    const float (*r)[4] = m.m;
+    const float tr = r[0][0] + r[1][1] + r[2][2];
+    float w, x, y, z;
+    if (tr > 0) {
+        const float s = std::sqrt(tr + 1.0f) * 2;
+        w = 0.25f * s; x = (r[2][1] - r[1][2]) / s; y = (r[0][2] - r[2][0]) / s; z = (r[1][0] - r[0][1]) / s;
+    } else if (r[0][0] > r[1][1] && r[0][0] > r[2][2]) {
+        const float s = std::sqrt(1.0f + r[0][0] - r[1][1] - r[2][2]) * 2;
+        w = (r[2][1] - r[1][2]) / s; x = 0.25f * s; y = (r[0][1] + r[1][0]) / s; z = (r[0][2] + r[2][0]) / s;
+    } else if (r[1][1] > r[2][2]) {
+        const float s = std::sqrt(1.0f + r[1][1] - r[0][0] - r[2][2]) * 2;
+        w = (r[0][2] - r[2][0]) / s; x = (r[0][1] + r[1][0]) / s; y = 0.25f * s; z = (r[1][2] + r[2][1]) / s;
+    } else {
+        const float s = std::sqrt(1.0f + r[2][2] - r[0][0] - r[1][1]) * 2;
+        w = (r[1][0] - r[0][1]) / s; x = (r[0][2] + r[2][0]) / s; y = (r[1][2] + r[2][1]) / s; z = 0.25f * s;
+    }
+    const float n = std::sqrt(w * w + x * x + y * y + z * z);
+    if (!(n > 0.5f && n < 1.5f)) return false;   // not a rotation (e.g. all zero)
+    const float v[7] = {r[0][3], r[1][3], r[2][3], w / n, x / n, y / n, z / n};
+    std::memcpy(out, v, sizeof(v));
+    return true;
+}
+} // namespace
+
 void DirectModeComponent::SubmitLayer(const SubmitLayerPerEye_t (&per_eye)[2]) {
     std::lock_guard<std::mutex> lock(mu_);
     if (layer_count_ == 0) { // the first layer of a frame is the scene; overlays follow
@@ -407,6 +437,7 @@ void DirectModeComponent::CopyPreview(const SubmitLayerPerEye_t (&layer)[2]) {
         }
         if (impl_->staging[idx]) {
             impl_->ctx->CopySubresourceRegion(impl_->staging[idx].Get(), 0, 0, 0, 0, impl_->atlas.Get(), impl_->shm_level, nullptr);
+            impl_->staging_pose_ok[idx] = PoseFromMatrix(layer[0].mHmdPose, impl_->staging_pose[idx]);
             impl_->staging_pending = idx;
             impl_->readback_cv.notify_one();
         }
@@ -560,12 +591,16 @@ void DirectModeComponent::ReadbackLoop() {
         ComPtr<ID3D11Texture2D> tex;
         uint32_t w = 0, h = 0;
         DXGI_FORMAT fmt = DXGI_FORMAT_UNKNOWN;
+        float pose[7] = {};
+        bool pose_ok = false;
         {
             std::unique_lock<std::mutex> lock(impl_->mu);
             impl_->readback_cv.wait_for(lock, std::chrono::milliseconds(200),
                                         [&] { return impl_->staging_pending >= 0 || !running_; });
             if (!running_ || impl_->staging_pending < 0) continue;
             tex = impl_->staging[impl_->staging_pending];
+            std::memcpy(pose, impl_->staging_pose[impl_->staging_pending], sizeof(pose));
+            pose_ok = impl_->staging_pose_ok[impl_->staging_pending];
             impl_->staging_pending = -1;
             w = impl_->staging_w;
             h = impl_->staging_h;
@@ -629,6 +664,8 @@ void DirectModeComponent::ReadbackLoop() {
         hdr->timestamp_ns = RealtimeNs();
         hdr->eye_width = w / 2;
         hdr->source_format = uint32_t(fmt);
+        hdr->pose_flags = pose_ok ? 1u : 0u;
+        std::memcpy(hdr->pose, pose, sizeof(pose));
         MemoryBarrier();
         hdr->seq = (hdr->seq | 1) + 1; // even: stable
         std::lock_guard<std::mutex> s(mu_);

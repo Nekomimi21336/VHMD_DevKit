@@ -67,6 +67,18 @@ DisplayConfig DisplayConfig::FromSettings() {
     c.display_frequency = std::clamp(GetFloat("displayFrequency", c.display_frequency), 30.0f, 240.0f);
     c.seconds_vsync_to_photons = GetFloat("secondsFromVsyncToPhotons", c.seconds_vsync_to_photons);
     c.ipd_meters = std::clamp(GetFloat("ipdMeters", c.ipd_meters), 0.04f, 0.09f);
+    static const char* kTanKeys[2][4] = {{"leftTanLeft", "leftTanRight", "leftTanUp", "leftTanDown"},
+                                         {"rightTanLeft", "rightTanRight", "rightTanUp", "rightTanDown"}};
+    for (int e = 0; e < 2; ++e) {
+        float t[4];
+        bool ok = true;
+        for (int i = 0; i < 4; ++i) {
+            t[i] = std::clamp(GetFloat(kTanKeys[e][i], 0.0f), -10.0f, 10.0f);
+            ok = ok && t[i] != 0.0f;
+        }
+        if (ok && t[0] < t[1] && t[3] < t[2])
+            for (int i = 0; i < 4; ++i) c.eye_tan[e][i] = t[i];
+    }
     return c;
 }
 
@@ -90,7 +102,15 @@ void HmdDisplayComponent::GetEyeOutputViewport(vr::EVREye eye, uint32_t* x, uint
     *x = eye == vr::Eye_Left ? 0 : cfg_.window_width / 2;
 }
 
-void HmdDisplayComponent::GetProjectionRaw(vr::EVREye /*eye*/, float* left, float* right, float* top, float* bottom) {
+void HmdDisplayComponent::GetProjectionRaw(vr::EVREye eye, float* left, float* right, float* top, float* bottom) {
+    const float* et = cfg_.eye_tan[eye == vr::Eye_Left ? 0 : 1];
+    if (et[0] != 0.0f) {   // OpenVR's y points down: top is minus the up tangent
+        *left = et[0];
+        *right = et[1];
+        *top = -et[2];
+        *bottom = -et[3];
+        return;
+    }
     const float t = std::tan(cfg_.fov_deg * 0.5f * 3.14159265f / 180.0f);
     *left = -t;
     *right = t;

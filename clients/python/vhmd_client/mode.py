@@ -4,6 +4,8 @@ through PICO Connect). Windows only.
     python -m vhmd_client.mode            # show the current mode
     python -m vhmd_client.mode pico       # physical HMD + VHMD trackers
     python -m vhmd_client.mode vhmd       # VHMD HMD and controllers, physical driver off
+    python -m vhmd_client.mode vhmd --headset     # ... rendering for the VHMD Link headset's display
+    python -m vhmd_client.mode vhmd --no-headset  # ... back to VHMD's own display settings
 
 SteamVR picks its HMD when it starts and cannot change it while running, so a
 switch restarts SteamVR (about 20-30 s; running VR apps close). Nothing else is
@@ -106,19 +108,48 @@ def _set_enabled(text: str, section: str, value: bool) -> str:
     return text[:e.start()] + f'"enabled": {"true" if value else "false"}' + text[e.end():]
 
 
-def write_profile(mode: str) -> Path:
+def _set_value(text: str, section: str, key: str, value: str) -> str:
+    """Sets section.key (a number or string already in JSON form) in the
+    (commented) JSON config; unchanged if the key is not there."""
+    m = re.search(r'"%s"\s*:\s*\{' % re.escape(section), text)
+    r = re.compile(r'"%s"\s*:\s*("[^"]*"|[-0-9.]+|true|false)' % re.escape(key)).search(text, m.end()) if m else None
+    if not r:
+        return text
+    return text[:r.start()] + f'"{key}": {value}' + text[r.end():]
+
+
+def write_profile(mode: str, edits: Optional[Dict[str, Dict[str, str]]] = None) -> Path:
     text = base_config().read_text(encoding="utf-8")
     for section, value in PROFILE_FLAGS[mode].items():
         text = _set_enabled(text, section, value)
+    for section, values in (edits or {}).items():
+        for key, value in values.items():
+            text = _set_value(text, section, key, value)
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     out = PROFILE_DIR / f"{mode}.json"
     out.write_text(text, encoding="utf-8")
     return out
 
 
-def wanted_settings(mode: str) -> Dict[str, Dict[str, object]]:
-    return {f"driver_{PHYSICAL_DRIVER}": {"enable": mode == "pico"},
-            DRIVER_SECTION: {"configFile": str(write_profile(mode))}}
+def wanted_settings(mode: str, headset: Optional[bool] = None) -> Dict[str, Dict[str, object]]:
+    """headset: True = render for the VHMD Link headset (headset_info), False =
+    VHMD's own display settings, None = leave them as they are."""
+    from . import headset_info
+    edits = None
+    display: Dict[str, object] = {}
+    if headset:
+        info = headset_info.load()
+        if not info:
+            raise SystemExit(f"no headset description yet ({headset_info.PATH}); run VHMD Link with headset_bridge first")
+        display = headset_info.display_settings(info)
+        edits = headset_info.profile_edits(info)
+    elif headset is False:
+        display = {k: None for k in headset_info.DISPLAY_KEYS}   # removed: driver defaults
+    out = {f"driver_{PHYSICAL_DRIVER}": {"enable": mode == "pico"},
+           DRIVER_SECTION: {"configFile": str(write_profile(mode, edits))}}
+    if display:
+        out["vhmd_display"] = display
+    return out
 
 
 # -- SteamVR processes --------------------------------------------------------
@@ -184,8 +215,17 @@ def _apply_via_api(settings: Dict[str, Dict[str, object]]) -> bool:
         s = openvr.VRSettings()
         for section, values in settings.items():
             for k, v in values.items():
-                if isinstance(v, bool):
+                if v is None:
+                    try:
+                        s.removeKeyInSection(section, k)
+                    except Exception:
+                        pass
+                elif isinstance(v, bool):
                     s.setBool(section, k, v)
+                elif isinstance(v, int):
+                    s.setInt32(section, k, v)
+                elif isinstance(v, float):
+                    s.setFloat(section, k, v)
                 else:
                     s.setString(section, k, str(v))
         s.sync(True)
@@ -201,7 +241,12 @@ def _apply_to_file(settings: Dict[str, Dict[str, object]]) -> None:
     p = settings_file()
     data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
     for section, values in settings.items():
-        data.setdefault(section, {}).update(values)
+        sec = data.setdefault(section, {})
+        for k, v in values.items():
+            if v is None:
+                sec.pop(k, None)
+            else:
+                sec[k] = v
     # A crash during a switch can leave the driver disabled by SteamVR's safe mode.
     data.get(DRIVER_SECTION, {}).pop("blocked_by_safe_mode", None)
     p.write_text(json.dumps(data, indent=3, ensure_ascii=False), encoding="utf-8")
@@ -223,13 +268,13 @@ def current_mode() -> Optional[str]:
     return "pico" if physical_on else None
 
 
-def switch(mode: str, progress: Progress = print, restart: bool = True) -> None:
+def switch(mode: str, progress: Progress = print, restart: bool = True, headset: Optional[bool] = None) -> None:
     """Selects a mode and (re)starts SteamVR with it."""
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}")
     if driver_dir(PHYSICAL_DRIVER) is None and mode == "pico":
         raise SystemExit(f"the {PHYSICAL_DRIVER} driver is not registered")
-    settings = wanted_settings(mode)
+    settings = wanted_settings(mode, headset)
     was_running = steamvr_running()
     if was_running:
         progress("saving the settings through SteamVR")
@@ -292,11 +337,15 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Switch SteamVR between the VHMD headset and a physical one")
     ap.add_argument("mode", nargs="?", choices=MODES, help="omit to show the current mode")
     ap.add_argument("--no-start", action="store_true", help="when SteamVR is not running, do not start it")
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--headset", dest="headset", action="store_true", default=None,
+                   help="render for the VHMD Link headset's display (fields of view, resolution, IPD, refresh)")
+    g.add_argument("--no-headset", dest="headset", action="store_false", help="back to VHMD's own display settings")
     args = ap.parse_args()
     if args.mode is None:
         print("mode:", current_mode() or "custom", "| SteamVR running:", steamvr_running())
         return
-    switch(args.mode, restart=not args.no_start)
+    switch(args.mode, restart=not args.no_start, headset=args.headset)
 
 
 if __name__ == "__main__":
