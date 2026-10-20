@@ -1,11 +1,12 @@
 """Relay between the VHMD Link headset app and the VHMD driver.
 
 The app sends one JSON array of VHMD protocol messages per line over TCP to
-port 39580 on the headset's localhost; `adb reverse tcp:39580 tcp:39580` (done
-here unless --no-adb) makes that this PC. Each line goes on to the driver as
-one UDP datagram.
+port 39580 on the headset's localhost; `adb reverse` (done here unless
+--no-adb) makes that this PC. Each line goes on to the driver as one UDP
+datagram. On port 39581 the app gets VHMD's image as H.264 (headset_stream;
+needs ffmpeg and the driver in direct mode).
 
-    python -m vhmd_client.headset_bridge [--driver-port 39570] [--no-adb]
+    python -m vhmd_client.headset_bridge [--driver-port 39570] [--no-adb] [--no-video]
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ import threading
 import time
 
 from .client import DEFAULT_HOST, DEFAULT_PORT
+from .headset_stream import VIDEO_PORT, VideoServer
 
 LISTEN_PORT = 39580
 
@@ -79,11 +81,19 @@ def main() -> None:
     ap.add_argument("--driver-port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--port", type=int, default=LISTEN_PORT, help="TCP port the app connects to")
     ap.add_argument("--no-adb", action="store_true", help="do not run adb reverse")
+    ap.add_argument("--no-video", action="store_true", help="poses only, no video")
+    ap.add_argument("--bitrate", type=float, default=30.0, help="video bitrate, Mbit/s")
+    ap.add_argument("--encoder", default="h264_amf", help="ffmpeg H.264 encoder (h264_amf, h264_nvenc, libx264, ...)")
     args = ap.parse_args()
 
     if not args.no_adb:
-        r = subprocess.run(["adb", "reverse", f"tcp:{args.port}", f"tcp:{args.port}"], capture_output=True, text=True)
-        print("adb reverse:", "ok" if r.returncode == 0 else (r.stderr.strip() or r.stdout.strip()))
+        for port in (args.port, VIDEO_PORT):
+            r = subprocess.run(["adb", "reverse", f"tcp:{port}", f"tcp:{port}"], capture_output=True, text=True)
+            print(f"adb reverse {port}:", "ok" if r.returncode == 0 else (r.stderr.strip() or r.stdout.strip()))
+    video = None
+    if not args.no_video:
+        video = VideoServer(bitrate_mbps=args.bitrate, encoder=args.encoder, log=lambda m: print(m, flush=True))
+        video.start()
 
     udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     driver = (args.driver_host, args.driver_port)
@@ -98,8 +108,13 @@ def main() -> None:
         while True:
             time.sleep(1.0)
             n, b, last = stats.take()
-            if n:
-                print(f"{n:4d} msg/s  {b / 1024:6.1f} KiB/s  {summary(last)}", flush=True)
+            line = f"{n:4d} msg/s  {b / 1024:6.1f} KiB/s  {summary(last)}" if n else ""
+            if video:
+                fin, fout, vb = video.take_stats()
+                if fin or fout:
+                    line += f"  |  video in {fin} / out {fout} fps  {vb * 8 / 1e6:5.1f} Mbit/s"
+            if line:
+                print(line, flush=True)
 
     threading.Thread(target=report, daemon=True).start()
     try:

@@ -14,7 +14,12 @@
 #include <android_native_app_glue.h>
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
+#include <EGL/eglext.h>
+#include <GLES2/gl2ext.h>
+#include <android/hardware_buffer.h>
 #include <jni.h>
+#include <media/NdkImageReader.h>
+#include <media/NdkMediaCodec.h>
 
 #define XR_USE_PLATFORM_ANDROID
 #define XR_USE_GRAPHICS_API_OPENGL_ES
@@ -27,6 +32,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -250,6 +256,280 @@ void Triad(std::vector<Vertex>& v, const XrPosef& p, float len) {
              cols[a][0], cols[a][1], cols[a][2]);
 }
 
+// -- video ------------------------------------------------------------------
+// VHMD's eye images arrive as H.264 access units on TCP 39581 (adb reverse;
+// clients/python/vhmd_client/headset_stream.py). A network thread feeds them to
+// the hardware decoder (MediaCodec), which renders into an AImageReader; the
+// render thread binds the newest image as an external texture straight from its
+// AHardwareBuffer (no copy) and draws each eye's half of it.
+constexpr uint16_t kVideoPort = 39581;
+constexpr uint32_t kKindConfig = 1, kKindFrame = 2;
+
+#pragma pack(push, 1)
+struct VideoHeader {
+    char magic[4];
+    uint32_t kind;
+    uint32_t size;
+    uint32_t flags;
+    uint64_t frame_index;
+    uint64_t pc_time_us;
+    float pose[7];
+    uint32_t reserved;
+};
+#pragma pack(pop)
+static_assert(sizeof(VideoHeader) == 64, "video header");
+
+// Reads a number after "key": in a small JSON text (enough for the config).
+bool JsonNumber(const std::string& s, const char* key, double* out) {
+    const std::string k = std::string("\"") + key + "\"";
+    size_t p = s.find(k);
+    if (p == std::string::npos) return false;
+    p = s.find(':', p);
+    if (p == std::string::npos) return false;
+    *out = strtod(s.c_str() + p + 1, nullptr);
+    return true;
+}
+
+PFNEGLGETNATIVECLIENTBUFFERANDROIDPROC pEglGetNativeClientBuffer = nullptr;
+PFNEGLCREATEIMAGEKHRPROC pEglCreateImage = nullptr;
+PFNEGLDESTROYIMAGEKHRPROC pEglDestroyImage = nullptr;
+PFNGLEGLIMAGETARGETTEXTURE2DOESPROC pGlEglImageTargetTexture2D = nullptr;
+
+class Video {
+public:
+    void Start() { thread_ = std::thread([this] { Run(); }); }
+    void Stop() {
+        stop_ = true;
+        int fd = fd_.exchange(-1);
+        if (fd >= 0) shutdown(fd, SHUT_RDWR);
+        if (thread_.joinable()) thread_.join();
+        if (codec_) {
+            AMediaCodec_stop(codec_);
+            AMediaCodec_delete(codec_);
+        }
+    }
+
+    // Render thread: binds the newest decoded frame. True while a frame is shown.
+    bool Update(EGLDisplay display) {
+        AImageReader* reader = reader_.load();
+        if (!reader) return has_frame_;
+        if (!tex_) {
+            glGenTextures(1, &tex_);
+            glBindTexture(GL_TEXTURE_EXTERNAL_OES, tex_);
+            glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        }
+        AImage* img = nullptr;
+        if (AImageReader_acquireLatestImage(reader, &img) != AMEDIA_OK || !img) return has_frame_;
+        AHardwareBuffer* hb = nullptr;
+        AImage_getHardwareBuffer(img, &hb);
+        EGLImageKHR egl = EGL_NO_IMAGE_KHR;
+        if (hb) {
+            const EGLint attrs[] = {EGL_IMAGE_PRESERVED_KHR, EGL_TRUE, EGL_NONE};
+            egl = pEglCreateImage(display, EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID, pEglGetNativeClientBuffer(hb),
+                                  attrs);
+        }
+        if (egl == EGL_NO_IMAGE_KHR) {
+            AImage_delete(img);
+            return has_frame_;
+        }
+        glBindTexture(GL_TEXTURE_EXTERNAL_OES, tex_);
+        pGlEglImageTargetTexture2D(GL_TEXTURE_EXTERNAL_OES, egl);
+        // The previous image can go back to the decoder now.
+        if (cur_egl_ != EGL_NO_IMAGE_KHR) pEglDestroyImage(display, cur_egl_);
+        if (cur_img_) AImage_delete(cur_img_);
+        cur_img_ = img;
+        cur_egl_ = egl;
+        has_frame_ = true;
+        ++shown_;
+        return true;
+    }
+
+    GLuint texture() const { return tex_; }
+    bool HasFov() const { return has_fov_.load(); }
+    XrFovf Fov(int eye) const { return fov_[eye]; }
+    bool Connected() const { return fd_.load() >= 0; }
+    void TakeStats(int* received, int* decoded, int* shown) {
+        *received = received_.exchange(0);
+        *decoded = decoded_.exchange(0);
+        *shown = shown_;
+        shown_ = 0;
+    }
+
+private:
+    void Run() {
+        while (!stop_) {
+            int fd = socket(AF_INET, SOCK_STREAM, 0);
+            sockaddr_in a{};
+            a.sin_family = AF_INET;
+            a.sin_port = htons(kVideoPort);
+            a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            if (fd < 0 || connect(fd, reinterpret_cast<sockaddr*>(&a), sizeof(a)) != 0) {
+                if (fd >= 0) close(fd);
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+                continue;
+            }
+            int one = 1;
+            setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+            fd_ = fd;
+            LOGI("video: connected");
+            std::vector<uint8_t> payload;
+            VideoHeader h{};
+            while (!stop_ && ReadAll(fd, &h, sizeof(h)) && memcmp(h.magic, "VHV1", 4) == 0) {
+                payload.resize(h.size);
+                if (h.size && !ReadAll(fd, payload.data(), h.size)) break;
+                if (h.kind == kKindConfig)
+                    Configure(std::string(payload.begin(), payload.end()));
+                else if (h.kind == kKindFrame && codec_)
+                    Feed(payload, h.frame_index);
+                Drain();
+            }
+            LOGI("video: disconnected");
+            int old = fd_.exchange(-1);
+            if (old >= 0) close(old);
+        }
+    }
+
+    static bool ReadAll(int fd, void* dst, size_t n) {
+        auto* p = static_cast<uint8_t*>(dst);
+        while (n > 0) {
+            ssize_t r = recv(fd, p, n, 0);
+            if (r <= 0) return false;
+            p += r;
+            n -= static_cast<size_t>(r);
+        }
+        return true;
+    }
+
+    void Configure(const std::string& json) {
+        double w = 0, h = 0;
+        JsonNumber(json, "width", &w);
+        JsonNumber(json, "height", &h);
+        // "fov": [[l, r, u, d], [l, r, u, d]] in radians (OpenXR angles).
+        size_t p = json.find("\"fov\"");
+        if (p != std::string::npos && json.find('[', p) != std::string::npos) {
+            const char* c = json.c_str() + json.find('[', p) + 1;
+            float v[8];
+            int n = 0;
+            while (n < 8 && *c) {
+                if ((*c >= '0' && *c <= '9') || *c == '-' || *c == '.') {
+                    char* end = nullptr;
+                    v[n++] = strtof(c, &end);
+                    c = end;
+                } else {
+                    ++c;
+                }
+            }
+            if (n == 8) {
+                for (int e = 0; e < 2; ++e) fov_[e] = {v[e * 4], v[e * 4 + 1], v[e * 4 + 2], v[e * 4 + 3]};
+                has_fov_ = true;
+            }
+        }
+        LOGI("video: config %.0fx%.0f, fov %s", w, h, has_fov_ ? "from the PC" : "own");
+        if (codec_ && w == width_ && h == height_) return;   // same stream shape: keep the decoder
+        if (codec_) {
+            AMediaCodec_stop(codec_);
+            AMediaCodec_delete(codec_);
+            codec_ = nullptr;
+        }
+        width_ = static_cast<int>(w);
+        height_ = static_cast<int>(h);
+        AImageReader* reader = reader_.load();
+        if (!reader) {
+            if (AImageReader_newWithUsage(width_, height_, AIMAGE_FORMAT_PRIVATE,
+                                          AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, 4, &reader) != AMEDIA_OK) {
+                LOGE("video: AImageReader failed");
+                return;
+            }
+            reader_ = reader;
+        }
+        ANativeWindow* window = nullptr;
+        AImageReader_getWindow(reader, &window);
+        codec_ = AMediaCodec_createDecoderByType("video/avc");
+        AMediaFormat* f = AMediaFormat_new();
+        AMediaFormat_setString(f, AMEDIAFORMAT_KEY_MIME, "video/avc");
+        AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_WIDTH, width_);
+        AMediaFormat_setInt32(f, AMEDIAFORMAT_KEY_HEIGHT, height_);
+        AMediaFormat_setInt32(f, "low-latency", 1);
+        AMediaFormat_setInt32(f, "vendor.qti-ext-dec-low-latency.enable", 1);
+        AMediaFormat_setInt32(f, "priority", 0);
+        media_status_t st = AMediaCodec_configure(codec_, f, window, nullptr, 0);
+        AMediaFormat_delete(f);
+        if (st != AMEDIA_OK || AMediaCodec_start(codec_) != AMEDIA_OK) {
+            LOGE("video: decoder start failed (%d)", static_cast<int>(st));
+            AMediaCodec_delete(codec_);
+            codec_ = nullptr;
+            return;
+        }
+        LOGI("video: H.264 decoder started");
+    }
+
+    void Feed(const std::vector<uint8_t>& au, uint64_t index) {
+        ssize_t i = AMediaCodec_dequeueInputBuffer(codec_, 20000);
+        if (i < 0) return;   // decoder full: drop this frame
+        size_t cap = 0;
+        uint8_t* buf = AMediaCodec_getInputBuffer(codec_, static_cast<size_t>(i), &cap);
+        const size_t n = std::min(cap, au.size());
+        memcpy(buf, au.data(), n);
+        AMediaCodec_queueInputBuffer(codec_, static_cast<size_t>(i), 0, n, index * 11111, 0);
+        ++received_;
+    }
+
+    void Drain() {
+        if (!codec_) return;
+        for (;;) {
+            AMediaCodecBufferInfo info;
+            ssize_t o = AMediaCodec_dequeueOutputBuffer(codec_, &info, 0);
+            if (o >= 0) {
+                AMediaCodec_releaseOutputBuffer(codec_, static_cast<size_t>(o), true);
+                ++decoded_;
+            } else if (o == AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED || o == AMEDIACODEC_INFO_OUTPUT_BUFFERS_CHANGED) {
+                continue;
+            } else {
+                break;
+            }
+        }
+    }
+
+    std::thread thread_;
+    std::atomic<bool> stop_{false};
+    std::atomic<int> fd_{-1};
+    std::atomic<AImageReader*> reader_{nullptr};
+    AMediaCodec* codec_ = nullptr;
+    int width_ = 0, height_ = 0;
+    XrFovf fov_[2] = {};
+    std::atomic<bool> has_fov_{false};
+    std::atomic<int> received_{0}, decoded_{0};
+    int shown_ = 0;
+    // render thread only
+    GLuint tex_ = 0;
+    AImage* cur_img_ = nullptr;
+    EGLImageKHR cur_egl_ = EGL_NO_IMAGE_KHR;
+    bool has_frame_ = false;
+};
+
+const char* kVideoVs = R"(#version 300 es
+uniform vec4 uv_rect;   // u0, v0, u1, v1 of this eye in the side-by-side frame
+out vec2 uv;
+void main() {
+    vec2 p = vec2(float(gl_VertexID & 1), float((gl_VertexID >> 1) & 1));   // triangle strip corners
+    uv = vec2(mix(uv_rect.x, uv_rect.z, p.x), mix(uv_rect.w, uv_rect.y, p.y));   // image row 0 at the top
+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}
+)";
+const char* kVideoFs = R"(#version 300 es
+#extension GL_OES_EGL_image_external_essl3 : require
+precision mediump float;
+uniform samplerExternalOES tex;
+in vec2 uv;
+out vec4 o;
+// The stream is sRGB encoded and the swapchain re-encodes on write: linearize.
+vec3 linear(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }
+void main() { o = vec4(linear(texture(tex, uv).rgb), 1.0); }
+)";
+
 // -- app ----------------------------------------------------------------------
 struct Swapchain {
     XrSwapchain handle = XR_NULL_HANDLE;
@@ -280,6 +560,7 @@ struct App {
     std::vector<XrViewConfigurationView> view_configs;
     std::vector<Swapchain> swapchains;
     bool has_bd_controller = false;
+    bool has_refresh_rate = false;
 
     XrActionSet action_set = XR_NULL_HANDLE;
     XrPath hand_paths[2] = {};
@@ -291,8 +572,11 @@ struct App {
 
     GLuint program = 0, vbo = 0, vao = 0;
     GLint mvp_loc = -1;
+    GLuint video_prog = 0, empty_vao = 0;
+    GLint uv_rect_loc = -1;
 
     Sender sender;
+    Video video;
 };
 
 void OnAppCmd(android_app* a, int32_t cmd) {
@@ -328,6 +612,10 @@ bool CreateInstance(App& app) {
         if (strcmp(p.extensionName, XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME) == 0) {
             exts.push_back(XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME);
             app.has_bd_controller = true;
+        }
+        if (strcmp(p.extensionName, XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME) == 0) {
+            exts.push_back(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
+            app.has_refresh_rate = true;
         }
     }
     LOGI("%u runtime extensions; Pico controller profile: %s", n, app.has_bd_controller ? "yes" : "no");
@@ -402,7 +690,26 @@ bool CreateSession(App& app) {
         if (!Check(xrCreateReferenceSpace(app.session, &rs, &app.base), "xrCreateReferenceSpace(LOCAL)")) return false;
     }
     rs.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
-    return Check(xrCreateReferenceSpace(app.session, &rs, &app.head), "xrCreateReferenceSpace(VIEW)");
+    if (!Check(xrCreateReferenceSpace(app.session, &rs, &app.head), "xrCreateReferenceSpace(VIEW)")) return false;
+
+    // The highest refresh rate the headset offers (Pico 4 Ultra: 72 / 90 Hz).
+    if (app.has_refresh_rate) {
+        PFN_xrEnumerateDisplayRefreshRatesFB enum_fn = nullptr;
+        PFN_xrRequestDisplayRefreshRateFB request_fn = nullptr;
+        xrGetInstanceProcAddr(app.instance, "xrEnumerateDisplayRefreshRatesFB",
+                              reinterpret_cast<PFN_xrVoidFunction*>(&enum_fn));
+        xrGetInstanceProcAddr(app.instance, "xrRequestDisplayRefreshRateFB",
+                              reinterpret_cast<PFN_xrVoidFunction*>(&request_fn));
+        uint32_t n = 0;
+        if (enum_fn && request_fn && XR_SUCCEEDED(enum_fn(app.session, 0, &n, nullptr)) && n > 0) {
+            std::vector<float> rates(n);
+            enum_fn(app.session, n, &n, rates.data());
+            const float best = *std::max_element(rates.begin(), rates.end());
+            LOGI("refresh rates: %u offered, requesting %.0f Hz: %s", n, best,
+                 XR_SUCCEEDED(request_fn(app.session, best)) ? "ok" : "failed");
+        }
+    }
+    return true;
 }
 
 bool CreateSwapchains(App& app) {
@@ -420,6 +727,9 @@ bool CreateSwapchains(App& app) {
     int64_t format = formats.empty() ? GL_RGBA8 : formats[0];
     for (int64_t f : formats)
         if (f == GL_SRGB8_ALPHA8) format = f;
+    std::string list;
+    for (int64_t f : formats) list += std::to_string(f) + " ";
+    LOGI("swapchain formats: %s-> 0x%llx", list.c_str(), static_cast<long long>(format));
 
     for (auto& vc : app.view_configs) {
         Swapchain sc;
@@ -555,6 +865,19 @@ void InitGl(App& app) {
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void*>(3 * sizeof(float)));
     glBindVertexArray(0);
+
+    app.video_prog = glCreateProgram();
+    glAttachShader(app.video_prog, Compile(GL_VERTEX_SHADER, kVideoVs));
+    glAttachShader(app.video_prog, Compile(GL_FRAGMENT_SHADER, kVideoFs));
+    glLinkProgram(app.video_prog);
+    app.uv_rect_loc = glGetUniformLocation(app.video_prog, "uv_rect");
+    glGenVertexArrays(1, &app.empty_vao);
+    pEglGetNativeClientBuffer = reinterpret_cast<PFNEGLGETNATIVECLIENTBUFFERANDROIDPROC>(
+        eglGetProcAddress("eglGetNativeClientBufferANDROID"));
+    pEglCreateImage = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(eglGetProcAddress("eglCreateImageKHR"));
+    pEglDestroyImage = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(eglGetProcAddress("eglDestroyImageKHR"));
+    pGlEglImageTargetTexture2D = reinterpret_cast<PFNGLEGLIMAGETARGETTEXTURE2DOESPROC>(
+        eglGetProcAddress("glEGLImageTargetTexture2DOES"));
 }
 
 // -- per frame ----------------------------------------------------------------
@@ -627,11 +950,26 @@ void AppendInputs(App& app, std::string& out, int hand) {
     out += buf;
 }
 
-void RenderEye(App& app, Swapchain& sc, uint32_t image, const XrView& view, const std::vector<Vertex>& verts) {
+void RenderEye(App& app, Swapchain& sc, uint32_t image, const XrView& view, const std::vector<Vertex>& verts,
+               int eye, bool video) {
     glBindFramebuffer(GL_FRAMEBUFFER, sc.fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sc.images[image].image, 0);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, sc.depth);
     glViewport(0, 0, sc.width, sc.height);
+    if (video) {
+        // This eye's half of VHMD's side-by-side image fills the view; the
+        // layer carries the field of view it was rendered with.
+        glDisable(GL_DEPTH_TEST);
+        glUseProgram(app.video_prog);
+        glUniform4f(app.uv_rect_loc, eye == 0 ? 0.0f : 0.5f, 0.0f, eye == 0 ? 0.5f : 1.0f, 1.0f);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_EXTERNAL_OES, app.video.texture());
+        glBindVertexArray(app.empty_vao);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        glBindVertexArray(0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return;
+    }
     glEnable(GL_DEPTH_TEST);
     glClearColor(0.03f, 0.035f, 0.05f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -698,6 +1036,7 @@ void Frame(App& app) {
         glBindBuffer(GL_ARRAY_BUFFER, app.vbo);
         glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(verts.size() * sizeof(Vertex)), verts.data(),
                      GL_STREAM_DRAW);
+        const bool video = app.video.Update(app.display);
 
         proj_views.resize(vc, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW});
         for (uint32_t i = 0; i < vc; ++i) {
@@ -708,11 +1047,11 @@ void Frame(App& app) {
             XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
             wi.timeout = XR_INFINITE_DURATION;
             xrWaitSwapchainImage(sc.handle, &wi);
-            RenderEye(app, sc, image, views[i], verts);
+            RenderEye(app, sc, image, views[i], verts, static_cast<int>(i), video);
             XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
             xrReleaseSwapchainImage(sc.handle, &ri);
             proj_views[i].pose = views[i].pose;
-            proj_views[i].fov = views[i].fov;
+            proj_views[i].fov = video && app.video.HasFov() ? app.video.Fov(static_cast<int>(i)) : views[i].fov;
             proj_views[i].subImage.swapchain = sc.handle;
             proj_views[i].subImage.imageRect = {{0, 0}, {sc.width, sc.height}};
         }
@@ -720,6 +1059,20 @@ void Frame(App& app) {
         layer.viewCount = vc;
         layer.views = proj_views.data();
         layers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&layer));
+    }
+
+    static auto last_log = std::chrono::steady_clock::now();
+    static int xr_frames = 0;
+    ++xr_frames;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_log >= std::chrono::seconds(2)) {
+        int rx = 0, dec = 0, shown = 0;
+        app.video.TakeStats(&rx, &dec, &shown);
+        const float s = std::chrono::duration<float>(now - last_log).count();
+        LOGI("frames %.0f/s, video received %.0f/s decoded %.0f/s shown %.0f/s", xr_frames / s, rx / s, dec / s,
+             shown / s);
+        xr_frames = 0;
+        last_log = now;
     }
 
     XrFrameEndInfo ei{XR_TYPE_FRAME_END_INFO};
@@ -769,6 +1122,7 @@ void android_main(android_app* android) {
     } else {
         InitGl(app);
         app.sender.Start();
+        app.video.Start();
         LOGI("running; sending to 127.0.0.1:%u (adb reverse)", kPcPort);
     }
 
@@ -796,6 +1150,7 @@ void android_main(android_app* android) {
     }
 
     app.sender.Stop();
+    app.video.Stop();
     if (app.session) xrDestroySession(app.session);
     if (app.instance) xrDestroyInstance(app.instance);
     if (app.display != EGL_NO_DISPLAY) {
