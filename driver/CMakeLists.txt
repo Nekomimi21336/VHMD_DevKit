@@ -60,7 +60,7 @@ if(WIN32)
   # textures, optional preview window, shared-memory frames.
   target_sources(driver_vhmd PRIVATE src/windows/direct_mode.cpp src/windows/stream_encoder.cpp)
   # stream_encoder: hardware video encoding for VHMD Link (Media Foundation).
-  target_link_libraries(driver_vhmd PRIVATE d3d11 dxgi mfplat mfuuid)
+  target_link_libraries(driver_vhmd PRIVATE d3d11 dxgi mfplat mfuuid ole32)
 endif()
 
 if(UNIX AND NOT APPLE)

@@ -3,6 +3,7 @@
 ## 未リリース
 
 ### 追加
+- **音: PC → ヘッドセット**。ドライバが既定の出力デバイスを WASAPI ループバックで取り込み、映像と同じ接続で 16 ビット PCM を送る。VHMD Link は AAudio(低遅延)で再生し、短いバッファで途切れと遅れを抑える。
 - **ドライバ内での映像圧縮(Windows のダイレクトモード)**: 合成器の目のテクスチャを GPU 上で NV12 にして Media Foundation のハードウェアエンコーダー(H.264 / HEVC)に渡し、描画時の姿勢付きで 127.0.0.1:39583 に出す(設定 `stream`)。CPU への読み出しをなくし、`headset_bridge` は転送だけになる(既定 HEVC・40 Mbit/s)。単体テスト `vhmd_stream_selftest`(SteamVR なしでエンコーダーを確認)。VHMD Link は HEVC に対応し、復号した画像を専用のスレッドで取り出す。
 - **ヘッドセット側アプリ VHMD Link(段階 1)**: Pico 4 Ultra などの単体型ヘッドセットで動く OpenXR のネイティブアプリ(`headset/`)。頭・両手の姿勢と入力を USB(`adb reverse`)経由で送り、PC の `python -m vhmd_client.headset_bridge` が VHMD ドライバに渡す。Gradle を使わない `build_apk.py` でビルドする。
 - **マニュアル / オートの切り替え**(SteamVR を止めない)。メッセージに送り手の名前 `src` を付けられ、`config` の `control` でデバイス(全体または一部)を動かす送り手を決める。操作権の無い送り手は捨てて数える。操作権が移るときは前の送り手の入力を離し、速度の予測を止める。応答に各デバイスの最新の姿勢が入る。`python -m vhmd_client.control`、`VHMDClient(source=...)` と `control()`、FPS 操作ツールの「オートに渡す / マニュアルに戻す」(戻すときは自動操作が置いた位置から再開)、VHMD Link の X + A 長押しで取り戻し。

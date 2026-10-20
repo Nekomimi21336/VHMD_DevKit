@@ -21,6 +21,7 @@
 #include <GLES2/gl2ext.h>
 #include <android/hardware_buffer.h>
 #include <jni.h>
+#include <aaudio/AAudio.h>
 #include <media/NdkImageReader.h>
 #include <media/NdkMediaCodec.h>
 
@@ -338,6 +339,102 @@ void Triad(std::vector<Vertex>& v, const XrPosef& p, float len) {
              cols[a][0], cols[a][1], cols[a][2]);
 }
 
+// -- audio ------------------------------------------------------------------
+// The PC's sound (kind 3 PCM, kind 4 format) played with AAudio. The network
+// thread writes into a single-producer / single-consumer ring; the AAudio
+// callback reads it. Playback starts once ~40 ms are buffered (and again after
+// running dry); more than ~150 ms buffered means we fell behind, so the newest
+// data is skipped until the backlog drains.
+class AudioOut {
+public:
+    ~AudioOut() { Close(); }
+
+    void Configure(int rate, int channels) {
+        if (stream_ && rate == rate_ && channels == channels_) return;
+        Close();
+        rate_ = rate;
+        channels_ = channels;
+        ring_.assign(static_cast<size_t>(rate) * channels, 0);   // 1 s
+        head_ = tail_ = 0;
+        primed_ = false;
+        AAudioStreamBuilder* b = nullptr;
+        if (AAudio_createStreamBuilder(&b) != AAUDIO_OK) return;
+        AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_I16);
+        AAudioStreamBuilder_setChannelCount(b, channels);
+        AAudioStreamBuilder_setSampleRate(b, rate);
+        AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+        AAudioStreamBuilder_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
+        AAudioStreamBuilder_setDataCallback(b, &AudioOut::Callback, this);
+        const aaudio_result_t r = AAudioStreamBuilder_openStream(b, &stream_);
+        AAudioStreamBuilder_delete(b);
+        if (r != AAUDIO_OK) {
+            LOGE("audio: cannot open an output stream (%d)", static_cast<int>(r));
+            stream_ = nullptr;
+            return;
+        }
+        AAudioStream_requestStart(stream_);
+        LOGI("audio: playing %d Hz, %d channel(s)", rate, channels);
+    }
+
+    void Push(const int16_t* s, size_t n) {
+        if (!stream_ || ring_.empty()) return;
+        const size_t cap = ring_.size();
+        const size_t fill = head_.load() - tail_.load();
+        if (fill + n > cap || fill > static_cast<size_t>(rate_) * channels_ * 150 / 1000) {
+            ++skipped_;
+            return;
+        }
+        size_t h = head_.load();
+        for (size_t i = 0; i < n; ++i) ring_[(h + i) % cap] = s[i];
+        head_.store(h + n);
+        ++packets_;
+    }
+
+    void TakeStats(int* packets, int* underruns, int* skipped) {
+        *packets = packets_.exchange(0);
+        *underruns = underruns_.exchange(0);
+        *skipped = skipped_.exchange(0);
+    }
+
+private:
+    static aaudio_data_callback_result_t Callback(AAudioStream*, void* user, void* data, int32_t frames) {
+        auto* self = static_cast<AudioOut*>(user);
+        auto* out = static_cast<int16_t*>(data);
+        const size_t want = static_cast<size_t>(frames) * self->channels_;
+        const size_t cap = self->ring_.size();
+        size_t t = self->tail_.load();
+        const size_t fill = self->head_.load() - t;
+        const size_t start_level = static_cast<size_t>(self->rate_) * self->channels_ * 40 / 1000;
+        if (!self->primed_ && fill >= start_level) self->primed_ = true;
+        if (!self->primed_ || fill < want) {
+            std::memset(out, 0, want * sizeof(int16_t));
+            if (self->primed_) {   // ran dry: wait for the buffer to fill up again
+                self->primed_ = false;
+                ++self->underruns_;
+            }
+            return AAUDIO_CALLBACK_RESULT_CONTINUE;
+        }
+        for (size_t i = 0; i < want; ++i) out[i] = self->ring_[(t + i) % cap];
+        self->tail_.store(t + want);
+        return AAUDIO_CALLBACK_RESULT_CONTINUE;
+    }
+
+    void Close() {
+        if (stream_) {
+            AAudioStream_requestStop(stream_);
+            AAudioStream_close(stream_);
+            stream_ = nullptr;
+        }
+    }
+
+    AAudioStream* stream_ = nullptr;
+    int rate_ = 0, channels_ = 0;
+    std::vector<int16_t> ring_;
+    std::atomic<size_t> head_{0}, tail_{0};
+    bool primed_ = false;   // callback thread only
+    std::atomic<int> packets_{0}, underruns_{0}, skipped_{0};
+};
+
 // -- video ------------------------------------------------------------------
 // VHMD's eye images arrive as H.264 access units on TCP 39581 (adb reverse;
 // clients/python/vhmd_client/headset_stream.py). A network thread feeds them to
@@ -345,7 +442,7 @@ void Triad(std::vector<Vertex>& v, const XrPosef& p, float len) {
 // render thread binds the newest image as an external texture straight from its
 // AHardwareBuffer (no copy) and draws each eye's half of it.
 constexpr uint16_t kVideoPort = 39581;
-constexpr uint32_t kKindConfig = 1, kKindFrame = 2;
+constexpr uint32_t kKindConfig = 1, kKindFrame = 2, kKindAudio = 3, kKindAudioFormat = 4;
 constexpr uint64_t kPtsStepUs = 11111;   // decoder timestamps: frame index * this
 
 #pragma pack(push, 1)
@@ -482,12 +579,14 @@ public:
     bool Connected() const { return fd_.load() >= 0; }
     struct Stats {
         int received, decoded, shown, repeats, dropped, buffer, rx_close, dec_close;
+        int audio_packets, audio_underruns, audio_skipped;
         float wait_avg_ms, wait_p95_ms;   // decoded image waiting before it is shown
     };
     Stats TakeStats() {
         std::lock_guard<std::mutex> l(queue_mu_);
         Stats s{received_.exchange(0), decoded_.exchange(0), shown_, repeats_, dropped_, buffer_.load(),
-                rx_close_.exchange(0), dec_close_.exchange(0), 0, 0};
+                rx_close_.exchange(0), dec_close_.exchange(0), 0, 0, 0, 0, 0};
+        audio_.TakeStats(&s.audio_packets, &s.audio_underruns, &s.audio_skipped);
         if (!waits_ms_.empty()) {
             float sum = 0;
             for (float w : waits_ms_) sum += w;
@@ -543,6 +642,14 @@ private:
                     RememberPose(h);
                     NoteGap(last_rx_, rx_close_);
                     Feed(payload, h.frame_index);
+                } else if (h.kind == kKindAudioFormat) {
+                    const std::string j(payload.begin(), payload.end());
+                    double rate = 48000, channels = 2;
+                    JsonNumber(j, "rate", &rate);
+                    JsonNumber(j, "channels", &channels);
+                    audio_.Configure(static_cast<int>(rate), static_cast<int>(channels));
+                } else if (h.kind == kKindAudio) {
+                    audio_.Push(reinterpret_cast<const int16_t*>(payload.data()), payload.size() / 2);
                 }
             }
             LOGI("video: disconnected");
@@ -710,6 +817,7 @@ private:
     }
 
     std::thread thread_, drain_thread_;
+    AudioOut audio_;
     std::mutex codec_mu_;
     std::atomic<bool> stop_{false};
     std::atomic<int> fd_{-1};
@@ -1391,17 +1499,19 @@ void Frame(App& app) {
         const float s = std::chrono::duration<float>(now - last_log).count();
         const float rep = xr_frames ? 100.0f * app.reprojected / xr_frames : 0.0f;
         LOGI("frames %.0f/s, video received %.0f/s decoded %.0f/s shown %.0f/s (repeats %.0f/s, dropped %.0f/s, "
-             "buffer %d, wait %.1f ms avg %.1f p95), at render pose %.0f%%, bunched: received %.0f/s decoded %.0f/s",
+             "buffer %d, wait %.1f ms avg %.1f p95), at render pose %.0f%%, bunched: received %.0f/s decoded %.0f/s; "
+             "audio %.0f packets/s, %d underruns, %d skipped",
              xr_frames / s, v.received / s, v.decoded / s, v.shown / s, v.repeats / s, v.dropped / s, v.buffer,
-             v.wait_avg_ms, v.wait_p95_ms, rep, v.rx_close / s, v.dec_close / s);
+             v.wait_avg_ms, v.wait_p95_ms, rep, v.rx_close / s, v.dec_close / s, v.audio_packets / s,
+             v.audio_underruns, v.audio_skipped);
         // The same numbers for the PC: over Wi-Fi there is no logcat.
         char st[384];
         snprintf(st, sizeof(st),
                  "{\"type\":\"link_stats\",\"display\":%.1f,\"received\":%.1f,\"decoded\":%.1f,\"shown\":%.1f,"
                  "\"repeats\":%.1f,\"dropped\":%.1f,\"buffer\":%d,\"wait_ms\":%.1f,\"wait_p95_ms\":%.1f,"
-                 "\"reprojected\":%.0f}",
+                 "\"reprojected\":%.0f,\"audio_packets\":%.1f,\"audio_underruns\":%d}",
                  xr_frames / s, v.received / s, v.decoded / s, v.shown / s, v.repeats / s, v.dropped / s, v.buffer,
-                 v.wait_avg_ms, v.wait_p95_ms, rep);
+                 v.wait_avg_ms, v.wait_p95_ms, rep, v.audio_packets / s, v.audio_underruns);
         app.link_stats = st;
         app.reprojected = 0;
         xr_frames = 0;

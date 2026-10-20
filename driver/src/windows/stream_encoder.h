@@ -15,6 +15,11 @@
 // time, render pose) and the payload. The client may first send one line of
 // JSON with settings: {"bitrate_mbps": 30, "codec": "h264"|"hevc",
 // "eye_width": 1920, "fps": 72}. Encoding only runs while a client is connected.
+//
+// Audio: while a client is connected, what the PC plays on its default output
+// device (WASAPI loopback) goes on the same connection: kind 4 = audio format
+// JSON ({"rate": 48000, "channels": 2, "format": "s16"}), kind 3 = interleaved
+// 16-bit PCM, about 10 ms per message (frame index = first sample's number).
 #pragma once
 
 #include <atomic>
@@ -38,6 +43,7 @@ struct StreamSettings {
     double bitrate_mbps = 30.0;      // defaults; the client's settings line overrides
     std::string codec = "h264";
     uint32_t eye_width = 0;          // 0 = the source eye width (capped to the codec's limit)
+    bool audio = true;               // also send the PC's sound (loopback of the default output)
     // Each eye's field of view as OpenXR angles (radians: left, right, up, down),
     // sent in the config message so the headset shows the image with it.
     float fov[2][4] = {{-0.87266f, 0.87266f, 0.87266f, -0.87266f}, {-0.87266f, 0.87266f, 0.87266f, -0.87266f}};
@@ -49,6 +55,8 @@ struct StreamStats {
     std::string encoder;             // the MFT's friendly name
     uint32_t width = 0, height = 0;
     uint64_t submitted = 0, encoded = 0, dropped = 0, bytes = 0;
+    std::string audio = "off";       // "off", "capturing <rate> Hz", or an error
+    uint64_t audio_packets = 0;
 };
 
 class StreamEncoder {
@@ -75,13 +83,14 @@ private:
     struct Impl;
     void NetLoop();
     void EncodeLoop();
+    void AudioLoop();
 
     std::unique_ptr<Impl> impl_;
     StreamSettings settings_;
     std::atomic<double> fps_{90.0};
     std::atomic<bool> running_{false};
     std::atomic<bool> wanted_{false};
-    std::thread net_thread_, encode_thread_;
+    std::thread net_thread_, encode_thread_, audio_thread_;
     mutable std::mutex stats_mu_;
     StreamStats stats_;
 };

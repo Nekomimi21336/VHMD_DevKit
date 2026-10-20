@@ -12,7 +12,9 @@
 #include <d3d11.h>
 #include <d3d11_1.h>
 #include <initguid.h>   // CODECAPI_* GUIDs for this file (selectany)
+#include <audioclient.h>
 #include <codecapi.h>
+#include <mmdeviceapi.h>
 #include <mfapi.h>
 #include <mferror.h>
 #include <mfidl.h>
@@ -36,7 +38,7 @@ namespace vhmd {
 namespace {
 
 constexpr int kRing = 4;               // NV12 textures between the video processor and the encoder
-constexpr uint32_t kKindConfig = 1, kKindFrame = 2;
+constexpr uint32_t kKindConfig = 1, kKindFrame = 2, kKindAudio = 3, kKindAudioFormat = 4;
 
 #pragma pack(push, 1)
 struct VideoHeader {
@@ -155,6 +157,32 @@ struct StreamEncoder::Impl {
     uint32_t eye_width = 0;
     int buffer = 0;
     float fov[2][4] = {};
+
+    // One message to the client (any thread). False if there is no client
+    // or it is gone.
+    bool Send(uint32_t kind, uint64_t index, const uint8_t* a, size_t na, const uint8_t* b, size_t nb,
+              const float* pose) {
+        VideoHeader h{};
+        std::memcpy(h.magic, "VHV1", 4);
+        h.kind = kind;
+        h.size = uint32_t(na + nb);
+        h.flags = pose ? 1 : 0;
+        h.frame_index = index;
+        h.time_us = NowUs();
+        if (pose) std::memcpy(h.pose, pose, sizeof(h.pose));
+        std::lock_guard<std::mutex> l(client_mu);
+        if (client == INVALID_SOCKET) return false;
+        WSABUF bufs[3] = {{ULONG(sizeof(h)), reinterpret_cast<CHAR*>(&h)},
+                          {ULONG(na), reinterpret_cast<CHAR*>(const_cast<uint8_t*>(a))},
+                          {ULONG(nb), reinterpret_cast<CHAR*>(const_cast<uint8_t*>(b))}};
+        DWORD sent = 0;
+        if (WSASend(client, bufs, 3, &sent, 0, nullptr, nullptr) != 0 || sent != sizeof(h) + na + nb) {
+            closesocket(client);
+            client = INVALID_SOCKET;
+            return false;
+        }
+        return true;
+    }
 };
 
 StreamEncoder::StreamEncoder(ID3D11Device* device, ID3D11DeviceContext* ctx, uint64_t adapter_luid,
@@ -180,6 +208,7 @@ void StreamEncoder::Start() {
     if (!settings_.enabled || running_.exchange(true)) return;
     net_thread_ = std::thread(&StreamEncoder::NetLoop, this);
     encode_thread_ = std::thread(&StreamEncoder::EncodeLoop, this);
+    if (settings_.audio) audio_thread_ = std::thread(&StreamEncoder::AudioLoop, this);
 }
 
 void StreamEncoder::Stop() {
@@ -193,6 +222,7 @@ void StreamEncoder::Stop() {
     impl_->q_cv.notify_all();
     if (net_thread_.joinable()) net_thread_.join();
     if (encode_thread_.joinable()) encode_thread_.join();
+    if (audio_thread_.joinable()) audio_thread_.join();
 }
 
 StreamStats StreamEncoder::Stats() const {
@@ -453,28 +483,7 @@ void StreamEncoder::EncodeLoop() {
         return;
     }
     auto send_msg = [&](uint32_t kind, uint64_t index, const uint8_t* a, size_t na, const uint8_t* b, size_t nb,
-                        const float* pose) -> bool {
-        VideoHeader h{};
-        std::memcpy(h.magic, "VHV1", 4);
-        h.kind = kind;
-        h.size = uint32_t(na + nb);
-        h.flags = pose ? 1 : 0;
-        h.frame_index = index;
-        h.time_us = NowUs();
-        if (pose) std::memcpy(h.pose, pose, sizeof(h.pose));
-        std::lock_guard<std::mutex> l(m.client_mu);
-        if (m.client == INVALID_SOCKET) return false;
-        WSABUF bufs[3] = {{ULONG(sizeof(h)), reinterpret_cast<CHAR*>(&h)},
-                          {ULONG(na), reinterpret_cast<CHAR*>(const_cast<uint8_t*>(a))},
-                          {ULONG(nb), reinterpret_cast<CHAR*>(const_cast<uint8_t*>(b))}};
-        DWORD sent = 0;
-        if (WSASend(m.client, bufs, 3, &sent, 0, nullptr, nullptr) != 0 || sent != sizeof(h) + na + nb) {
-            closesocket(m.client);
-            m.client = INVALID_SOCKET;
-            return false;
-        }
-        return true;
-    };
+                        const float* pose) { return m.Send(kind, index, a, na, b, nb, pose); };
 
     auto teardown = [&]() {
         if (m.mft) {
@@ -830,6 +839,106 @@ void StreamEncoder::EncodeLoop() {
     }
     teardown();
     MFShutdown();
+}
+
+// --- audio thread -------------------------------------------------------------
+// Loopback of the default output device while a client is connected. Polled
+// every 5 ms (event-driven loopback needs Windows 10 1703+ and gains little at
+// this period); converted to interleaved 16-bit, at most 2 channels, the
+// device's own rate (the headset resamples).
+void StreamEncoder::AudioLoop() {
+    Impl& m = *impl_;
+    const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    auto set_state = [&](const std::string& st) {
+        std::lock_guard<std::mutex> l(stats_mu_);
+        stats_.audio = st;
+    };
+    while (running_) {
+        if (!wanted_) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+        ComPtr<IMMDeviceEnumerator> en;
+        ComPtr<IMMDevice> dev;
+        ComPtr<IAudioClient> ac;
+        ComPtr<IAudioCaptureClient> cap;
+        WAVEFORMATEX* wf = nullptr;
+        if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&en))) ||
+            FAILED(en->GetDefaultAudioEndpoint(eRender, eConsole, &dev)) ||
+            FAILED(dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &ac)) || FAILED(ac->GetMixFormat(&wf)) ||
+            FAILED(ac->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, 200000 /* 20 ms */, 0, wf,
+                                  nullptr)) ||
+            FAILED(ac->GetService(IID_PPV_ARGS(&cap)))) {
+            if (wf) CoTaskMemFree(wf);
+            set_state("error: no loopback capture");
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            continue;
+        }
+        // Float32 (the usual mix format) or 16-bit integer.
+        bool is_float = wf->wFormatTag == WAVE_FORMAT_IEEE_FLOAT;
+        if (wf->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
+            const auto* ext = reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(wf);
+            is_float = ext->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+        }
+        const UINT32 rate = wf->nSamplesPerSec;
+        const UINT32 in_ch = wf->nChannels;
+        const UINT32 bits = wf->wBitsPerSample;
+        CoTaskMemFree(wf);
+        if (!((is_float && bits == 32) || (!is_float && bits == 16))) {
+            set_state("error: unsupported mix format (" + std::to_string(bits) + " bit)");
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            continue;
+        }
+        const UINT32 out_ch = std::min<UINT32>(2, in_ch);
+        const std::string fmt = "{\"rate\":" + std::to_string(rate) + ",\"channels\":" + std::to_string(out_ch) +
+                                ",\"format\":\"s16\"}";
+        m.Send(kKindAudioFormat, 0, reinterpret_cast<const uint8_t*>(fmt.data()), fmt.size(), nullptr, 0, nullptr);
+        ac->Start();
+        set_state("capturing " + std::to_string(rate) + " Hz");
+        Log(LogLevel::Info, "stream: audio loopback %u Hz, %u channel(s) -> %u", rate, in_ch, out_ch);
+        std::vector<int16_t> out;
+        uint64_t sample_no = 0;
+        const size_t chunk = size_t(rate) / 100 * out_ch;   // 10 ms
+        while (running_ && wanted_) {
+            UINT32 n = 0;
+            if (FAILED(cap->GetNextPacketSize(&n))) break;
+            if (n == 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                continue;
+            }
+            BYTE* data = nullptr;
+            UINT32 frames = 0;
+            DWORD flags = 0;
+            if (FAILED(cap->GetBuffer(&data, &frames, &flags, nullptr, nullptr))) break;
+            for (UINT32 f = 0; f < frames; ++f) {
+                for (UINT32 c = 0; c < out_ch; ++c) {
+                    int16_t v = 0;
+                    if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT)) {
+                        if (is_float) {
+                            const float x = reinterpret_cast<const float*>(data)[size_t(f) * in_ch + c];
+                            v = int16_t(std::clamp(x, -1.0f, 1.0f) * 32767.0f);
+                        } else {
+                            v = reinterpret_cast<const int16_t*>(data)[size_t(f) * in_ch + c];
+                        }
+                    }
+                    out.push_back(v);
+                }
+            }
+            cap->ReleaseBuffer(frames);
+            while (out.size() >= chunk) {
+                if (!m.Send(kKindAudio, sample_no, reinterpret_cast<const uint8_t*>(out.data()), chunk * 2, nullptr, 0,
+                            nullptr))
+                    break;
+                sample_no += chunk / out_ch;
+                out.erase(out.begin(), out.begin() + std::ptrdiff_t(chunk));
+                std::lock_guard<std::mutex> l(stats_mu_);
+                ++stats_.audio_packets;
+            }
+        }
+        ac->Stop();
+        set_state("off");
+    }
+    if (SUCCEEDED(co)) CoUninitialize();
 }
 
 } // namespace vhmd

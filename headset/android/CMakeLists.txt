@@ -19,6 +19,6 @@ set_target_properties(openxr_loader PROPERTIES IMPORTED_LOCATION ${OPENXR_DIR}/l
 add_library(vhmdlink SHARED src/main.cpp)
 target_include_directories(vhmdlink PRIVATE ${OPENXR_DIR}/include)
 target_compile_options(vhmdlink PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
-target_link_libraries(vhmdlink PRIVATE native_app_glue openxr_loader android log EGL GLESv3 mediandk nativewindow)
+target_link_libraries(vhmdlink PRIVATE native_app_glue openxr_loader android log EGL GLESv3 mediandk nativewindow aaudio)
 # NativeActivity looks this symbol up by name; keep it although nothing calls it.
 target_link_options(vhmdlink PRIVATE -u ANativeActivity_onCreate -Wl,-z,max-page-size=16384)
