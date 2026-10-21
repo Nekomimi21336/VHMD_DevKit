@@ -11,6 +11,7 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <d3d11_1.h>
+#include <d3dcompiler.h>
 #include <initguid.h>   // CODECAPI_* GUIDs for this file (selectany)
 #include <audioclient.h>
 #include <codecapi.h>
@@ -180,6 +181,19 @@ struct StreamEncoder::Impl {
     std::mutex set_mu;
     double bitrate_mbps = 30;
     std::atomic<bool> bitrate_changed{false};   // a new bitrate for the running encoder
+    // Foveated encoding: per axis, the centre share at full resolution and how
+    // much the edges are squeezed (cx, rx, cy, ry); rx = ry = 1: off.
+    float foveation[4] = {1, 1, 1, 1};
+    // its GPU pass (compositor thread)
+    ComPtr<ID3D11VertexShader> fov_vs;
+    ComPtr<ID3D11PixelShader> fov_ps;
+    ComPtr<ID3D11SamplerState> fov_smp;
+    ComPtr<ID3D11Buffer> fov_cb;
+    ComPtr<ID3D11Texture2D> fov_tex;
+    ComPtr<ID3D11RenderTargetView> fov_rtv;
+    ComPtr<ID3D11ShaderResourceView> fov_srv;
+    ID3D11Texture2D* fov_srv_of = nullptr;
+    bool fov_failed = false;
     std::string codec = "h264";
     std::string backend = "auto";        // "auto" (AMF on AMD, else Media Foundation) | "amf" | "mf"
     std::string amf_failed_codec;        // AMF could not do this codec: Media Foundation for it
@@ -259,6 +273,125 @@ StreamStats StreamEncoder::Stats() const {
     return stats_;
 }
 
+// --- foveated encoding ---------------------------------------------------------
+// Per axis, normalised to one eye: the centre share c keeps full resolution,
+// the edges are squeezed r times. Encoded position e (0..1) of source position
+// x: x < x0: x / r; centre: x0/r + (x - x0); beyond: x0/r + c + (x - x0 - c)/r,
+// all divided by the encoded width w = c + (1 - c)/r, with x0 = (1 - c)/2. The
+// pass below inverts it per output pixel; the headset applies it to find
+// where a displayed pixel is in the picture (headset/android/src/main.cpp).
+static const char kFoveationHlsl[] = R"(
+Texture2D src : register(t0);
+SamplerState smp : register(s0);
+cbuffer P : register(b0) {
+    float4 fov;   // cx, rx, cy, ry
+    float4 geo;   // output eye width, output height, 1 / source width, 1 / source height
+};
+void unsqueeze(float e, float c, float r, out float x, out float k) {
+    float w = c + (1.0 - c) / r;
+    float x0 = (1.0 - c) * 0.5;
+    float er = e * w;
+    if (er < x0 / r) { x = er * r; k = r; }
+    else if (er <= x0 / r + c) { x = x0 + (er - x0 / r); k = 1.0; }
+    else { x = x0 + c + (er - x0 / r - c) * r; k = r; }
+}
+float4 vs(uint id : SV_VertexID) : SV_Position {
+    float2 p = float2((id << 1) & 2, id & 2);
+    return float4(p * float2(2, -2) + float2(-1, 1), 0, 1);
+}
+float4 ps(float4 pos : SV_Position) : SV_Target {
+    float eye = pos.x >= geo.x ? 1.0 : 0.0;
+    float ex = (pos.x - eye * geo.x) / geo.x, ey = pos.y / geo.y;
+    float sx, kx, sy, ky;
+    unsqueeze(ex, fov.x, fov.y, sx, kx);
+    unsqueeze(ey, fov.z, fov.w, sy, ky);
+    float2 uv = float2((eye + clamp(sx, 0.0, 0.9995)) * 0.5, sy);
+    // Squeezed areas: four taps spread over the source pixels they cover.
+    float2 d = float2((kx - 1.0) * 0.25 * geo.z, (ky - 1.0) * 0.25 * geo.w);
+    return 0.25 * (src.Sample(smp, uv + float2(-d.x, -d.y)) + src.Sample(smp, uv + float2(d.x, -d.y)) +
+                   src.Sample(smp, uv + float2(-d.x, d.y)) + src.Sample(smp, uv + float2(d.x, d.y)));
+}
+)";
+
+bool StreamEncoder::FoveatedPass(ID3D11Texture2D* src, uint32_t eye_w, uint32_t eye_h, uint32_t out_eye_w, uint32_t out_h,
+                                 const float fov[4]) {
+    Impl& m = *impl_;
+    auto fail = [&](const char* what) {
+        Log(LogLevel::Warning, "stream: foveated encoding off (%s)", what);
+        m.fov_failed = true;
+        return false;
+    };
+    if (!m.fov_ps) {
+        ComPtr<ID3DBlob> vsb, psb, err;
+        if (FAILED(D3DCompile(kFoveationHlsl, sizeof(kFoveationHlsl) - 1, "foveation", nullptr, nullptr, "vs", "vs_5_0", 0, 0,
+                              &vsb, &err)) ||
+            FAILED(D3DCompile(kFoveationHlsl, sizeof(kFoveationHlsl) - 1, "foveation", nullptr, nullptr, "ps", "ps_5_0", 0, 0,
+                              &psb, &err)))
+            return fail(err ? static_cast<const char*>(err->GetBufferPointer()) : "shader");
+        if (FAILED(m.device->CreateVertexShader(vsb->GetBufferPointer(), vsb->GetBufferSize(), nullptr, &m.fov_vs)) ||
+            FAILED(m.device->CreatePixelShader(psb->GetBufferPointer(), psb->GetBufferSize(), nullptr, &m.fov_ps)))
+            return fail("shader objects");
+        D3D11_SAMPLER_DESC sm{};
+        sm.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        sm.AddressU = sm.AddressV = sm.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sm.MaxLOD = D3D11_FLOAT32_MAX;
+        D3D11_BUFFER_DESC bd{};
+        bd.ByteWidth = 32;
+        bd.Usage = D3D11_USAGE_DEFAULT;
+        bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        if (FAILED(m.device->CreateSamplerState(&sm, &m.fov_smp)) || FAILED(m.device->CreateBuffer(&bd, nullptr, &m.fov_cb)))
+            return fail("sampler / constants");
+    }
+    D3D11_TEXTURE2D_DESC sd{};
+    src->GetDesc(&sd);
+    D3D11_TEXTURE2D_DESC td{};
+    if (m.fov_tex) m.fov_tex->GetDesc(&td);
+    if (!m.fov_tex || td.Width != out_eye_w * 2 || td.Height != out_h || td.Format != sd.Format) {
+        m.fov_tex.Reset();
+        m.fov_rtv.Reset();
+        td = {};
+        td.Width = out_eye_w * 2;
+        td.Height = out_h;
+        td.MipLevels = 1;
+        td.ArraySize = 1;
+        td.Format = sd.Format;
+        td.SampleDesc.Count = 1;
+        td.Usage = D3D11_USAGE_DEFAULT;
+        td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        if (FAILED(m.device->CreateTexture2D(&td, nullptr, &m.fov_tex)) ||
+            FAILED(m.device->CreateRenderTargetView(m.fov_tex.Get(), nullptr, &m.fov_rtv)))
+            return fail("target texture");
+    }
+    if (m.fov_srv_of != src) {
+        m.fov_srv.Reset();
+        if (FAILED(m.device->CreateShaderResourceView(src, nullptr, &m.fov_srv))) return fail("source view");
+        m.fov_srv_of = src;
+    }
+    const float cb[8] = {fov[0], fov[1], fov[2], fov[3], float(out_eye_w), float(out_h), 1.0f / float(eye_w * 2),
+                         1.0f / float(eye_h)};
+    ID3D11DeviceContext* c = m.ctx.Get();
+    c->UpdateSubresource(m.fov_cb.Get(), 0, nullptr, cb, 0, 0);
+    D3D11_VIEWPORT vp{0, 0, float(out_eye_w * 2), float(out_h), 0, 1};
+    c->RSSetViewports(1, &vp);
+    c->IASetInputLayout(nullptr);
+    c->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    c->VSSetShader(m.fov_vs.Get(), nullptr, 0);
+    c->PSSetShader(m.fov_ps.Get(), nullptr, 0);
+    ID3D11ShaderResourceView* srv = m.fov_srv.Get();
+    c->PSSetShaderResources(0, 1, &srv);
+    ID3D11SamplerState* smp = m.fov_smp.Get();
+    c->PSSetSamplers(0, 1, &smp);
+    ID3D11Buffer* cbuf = m.fov_cb.Get();
+    c->PSSetConstantBuffers(0, 1, &cbuf);
+    ID3D11RenderTargetView* rtv = m.fov_rtv.Get();
+    c->OMSetRenderTargets(1, &rtv, nullptr);
+    c->Draw(3, 0);
+    ID3D11ShaderResourceView* none = nullptr;
+    c->PSSetShaderResources(0, 1, &none);
+    c->OMSetRenderTargets(0, nullptr, nullptr);
+    return true;
+}
+
 // --- compositor thread --------------------------------------------------------
 void StreamEncoder::Submit(ID3D11Texture2D* src, uint32_t eye_w, uint32_t eye_h, const float* pose) {
     if (!wanted_) return;
@@ -277,9 +410,28 @@ void StreamEncoder::Submit(ID3D11Texture2D* src, uint32_t eye_w, uint32_t eye_h,
         h264 = m.codec == "h264";
     }
     want_eye = std::min({want_eye, eye_w, h264 ? 2048u : 4096u});
-    const uint32_t out_w = (want_eye * 2) & ~15u;
-    const uint32_t out_h = uint32_t(std::lround(double(eye_h) * want_eye / eye_w)) & ~15u;
+    uint32_t out_w = (want_eye * 2) & ~15u;
+    uint32_t out_h = uint32_t(std::lround(double(eye_h) * want_eye / eye_w)) & ~15u;
     if (out_w < 64 || out_h < 64) return;
+    // Foveated: squeeze each eye's edges on the GPU first; the encoder then
+    // gets the smaller image (no further scaling).
+    float fov[4];
+    {
+        std::lock_guard<std::mutex> l(m.set_mu);
+        std::memcpy(fov, m.foveation, sizeof(fov));
+    }
+    if ((fov[1] > 1.0f || fov[3] > 1.0f) && !m.fov_failed) {
+        const float wx = fov[0] + (1.0f - fov[0]) / fov[1], wy = fov[2] + (1.0f - fov[2]) / fov[3];
+        const uint32_t fe = (uint32_t(out_w / 2 * wx) + 15) & ~15u, fh = (uint32_t(out_h * wy) + 15) & ~15u;
+        if (FoveatedPass(src, eye_w, eye_h, fe, fh, fov)) {
+            src = m.fov_tex.Get();
+            src->GetDesc(&sd);
+            eye_w = fe;
+            eye_h = fh;
+            out_w = fe * 2;
+            out_h = fh;
+        }
+    }
 
     if (!m.vdev && (FAILED(m.device.As(&m.vdev)) || FAILED(m.ctx.As(&m.vctx)))) {
         std::lock_guard<std::mutex> l(stats_mu_);
@@ -467,6 +619,15 @@ void StreamEncoder::NetLoop() {
                     impl_->eye_width = uint32_t(std::clamp(j["eye_width"].get<int>(), 0, 4096));
                 if (j.contains("buffer") && j["buffer"].is_number())
                     impl_->buffer = std::clamp(j["buffer"].get<int>(), 0, 3);
+                if (j.contains("foveation") && j["foveation"].is_array() && j["foveation"].size() == 4) {
+                    for (int k = 0; k < 4; ++k) impl_->foveation[k] = j["foveation"][k].get<float>();
+                    impl_->foveation[0] = std::clamp(impl_->foveation[0], 0.1f, 1.0f);
+                    impl_->foveation[2] = std::clamp(impl_->foveation[2], 0.1f, 1.0f);
+                    impl_->foveation[1] = std::clamp(impl_->foveation[1], 1.0f, 8.0f);
+                    impl_->foveation[3] = std::clamp(impl_->foveation[3], 1.0f, 8.0f);
+                } else {
+                    for (int k = 0; k < 4; ++k) impl_->foveation[k] = 1.0f;
+                }
                 if (j.contains("encoder") && j["encoder"].is_string()) {
                     const std::string b = j["encoder"].get<std::string>();
                     impl_->backend = b == "amf" || b == "mf" ? b : "auto";
@@ -749,6 +910,8 @@ void StreamEncoder::EncodeLoop() {
             j["pose"] = true;
             j["buffer"] = m.buffer;
             j["source"] = "driver";
+            if (m.foveation[1] > 1.0f || m.foveation[3] > 1.0f)
+                j["foveation"] = {m.foveation[0], m.foveation[1], m.foveation[2], m.foveation[3]};
         }
         const std::string s = j.dump();
         if (send_msg(kKindConfig, 0, reinterpret_cast<const uint8_t*>(s.data()), s.size(), nullptr, 0, nullptr)) {

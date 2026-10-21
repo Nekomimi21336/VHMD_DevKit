@@ -166,11 +166,13 @@ class NativeVideo:
     """VideoServer's interface over the relay's video path."""
 
     def __init__(self, relay: NativeRelay, bitrate: float, codec: str, buffer: int, encoder_backend: str,
-                 eye_width: int, eye_scale: float, adaptive: bool, udp: bool = False, fec: int = 20) -> None:
+                 eye_width: int, eye_scale: float, adaptive: bool, udp: bool = False, fec: int = 20,
+                 foveation: Optional[list] = None) -> None:
         self.relay = relay
         self.bitrate, self.codec, self.buffer = bitrate, codec, buffer
         self.encoder_backend, self.eye_width, self.eye_scale, self.adaptive = encoder_backend, eye_width, eye_scale, adaptive
         self.udp, self.fec = udp, fec          # frames over UDP with parity, when the headset offers a port
+        self.foveation = foveation              # [cx, rx, cy, ry] or None
         self.udp_port = 0                      # the headset's (its "headset" message: video_udp_port)
         self._sent_eye = None
         self._sent_udp = None
@@ -197,7 +199,8 @@ class NativeVideo:
         self._sent_udp = (transport, port, self.fec)
         self.relay.video({"bitrate_mbps": self.bitrate, "codec": self.codec, "buffer": self.buffer,
                           "encoder": self.encoder_backend, "eye_width": eye, "adaptive": self.adaptive,
-                          "transport": transport, "udp_port": port, "fec": self.fec, "restart": restart})
+                          "transport": transport, "udp_port": port, "fec": self.fec,
+                          "foveation": self.foveation or [], "restart": restart})
 
     def headset_changed(self, info: dict) -> None:
         """The headset described itself: a new eye width or UDP port takes a reconnect."""

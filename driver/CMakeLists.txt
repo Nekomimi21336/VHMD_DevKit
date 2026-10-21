@@ -61,7 +61,7 @@ if(WIN32)
   target_sources(driver_vhmd PRIVATE src/windows/direct_mode.cpp src/windows/stream_encoder.cpp
                                      src/windows/amf_encoder.cpp)
   # stream_encoder: hardware video encoding for VHMD Link (Media Foundation).
-  target_link_libraries(driver_vhmd PRIVATE d3d11 dxgi mfplat mfuuid ole32)
+  target_link_libraries(driver_vhmd PRIVATE d3d11 d3dcompiler dxgi mfplat mfuuid ole32)
 endif()
 
 if(UNIX AND NOT APPLE)

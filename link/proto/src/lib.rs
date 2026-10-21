@@ -192,6 +192,14 @@ pub fn json_bool(s: &str, key: &str) -> Option<bool> {
     }
 }
 
+/// The numbers of an array value ("key": [1, 2.5, ...]); empty if absent.
+pub fn json_numbers(s: &str, key: &str) -> Vec<f64> {
+    let Some(v) = value_start(s, key) else { return Vec::new() };
+    let Some(v) = v.strip_prefix('[') else { return Vec::new() };
+    let end = v.find(']').unwrap_or(v.len());
+    v[..end].split(',').filter_map(|x| x.trim().parse().ok()).collect()
+}
+
 /// A JSON string literal (with quotes).
 pub fn json_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
@@ -274,6 +282,8 @@ mod tests {
         assert_eq!(json_string(s, "name").as_deref(), Some("a \"b\""));
         assert_eq!(json_bool(s, "ok"), Some(true));
         assert_eq!(json_number(s, "missing"), None);
+        assert_eq!(json_numbers(r#"{"foveation": [0.4, 4,0.5,2]}"#, "foveation"), vec![0.4, 4.0, 0.5, 2.0]);
+        assert!(json_numbers(s, "missing").is_empty());
     }
 
     #[test]

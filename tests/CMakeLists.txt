@@ -20,7 +20,7 @@ if(WIN32)
     windows/stream_selftest.cpp
     ${PROJECT_SOURCE_DIR}/driver/src/windows/stream_encoder.cpp
     ${PROJECT_SOURCE_DIR}/driver/src/windows/amf_encoder.cpp)
-  target_link_libraries(vhmd_stream_selftest PRIVATE vhmd_core d3d11 dxgi mfplat mfuuid ole32)
+  target_link_libraries(vhmd_stream_selftest PRIVATE vhmd_core d3d11 d3dcompiler dxgi mfplat mfuuid ole32)
   add_test(NAME stream_selftest COMMAND vhmd_stream_selftest)
   set_tests_properties(stream_selftest PROPERTIES SKIP_RETURN_CODE 77)
 endif()

@@ -14,7 +14,9 @@
 // ("VHV1", kind 1 = config JSON / 2 = access unit, size, flags, frame index,
 // time, render pose) and the payload. The client may first send one line of
 // JSON with settings: {"bitrate_mbps": 30, "codec": "h264"|"hevc"|"av1" (AV1 falls back to HEVC),
-// "eye_width": 1920, "fps": 72, "encoder": "auto"|"amf"|"mf"}; later lines
+// "eye_width": 1920, "fps": 72, "encoder": "auto"|"amf"|"mf", "foveation":
+// [cx, rx, cy, ry] (foveated encoding: centre share and edge squeeze per axis;
+// sent back in the config message)}; later lines
 // {"bitrate_mbps": 25} change the bitrate while streaming, {"keyframe": true}
 // asks for a keyframe. Frames carry flag bit 1 when they are keyframes. Encoding only runs
 // while a client is connected. Encoder: on AMD GPUs AMF in its ultra-low-latency
@@ -89,6 +91,8 @@ public:
 
 private:
     struct Impl;
+    bool FoveatedPass(ID3D11Texture2D* src, uint32_t eye_w, uint32_t eye_h, uint32_t out_eye_w, uint32_t out_h,
+                      const float fov[4]);
     void NetLoop();
     void EncodeLoop();
     void AudioLoop();

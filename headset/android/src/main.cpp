@@ -757,6 +757,7 @@ public:
         return true;
     }
     bool HasFov() const { return has_fov_.load(); }
+    const float* Foveation() const { return foveation_; }
     XrFovf Fov(int eye) const { return fov_[eye]; }
     bool Connected() const { return fd_.load() >= 0; }
     struct Stats {
@@ -924,6 +925,22 @@ private:
                 for (int e = 0; e < 2; ++e) fov_[e] = {v[e * 4], v[e * 4 + 1], v[e * 4 + 2], v[e * 4 + 3]};
                 has_fov_ = true;
             }
+        }
+        // "foveation": [cx, rx, cy, ry]: the PC squeezed the edges (none: 1s).
+        {
+            float f[4] = {1, 1, 1, 1};
+            size_t q = json.find("\"foveation\"");
+            if (q != std::string::npos && json.find('[', q) != std::string::npos) {
+                const char* c = json.c_str() + json.find('[', q) + 1;
+                for (int k = 0; k < 4 && *c && *c != ']'; ++k) {
+                    char* end = nullptr;
+                    f[k] = strtof(c, &end);
+                    c = end;
+                    while (*c == ',' || *c == ' ') ++c;
+                }
+            }
+            for (int k = 0; k < 4; ++k) foveation_[k] = f[k];
+            if (f[1] > 1 || f[3] > 1) LOGI("video: foveated (centre %.0f%%, edges x%.1f)", f[0] * 100, f[1]);
         }
         const std::string mime = json.find("\"codec\":\"hevc\"") != std::string::npos  ? "video/hevc"
                                  : json.find("\"codec\":\"av1\"") != std::string::npos ? "video/av01"
@@ -1104,6 +1121,7 @@ private:
     int width_ = 0, height_ = 0;
     std::string mime_;
     XrFovf fov_[2] = {};
+    float foveation_[4] = {1, 1, 1, 1};
     std::atomic<bool> has_fov_{false};
     std::atomic<int> received_{0}, decoded_{0};
     std::chrono::steady_clock::time_point last_rx_{}, last_dec_{};
@@ -1146,11 +1164,10 @@ private:
 };
 
 const char* kVideoVs = R"(#version 300 es
-uniform vec4 uv_rect;   // u0, v0, u1, v1 of this eye in the side-by-side frame
-out vec2 uv;
+out vec2 local;   // position in this eye's view, 0..1, row 0 at the top
 void main() {
     vec2 p = vec2(float(gl_VertexID & 1), float((gl_VertexID >> 1) & 1));   // triangle strip corners
-    uv = vec2(mix(uv_rect.x, uv_rect.z, p.x), mix(uv_rect.w, uv_rect.y, p.y));   // image row 0 at the top
+    local = vec2(p.x, 1.0 - p.y);
     gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 }
 )";
@@ -1158,11 +1175,23 @@ const char* kVideoFs = R"(#version 300 es
 #extension GL_OES_EGL_image_external_essl3 : require
 precision mediump float;
 uniform samplerExternalOES tex;
-in vec2 uv;
+uniform vec4 uv_rect;   // u0, v0, u1, v1 of this eye in the side-by-side frame
+uniform vec4 fov;       // foveated encoding: cx, rx, cy, ry (rx = ry = 1: none)
+in vec2 local;
 out vec4 o;
 // The stream is sRGB encoded and the swapchain re-encodes on write: linearize.
 vec3 linear(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }
-void main() { o = vec4(linear(texture(tex, uv).rgb), 1.0); }
+// Where a view position is in the encoded picture: the centre share c at full
+// size, the edges squeezed r times (the PC's pass, stream_encoder.cpp).
+float squeeze(float x, float c, float r) {
+    float x0 = (1.0 - c) * 0.5;
+    float e = x < x0 ? x / r : (x <= x0 + c ? x0 / r + (x - x0) : x0 / r + c + (x - x0 - c) / r);
+    return e / (c + (1.0 - c) / r);
+}
+void main() {
+    vec2 e = vec2(squeeze(local.x, fov.x, fov.y), squeeze(local.y, fov.z, fov.w));
+    o = vec4(linear(texture(tex, mix(uv_rect.xy, uv_rect.zw, e)).rgb), 1.0);
+}
 )";
 
 // -- app ----------------------------------------------------------------------
@@ -1276,7 +1305,7 @@ struct App {
     GLuint program = 0, vbo = 0, vao = 0;
     GLint mvp_loc = -1;
     GLuint video_prog = 0, empty_vao = 0;
-    GLint uv_rect_loc = -1;
+    GLint uv_rect_loc = -1, fov_loc = -1;
 
     Sender sender;
     Video video;
@@ -1582,6 +1611,7 @@ void InitGl(App& app) {
     glAttachShader(app.video_prog, Compile(GL_FRAGMENT_SHADER, kVideoFs));
     glLinkProgram(app.video_prog);
     app.uv_rect_loc = glGetUniformLocation(app.video_prog, "uv_rect");
+    app.fov_loc = glGetUniformLocation(app.video_prog, "fov");
     glGenVertexArrays(1, &app.empty_vao);
     pEglGetNativeClientBuffer = reinterpret_cast<PFNEGLGETNATIVECLIENTBUFFERANDROIDPROC>(
         eglGetProcAddress("eglGetNativeClientBufferANDROID"));
@@ -2009,6 +2039,8 @@ void RenderEye(App& app, Swapchain& sc, uint32_t image, const XrView& view, cons
         glDisable(GL_DEPTH_TEST);
         glUseProgram(app.video_prog);
         glUniform4f(app.uv_rect_loc, eye == 0 ? 0.0f : 0.5f, 0.0f, eye == 0 ? 0.5f : 1.0f, 1.0f);
+        const float* fv = app.video.Foveation();
+        glUniform4f(app.fov_loc, fv[0], fv[1], fv[2], fv[3]);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_EXTERNAL_OES, app.video.texture());
         glBindVertexArray(app.empty_vao);

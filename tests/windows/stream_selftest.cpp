@@ -5,7 +5,7 @@
 // parameter sets first. Writes the elementary stream next to the executable
 // (stream_selftest.h264 / .hevc / .av1) for inspection with ffprobe.
 //
-//   vhmd_stream_selftest [h264|hevc|av1] [eye_width] [source_eye_width (1280)] [frame_interval_us] [auto|amf|mf]
+//   vhmd_stream_selftest [h264|hevc|av1] [eye_width] [source_eye_width (1280)] [frame_interval_us] [auto|amf|mf] [fov]
 // Exit codes: 0 pass, 1 fail, 77 skipped (no hardware encoder).
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -117,8 +117,11 @@ int main(int argc, char** argv) {
         return 1;
     }
     const std::string backend = argc > 5 ? argv[5] : "auto";   // encoder: AMF on AMD, else Media Foundation
+    // argv[6] "fov": foveated encoding (centre 40 %, edges squeezed 4 times).
+    const bool foveated = argc > 6 && std::string(argv[6]) == "fov";
     const std::string settings = "{\"codec\":\"" + codec + "\",\"bitrate_mbps\":20,\"eye_width\":" +
-                                 std::to_string(eye_out) + ",\"buffer\":1,\"encoder\":\"" + backend + "\"}\n";
+                                 std::to_string(eye_out) + ",\"buffer\":1,\"encoder\":\"" + backend + "\"" +
+                                 (foveated ? ",\"foveation\":[0.4,4,0.4,4]" : "") + "}\n";
     send(c, settings.data(), int(settings.size()), 0);
 
     std::atomic<bool> done{false};

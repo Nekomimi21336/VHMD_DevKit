@@ -60,6 +60,7 @@ struct VideoSettings {
     udp: bool,      // frames and sound over UDP with parity
     udp_port: u16,  // the headset's port for them
     fec: u32,       // parity fragments per 100 data fragments
+    foveation: Vec<f64>, // [cx, rx, cy, ry] or empty (off)
 }
 
 impl Default for VideoSettings {
@@ -74,6 +75,7 @@ impl Default for VideoSettings {
             udp: false,
             udp_port: 0,
             fec: 20,
+            foveation: Vec::new(),
         }
     }
 }
@@ -549,6 +551,10 @@ fn apply_video_settings(ctx: &Ctx, p: &str) {
     if let Some(f) = json_number(p, "fec") {
         v.fec = (f as u32).min(100);
     }
+    if p.contains("\"foveation\"") {
+        let f = json_numbers(p, "foveation");
+        v.foveation = if f.len() == 4 { f } else { Vec::new() };
+    }
     if json_bool(p, "keyframe") == Some(true) {
         if let Some(d) = ctx.st.driver_stream.lock().unwrap().as_mut() {
             let _ = d.write_all(b"{\"keyframe\":true}\n");
@@ -560,6 +566,7 @@ fn apply_video_settings(ctx: &Ctx, p: &str) {
         || v.encoder != old.encoder
         || v.eye_width != old.eye_width
         || v.udp != old.udp
+        || v.foveation != old.foveation
         || (v.udp && (v.udp_port != old.udp_port || v.fec != old.fec));
     let bitrate_changed = (v.bitrate - old.bitrate).abs() > 0.01;
     let new_bitrate = v.bitrate;
@@ -598,8 +605,13 @@ fn relay_video(c: &Ctx, mut conn: TcpStream) -> std::io::Result<()> {
     // About 60 ms of video in the send buffer: when the network is slower than
     // the video, sending blocks soon (the signal to lower the bitrate).
     set_sndbuf(&conn, ((v.bitrate * 1e6 * 0.06 / 8.0) as i32).max(256 << 10));
+    let fov = if v.foveation.len() == 4 {
+        format!(",\"foveation\":[{},{},{},{}]", v.foveation[0], v.foveation[1], v.foveation[2], v.foveation[3])
+    } else {
+        String::new()
+    };
     let settings = format!(
-        "{{\"bitrate_mbps\":{:.1},\"codec\":{},\"eye_width\":{},\"buffer\":{},\"encoder\":{}}}\n",
+        "{{\"bitrate_mbps\":{:.1},\"codec\":{},\"eye_width\":{},\"buffer\":{},\"encoder\":{}{fov}}}\n",
         v.bitrate,
         json_quote(&v.codec),
         v.eye_width,

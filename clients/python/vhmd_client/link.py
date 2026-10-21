@@ -45,7 +45,7 @@ RUN_NAME = "VHMD Link"
 QUALITY = (("low", 20.0), ("standard", 40.0), ("high", 60.0), ("max", 80.0))
 DEFAULTS = {"quality": "standard", "codec": "hevc", "buffer": 0, "refresh": 72, "auto_steamvr": True,
             # performance settings (each trades some quality or safety for less latency)
-            "auto_latency": True, "predict": True, "amf": True, "eye_scale": 1.0, "udp_video": False, "fec": 30,
+            "auto_latency": True, "predict": True, "amf": True, "eye_scale": 1.0, "udp_video": False, "fec": 30, "foveation": 0,
             "dev_view": False}
 
 TEXT = {
@@ -81,6 +81,7 @@ TEXT = {
         "perf_udp_video": "Send the picture over UDP with error correction (experimental)",
         "perf_udp_video_hint": "A lost Wi-Fi packet no longer holds up the picture; lost parts are rebuilt. Uses more bandwidth. Needs the native data path.",
         "perf_fec": "Error correction", "f20": "20% (light)", "f30": "30%", "f50": "50% (strong; bursty Wi-Fi)",
+        "perf_fov": "Foveated encoding", "v0": "Off", "v1": "Light (49% of the pixels)", "v2": "Strong (30% of the pixels)",
         "refresh": "Refresh rate", "r72": "72 Hz", "r90": "90 Hz (more GPU load)",
         "dev_view": "Developer view", "startup": "Open when Windows starts",
         "take_back": "Give control to the headset", "fps_tool": "Keyboard/mouse control", "log": "Log",
@@ -122,6 +123,7 @@ TEXT = {
         "perf_udp_video": "映像を UDP と誤り訂正で送る(実験的)",
         "perf_udp_video_hint": "Wi-Fi でパケットが落ちても映像が待たされず、落ちた分は組み立て直す。通信量が増える。ネイティブのデータの通り道が必要。",
         "perf_fec": "誤り訂正", "f20": "20%(軽い)", "f30": "30%", "f50": "50%(強い・電波が途切れがち)",
+        "perf_fov": "中心をくっきり・周辺を粗く", "v0": "しない", "v1": "弱(画素 49%)", "v2": "強(画素 30%)",
         "refresh": "リフレッシュレート", "r72": "72 Hz", "r90": "90 Hz(GPU の負荷が増える)",
         "dev_view": "開発者向けの表示", "startup": "Windows の起動時に開く",
         "take_back": "操作をヘッドセットに戻す", "fps_tool": "キーボード・マウス操作", "log": "ログ",
@@ -252,7 +254,8 @@ class LinkApp:
                                            auto_latency=bool(self.s["auto_latency"]), predict=bool(self.s["predict"]),
                                            encoder_backend="auto" if self.s["amf"] else "mf",
                                            eye_scale=float(self.s["eye_scale"]),
-                                           udp_video=bool(self.s["udp_video"]), fec=int(self.s["fec"])),
+                                           udp_video=bool(self.s["udp_video"]), fec=int(self.s["fec"]),
+                                           foveation=int(self.s["foveation"])),
                              log=self.log)
         try:
             self.bridge.start()
@@ -383,7 +386,8 @@ class LinkApp:
         self.b_var = self.combo(grid, 0, t["smooth"], [(0, t["b0"]), (1, t["b1"])], "buffer")
         self.s_var = self.combo(grid, 1, t["perf_scale"], [(1.0, t["s100"]), (0.85, t["s85"]), (0.7, t["s70"])],
                                 "eye_scale")
-        self.f_var = self.combo(grid, 2, t["perf_fec"], [(20, t["f20"]), (30, t["f30"]), (50, t["f50"])], "fec")
+        self.v_var = self.combo(grid, 2, t["perf_fov"], [(0, t["v0"]), (1, t["v1"]), (2, t["v2"])], "foveation")
+        self.f_var = self.combo(grid, 3, t["perf_fec"], [(20, t["f20"]), (30, t["f30"]), (50, t["f50"])], "fec")
         self.perf_vars = {}
         for key in ("auto_latency", "predict", "amf", "udp_video"):
             var = tk.BooleanVar(value=bool(self.s[key]))
@@ -424,6 +428,10 @@ class LinkApp:
             if key == "refresh":   # the headset switches, VHMD follows it (no reconnect)
                 self.bridge.o.refresh = float(value)
                 self.log(f"refresh rate: {value} Hz")
+                return
+            if key == "foveation":
+                self.bridge.set_video(foveation=int(value))
+                self.log(f"foveated encoding: {value}")
                 return
             if key == "fec":
                 self.bridge.set_video(fec=int(value))

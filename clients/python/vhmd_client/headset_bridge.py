@@ -40,6 +40,8 @@ from . import headset_info, native_relay
 from .client import DEFAULT_HOST, DEFAULT_PORT
 from .headset_stream import VIDEO_PORT, VideoServer
 
+# Foveated encoding levels: [centre share x, edge squeeze x, centre y, squeeze y].
+FOVEATION = {0: None, 1: [0.5, 2.5, 0.5, 2.5], 2: [0.4, 4.0, 0.4, 4.0]}
 LISTEN_PORT = 39580
 DISCOVERY_PORT = 39582
 
@@ -70,6 +72,7 @@ class BridgeOptions:
     native: str = "auto"          # the data path in vhmd-link-relay: "auto" (when built), "on", "off" (Python)
     udp_video: bool = False       # frames and sound over UDP with parity (native data path; experimental)
     fec: int = 30                 # parity packets per 100 (UDP video)
+    foveation: int = 0            # foveated encoding: 0 off, 1 light, 2 strong (FOVEATION)
 
 
 class Stats:
@@ -180,6 +183,7 @@ class Bridge:
                                      adaptive=o.adaptive, log=self.log)
             self.video.encoder_backend = o.encoder_backend
             self.video.eye_scale = o.eye_scale
+            self.video.foveation = FOVEATION.get(o.foveation)
             self.video.start()
 
         self._udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -223,7 +227,8 @@ class Bridge:
         self.link = native_relay.NativeLink(self._native)
         if o.video:
             self.video = native_relay.NativeVideo(self._native, o.bitrate, o.codec, o.buffer, o.encoder_backend,
-                                                  o.eye_width, o.eye_scale, o.adaptive, o.udp_video, o.fec)
+                                                  o.eye_width, o.eye_scale, o.adaptive, o.udp_video, o.fec,
+                                                  FOVEATION.get(o.foveation))
         self.data_path = f"native {self._native.kind}"
         self.log(f"data path: native ({exe.name}); network: discovery on UDP {DISCOVERY_PORT}, poses on UDP / TCP "
                  f"{o.port}, video on TCP {VIDEO_PORT}" + ("" if o.usb_only else " (any device on the LAN can connect)"))
@@ -284,7 +289,8 @@ class Bridge:
 
     def set_video(self, bitrate: Optional[float] = None, codec: Optional[str] = None,
                   buffer: Optional[int] = None, encoder_backend: Optional[str] = None,
-                  eye_scale: Optional[float] = None, udp: Optional[bool] = None, fec: Optional[int] = None) -> None:
+                  eye_scale: Optional[float] = None, udp: Optional[bool] = None, fec: Optional[int] = None,
+                  foveation: Optional[int] = None) -> None:
         """New video settings; the headset reconnects to get them (about a second)."""
         if bitrate is not None:
             self.o.bitrate = bitrate
@@ -296,6 +302,12 @@ class Bridge:
             self.o.encoder_backend = encoder_backend
         if eye_scale is not None:
             self.o.eye_scale = eye_scale
+        if foveation is not None:
+            self.o.foveation = foveation
+            if self.video:
+                self.video.foveation = FOVEATION.get(foveation)
+                self.video.restart()
+            return
         if udp is not None or fec is not None:
             self.o.udp_video = self.o.udp_video if udp is None else udp
             self.o.fec = self.o.fec if fec is None else fec
@@ -647,6 +659,8 @@ def main() -> None:
     ap.add_argument("--fixed-bitrate", action="store_true", help="keep --bitrate even when the network is slower")
     ap.add_argument("--udp-video", action="store_true",
                     help="frames and sound over UDP with parity (native data path, experimental)")
+    ap.add_argument("--foveation", type=int, default=0, choices=(0, 1, 2),
+                    help="foveated encoding: 0 off, 1 light (centre 50%%, edges /2.5), 2 strong (40%%, /4)")
     ap.add_argument("--fec", type=int, default=30, help="UDP video: parity packets per 100 (keyframes get twice)")
     ap.add_argument("--native", default="auto", choices=("auto", "on", "off"),
                     help="data path in vhmd-link-relay (auto: when built) or in Python (off)")
@@ -670,7 +684,7 @@ def main() -> None:
         adaptive=not args.fixed_bitrate, sync=not args.no_sync, sync_target_ms=args.sync_target_ms,
         refresh=args.refresh, encoder_backend=args.driver_encoder, auto_latency=not args.fixed_latency,
         predict=not args.no_predict, eye_scale=args.eye_scale, native=args.native, udp_video=args.udp_video,
-        fec=args.fec),
+        fec=args.fec, foveation=args.foveation),
         log=lambda m: print(m, flush=True))
     bridge.start()
     try:
