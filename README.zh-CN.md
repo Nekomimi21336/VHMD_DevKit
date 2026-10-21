@@ -260,13 +260,17 @@ SteamVR 合成器会准确遵循 1〜240 Hz 的任意值。但低于 10 Hz 时�
 ```powershell
 python -m vhmd_client.mode pico    # 真实 HMD(PICO Connect)+ VHMD 追踪器
 python -m vhmd_client.mode vhmd    # VHMD 的 HMD 和控制器(关闭真实 HMD 的驱动)
+python -m vhmd_client.mode off     # 原来的环境：关闭 VHMD 驱动，恢复 VHMD 修改过的设置
 python -m vhmd_client.mode         # 显示当前模式
 ```
+
+VHMD Link PC 应用的"SteamVR 使用"(VHMD Link / PICO Connect / 安装 VHMD 之前的状态)按钮作用相同。
 
 FPS 操作工具中的"切换到 Pico"/"切换到 VHMD"按钮作用相同(切换后工具会重新打开)。
 
 - SteamVR 在启动时确定 HMD，运行中无法更改，因此切换时会重启 SteamVR(本机切到 Pico 约 13 秒，切到 VHMD 约 19 秒)。正在运行的 VR 应用会关闭。
-- 只修改两项 SteamVR 设置：`driver_pico.enable` 和 `driver_vhmd.configFile`。后者指向已安装配置的副本(仅修改 `hmd` / `controllers`，位于 `%LOCALAPPDATA%\VHMD\profiles`)，每次切换都会重新生成，因此对原配置的修改会被沿用。
+- 只修改少数 SteamVR 设置：`driver_pico.enable`、`driver_vhmd.enable` / `configFile`，以及(使用 `--headset` 时)`vhmd_display`。`configFile` 指向已安装配置的副本(仅修改 `hmd` / `controllers`，位于 `%LOCALAPPDATA%\VHMD\profiles`)，每次切换都会重新生成，因此对原配置的修改会被沿用。
+- **可以恢复**：第一次修改前的值记录在 `%LOCALAPPDATA%\VHMD\original_steamvr.json`，`off` 会恢复这些值(原本不存在的键会被删除)。`off` 时不加载 VHMD 驱动，SteamVR 的行为与安装 VHMD 之前相同(驱动仍然注册，可随时切回 `vhmd` / `pico`；要连注册一起删除，请用 `tools/uninstall_driver.ps1`)。在这项记录出现之前就切换过的电脑上，以 SteamVR 的默认值(没有 VHMD 的键，真实 HMD 驱动开启)作为原始值。
 - 在 Pico 模式下，FPS 操作工具的头部取自真实 HMD，追踪器跟随佩戴者。
 
 ## 测试
