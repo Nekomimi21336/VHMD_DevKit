@@ -44,6 +44,8 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_NAME = "VHMD Link"
 QUALITY = (("low", 20.0), ("standard", 40.0), ("high", 60.0), ("max", 80.0))
 DEFAULTS = {"quality": "standard", "codec": "hevc", "buffer": 0, "refresh": 72, "auto_steamvr": True,
+            # performance settings (each trades some quality or safety for less latency)
+            "auto_latency": True, "predict": True, "amf": True, "eye_scale": 1.0,
             "dev_view": False}
 
 TEXT = {
@@ -68,6 +70,14 @@ TEXT = {
         "q_low": "Low (20 Mbit/s)", "q_standard": "Standard (40 Mbit/s)", "q_high": "High (60 Mbit/s)", "q_max": "Highest (80 Mbit/s)",
         "c_hevc": "HEVC (recommended)", "c_h264": "H.264", "c_av1": "AV1 (newer GPUs)",
         "b0": "Lowest latency", "b1": "Smoother (+1 frame)",
+        "perf": "Performance",
+        "perf_auto_latency": "Trim the wait before display to what the timing needs",
+        "perf_auto_latency_hint": "Up to about 3 ms less delay. Off: a fixed margin, safest against stutter on poor Wi-Fi.",
+        "perf_predict": "Predict motion for when the image is shown",
+        "perf_predict_hint": "Hands and head line up better while moving. Off if fast motion overshoots or wobbles.",
+        "perf_amf": "AMD ultra-low-latency encoder (AMF)",
+        "perf_amf_hint": "About 2 ms less per frame on AMD GPUs. Off: Windows' standard encoder (Media Foundation).",
+        "perf_scale": "Resolution", "s100": "100% (sharpest)", "s85": "85%", "s70": "70% (fastest)",
         "refresh": "Refresh rate", "r72": "72 Hz", "r90": "90 Hz (more GPU load)",
         "dev_view": "Developer view", "startup": "Open when Windows starts",
         "take_back": "Give control to the headset", "fps_tool": "Keyboard/mouse control", "log": "Log",
@@ -98,6 +108,14 @@ TEXT = {
         "q_low": "低(20 Mbit/s)", "q_standard": "標準(40 Mbit/s)", "q_high": "高(60 Mbit/s)", "q_max": "最高(80 Mbit/s)",
         "c_hevc": "HEVC(推奨)", "c_h264": "H.264", "c_av1": "AV1(新しい GPU)",
         "b0": "遅れを最小に", "b1": "なめらか(+1 フレーム)",
+        "perf": "パフォーマンス",
+        "perf_auto_latency": "表示までの余裕をタイミングに合わせて詰める",
+        "perf_auto_latency_hint": "遅れが最大 3 ms ほど減る。切ると余裕を固定(電波が悪いときのカクつきに一番強い)。",
+        "perf_predict": "表示される時刻に合わせて動きを先読みする",
+        "perf_predict_hint": "動いているときの手・頭のずれが減る。速い動きで行き過ぎ・揺れが気になるときは切る。",
+        "perf_amf": "AMD の超低遅延エンコーダー(AMF)",
+        "perf_amf_hint": "AMD の GPU で 1 フレーム約 2 ms 速い。切ると Windows 標準のエンコーダー(Media Foundation)。",
+        "perf_scale": "解像度", "s100": "100%(一番きれい)", "s85": "85%", "s70": "70%(一番速い)",
         "refresh": "リフレッシュレート", "r72": "72 Hz", "r90": "90 Hz(GPU の負荷が増える)",
         "dev_view": "開発者向けの表示", "startup": "Windows の起動時に開く",
         "take_back": "操作をヘッドセットに戻す", "fps_tool": "キーボード・マウス操作", "log": "ログ",
@@ -206,6 +224,8 @@ class LinkApp:
         setup_style(root, pal, f)
         root.title(self.t["title"])
         root.minsize(520, 420)
+        sh = root.winfo_screenheight()
+        root.geometry(f"660x{min(980, sh - 120)}")
         self.log_lines: "collections.deque[str]" = collections.deque(maxlen=300)
         self.log_dirty = False
         self.busy = ""                       # a mode switch is running
@@ -222,7 +242,10 @@ class LinkApp:
             except tk.TclError:
                 pass
         self.bridge = Bridge(BridgeOptions(bitrate=self.bitrate(), codec=str(self.s["codec"]),
-                                           buffer=int(self.s["buffer"]), refresh=float(self.s["refresh"])),
+                                           buffer=int(self.s["buffer"]), refresh=float(self.s["refresh"]),
+                                           auto_latency=bool(self.s["auto_latency"]), predict=bool(self.s["predict"]),
+                                           encoder_backend="auto" if self.s["amf"] else "mf",
+                                           eye_scale=float(self.s["eye_scale"])),
                              log=self.log)
         try:
             self.bridge.start()
@@ -262,14 +285,42 @@ class LinkApp:
     # -- layout ----------------------------------------------------------------
     def build(self) -> None:
         t, pal, f = self.t, self.pal, self.fonts
+        # Footer
+        foot = tk.Frame(self.root, bg=pal["bg"])
+        foot.pack(side="bottom", fill="x", padx=14, pady=(0, 12))
+        self.dev_var = tk.BooleanVar(value=bool(self.s["dev_view"]))
+        ttk.Checkbutton(foot, text=t["dev_view"], variable=self.dev_var,
+                        command=lambda: self.set("dev_view", self.dev_var.get())).pack(side="left")
+        self.startup_var = tk.BooleanVar(value=startup_enabled())
+        ttk.Checkbutton(foot, text=t["startup"], variable=self.startup_var, command=self.toggle_startup
+                        ).pack(side="left", padx=(12, 0))
+        ttk.Button(foot, text=t["quit"], command=self.quit).pack(side="right")
+        self.hint = ttk.Label(self.root, text=t["tray_hint"], style="Muted.TLabel")
+        self.hint.pack(side="bottom", anchor="w", padx=14, pady=(0, 6))
+
         head = tk.Frame(self.root, bg=pal["bg"])
         head.pack(fill="x", padx=14, pady=(12, 10))
         tk.Label(head, text="VHMD Link", bg=pal["bg"], fg=pal["fg"], font=f["title"]).pack(side="left")
         self.dev_pill = tk.Label(head, text=t["edition_dev"], bg=pal["warn"], fg=pal["warn_fg"], font=f["small_bold"],
                                  padx=8, pady=2)
 
+        # The cards scroll when the window is shorter than they are (header and
+        # footer stay).
+        area = tk.Frame(self.root, bg=pal["bg"])
+        area.pack(fill="both", expand=True)
+        canvas = tk.Canvas(area, bg=pal["bg"], highlightthickness=0)
+        bar = ttk.Scrollbar(area, orient="vertical", command=canvas.yview)
+        self.body = tk.Frame(canvas, bg=pal["bg"])
+        win = canvas.create_window((0, 0), window=self.body, anchor="nw")
+        self.body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win, width=e.width))
+        canvas.configure(yscrollcommand=bar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        bar.pack(side="right", fill="y")
+        self.root.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"))
+
         # Headset
-        c = self.card(self.root, t["headset"])
+        c = self.card(self.body, t["headset"])
         row = ttk.Frame(c, style="Card.TFrame")
         row.pack(fill="x", pady=(4, 0))
         self.hs_dot = tk.Label(row, text="●", bg=pal["card"], fg=pal["muted"], font=f["big"])
@@ -280,7 +331,7 @@ class LinkApp:
         self.hs_sub.pack(anchor="w", pady=(2, 0))
 
         # SteamVR
-        c = self.card(self.root, t["steamvr"])
+        c = self.card(self.body, t["steamvr"])
         row = ttk.Frame(c, style="Card.TFrame")
         row.pack(fill="x", pady=(4, 0))
         self.vr_dot = tk.Label(row, text="●", bg=pal["card"], fg=pal["muted"], font=f["big"])
@@ -311,16 +362,31 @@ class LinkApp:
                         command=lambda: self.set("auto_steamvr", self.auto_var.get())).pack(anchor="w", pady=(4, 0))
 
         # Picture and sound
-        c = self.card(self.root, t["video"])
+        c = self.card(self.body, t["video"])
         grid = ttk.Frame(c, style="Card.TFrame")
         grid.pack(fill="x", pady=(4, 0))
         self.q_var = self.combo(grid, 0, t["quality"], [(k, t["q_" + k]) for k, _ in QUALITY], "quality")
         self.c_var = self.combo(grid, 1, t["codec"], [("hevc", t["c_hevc"]), ("av1", t["c_av1"]), ("h264", t["c_h264"])], "codec")
-        self.b_var = self.combo(grid, 2, t["smooth"], [(0, t["b0"]), (1, t["b1"])], "buffer")
-        self.r_var = self.combo(grid, 3, t["refresh"], [(72, t["r72"]), (90, t["r90"])], "refresh")
+        self.r_var = self.combo(grid, 2, t["refresh"], [(72, t["r72"]), (90, t["r90"])], "refresh")
+
+        # Performance: what trades quality or safety for less delay, each on its own.
+        c = self.card(self.body, t["perf"])
+        grid = ttk.Frame(c, style="Card.TFrame")
+        grid.pack(fill="x", pady=(4, 0))
+        self.b_var = self.combo(grid, 0, t["smooth"], [(0, t["b0"]), (1, t["b1"])], "buffer")
+        self.s_var = self.combo(grid, 1, t["perf_scale"], [(1.0, t["s100"]), (0.85, t["s85"]), (0.7, t["s70"])],
+                                "eye_scale")
+        self.perf_vars = {}
+        for key in ("auto_latency", "predict", "amf"):
+            var = tk.BooleanVar(value=bool(self.s[key]))
+            ttk.Checkbutton(c, text=t["perf_" + key], style="Card.TCheckbutton", variable=var,
+                            command=lambda k=key, v=var: self.set_perf(k, v.get())).pack(anchor="w", pady=(6, 0))
+            ttk.Label(c, text=t["perf_" + key + "_hint"], style="CardMuted.TLabel", wraplength=470,
+                      justify="left").pack(anchor="w", padx=(22, 0))
+            self.perf_vars[key] = var
 
         # Developer
-        self.dev_card_outer = tk.Frame(self.root, bg=pal["border"], padx=1, pady=1)
+        self.dev_card_outer = tk.Frame(self.body, bg=pal["border"], padx=1, pady=1)
         dc = ttk.Frame(self.dev_card_outer, style="Card.TFrame", padding=(14, 10))
         dc.pack(fill="both", expand=True)
         ttk.Label(dc, text=t["dev"], style="CardGroup.TLabel").pack(anchor="w")
@@ -334,18 +400,6 @@ class LinkApp:
                                highlightthickness=0, wrap="word")
         self.log_box.pack(fill="both", expand=True, pady=(8, 0))
 
-        # Footer
-        foot = tk.Frame(self.root, bg=pal["bg"])
-        foot.pack(side="bottom", fill="x", padx=14, pady=(0, 12))
-        self.dev_var = tk.BooleanVar(value=bool(self.s["dev_view"]))
-        ttk.Checkbutton(foot, text=t["dev_view"], variable=self.dev_var,
-                        command=lambda: self.set("dev_view", self.dev_var.get())).pack(side="left")
-        self.startup_var = tk.BooleanVar(value=startup_enabled())
-        ttk.Checkbutton(foot, text=t["startup"], variable=self.startup_var, command=self.toggle_startup
-                        ).pack(side="left", padx=(12, 0))
-        ttk.Button(foot, text=t["quit"], command=self.quit).pack(side="right")
-        self.hint = ttk.Label(self.root, text=t["tray_hint"], style="Muted.TLabel")
-        self.hint.pack(side="bottom", anchor="w", padx=14, pady=(0, 6))
 
     def combo(self, parent, row: int, label: str, choices, key: str) -> tk.StringVar:
         ttk.Label(parent, text=label, style="Card.TLabel").grid(row=row, column=0, sticky="w", pady=3, padx=(0, 12))
@@ -363,6 +417,10 @@ class LinkApp:
                 self.bridge.o.refresh = float(value)
                 self.log(f"refresh rate: {value} Hz")
                 return
+            if key == "eye_scale":
+                self.bridge.set_video(eye_scale=float(value))
+                self.log(f"resolution: {float(value) * 100:.0f}%")
+                return
             if key == "quality":
                 self.bridge.set_video(bitrate=self.bitrate())
             else:
@@ -375,6 +433,17 @@ class LinkApp:
     def set(self, key: str, value) -> None:
         self.s[key] = value
         save_settings(self.s)
+
+    def set_perf(self, key: str, on: bool) -> None:
+        """A performance switch: applied right away (the encoder after a short reconnect)."""
+        self.set(key, on)
+        if key == "auto_latency":
+            self.bridge.o.auto_latency = on
+        elif key == "predict":
+            self.bridge.o.predict = on           # told to the headset with the next status
+        elif key == "amf":
+            self.bridge.set_video(encoder_backend="auto" if on else "mf")
+        self.log(f"performance: {key} {'on' if on else 'off'}")
 
     # -- actions -----------------------------------------------------------------
     def start_vr(self) -> None:
@@ -521,7 +590,9 @@ class LinkApp:
             h = st["headset_stats"]
             control = st["control"] or "-"
             sync = st["sync"]
-            sync_text = (f"sync {sync.get('shift_ms', 0):+.2f} ms (total {st['sync_total_ms']:+.1f})" if sync.get("ok")
+            sync_text = (f"sync {sync.get('shift_ms', 0):+.2f} ms (total {st['sync_total_ms']:+.1f}, "
+                         f"wait target {st['sync_target_ms'] or 0.4 * 1000 / max(1.0, h.get('display', 72) or 72):.1f})"
+                         if sync.get("ok")
                          else f"sync: {sync.get('error', 'waiting')}" if sync else "sync: -")
             lines = [
                 f"PC     video {st['video_in']}/{st['video_out']} fps  {st['mbps']:5.1f} Mbit/s "
@@ -535,6 +606,7 @@ class LinkApp:
                 f"{t['control']}: {t['anyone'] if control == 'any' else control}   {st['summary']}",
                 f"Relay  video +{st['relay_ms'][0]:.2f} ms (p99 {st['relay_ms'][1]:.2f}, max {st['relay_ms'][2]:.2f})   "
                 f"pose +{st['forward_us'][0]:.0f} us (max {st['forward_us'][1]:.0f})",
+                f"Ahead  {h.get('predict_ms', 0):.1f} ms   shown {h.get('late_ms', 0):+.1f} ms after the predicted time",
             ]
             self.stats_lbl.config(text="\n".join(lines))
             if self.log_dirty:

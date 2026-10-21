@@ -687,6 +687,7 @@ public:
         cur_egl_ = egl;
         has_frame_ = true;
         last_new_ = now;
+        fresh_ = true;
         // Which frame this is: the decoder keeps our timestamp (frame index * step).
         int64_t ts_ns = 0;
         AImage_getTimestamp(img, &ts_ns);
@@ -703,6 +704,12 @@ public:
 
     GLuint texture() const { return tex_; }
     void SetPeriodMs(float ms) { period_ms_ = ms; }
+    // True once per newly shown image (render thread).
+    bool TakeFresh() {
+        const bool f = fresh_;
+        fresh_ = false;
+        return f;
+    }
     // Frame wait since the last call as a circular mean over the display period
     // (slack_ms in [0, period)), how consistent it was (0..1) and how many frames.
     bool TakeTiming(float* slack_ms, float* weight, int* n) {
@@ -1037,6 +1044,7 @@ private:
     AImage* cur_img_ = nullptr;
     EGLImageKHR cur_egl_ = EGL_NO_IMAGE_KHR;
     bool has_frame_ = false;
+    bool fresh_ = false;   // a new image was bound since TakeFresh()
     std::chrono::steady_clock::time_point last_new_{};
 };
 
@@ -1122,6 +1130,7 @@ struct App {
         bool steamvr = false, driver = false;
         std::string control;    // who moves the HMD: "manual", "auto", another sender, "" = anyone
         double refresh = 0;     // display refresh rate the PC wants (0 = the headset's own)
+        bool predict = false;   // performance setting: send poses predicted for when the PC's image shows
         std::chrono::steady_clock::time_point at{};
     } pc;
     std::string shown_control;  // last owner announced in a notice
@@ -1143,6 +1152,21 @@ struct App {
     // Last 2-second statistics, for the overlay.
     float st_display = 0, st_received = 0, st_shown = 0, st_wait = 0, st_mbps = 0, st_audio = 0;
     int st_underruns = 0, st_haptics = 0;
+
+    // Look-ahead (performance setting "predict"): poses go to the PC predicted
+    // further than this headset's own next frame, by how much later the PC's
+    // image rendered with them is actually shown. Measured here, on one clock:
+    // each shown image carries the head pose it was rendered with; the matching
+    // sent pose says for which time it was predicted.
+    struct SentPose {
+        XrTime t = 0;            // time the pose was predicted for
+        float ahead_ms = 0;      // look-ahead it included
+        XrPosef pose{};
+    };
+    SentPose sent[96];
+    int sent_n = 0;
+    float predict_ms = 0;        // current look-ahead
+    float predict_late_ms = 0;   // last measured: shown this much after the predicted time
 
     XrActionSet action_set = XR_NULL_HANDLE;
     XrPath hand_paths[2] = {};
@@ -1831,14 +1855,49 @@ void UpdatePanels(App& app, bool video, const XrSpaceLocation& head) {
                            "Video %.0f/%.0f fps  display %.0f Hz  %.1f Mbit/s  wait %.1f ms"),
                          app.st_shown, app.st_received, app.st_display, app.st_mbps, app.st_wait),
                      30, 0xFFFFFFFF, false});
-        l.push_back({Fmt(T("%s  音 %.0f/s 途切れ %d  振動 %d  操作 %s", "%s  audio %.0f/s underruns %d  haptics %d  control %s"),
+        l.push_back({Fmt(T("%s  音 %.0f/s 途切れ %d  振動 %d  操作 %s  先読み %.0f ms", "%s  audio %.0f/s underruns %d  haptics %d  control %s  ahead %.0f ms"),
                          where.c_str(), app.st_audio, app.st_underruns, app.st_haptics,
-                         pc_fresh ? ControlName(app.pc.control).c_str() : "?"),
+                         pc_fresh ? ControlName(app.pc.control).c_str() : "?", app.pc.predict ? app.predict_ms : 0.0f),
                      26, 0xFFB8C4D6, false, 4});
         SetPanel(app, app.hud_panel, 0xB0101418, 18, l);
     } else {
         app.hud_panel.visible = false;
     }
+}
+
+// An image rendered with head pose `rendered` is about to be shown at
+// `display`. Find the sent pose it was rendered with (the nearest of the last
+// 96; only while the head turns, when poses tell frames apart): the image shows
+// display - t later than that pose was predicted for. The look-ahead follows
+// that (smoothed), so the PC renders for when its image will really be seen.
+void MeasureLookAhead(App& app, const XrPosef& rendered, XrTime display) {
+    const int n = std::min(app.sent_n, 96);
+    if (n < 4) return;
+    auto angle = [](const XrQuaternionf& a, const XrQuaternionf& b) {
+        const float d = std::fabs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w);
+        return 2.0f * std::acos(std::min(1.0f, d));
+    };
+    int best = -1;
+    float best_d = 1e9f;
+    for (int i = 0; i < n; ++i) {
+        const App::SentPose& s = app.sent[(app.sent_n - 1 - i) % 96];
+        const float dx = s.pose.position.x - rendered.position.x, dy = s.pose.position.y - rendered.position.y,
+                    dz = s.pose.position.z - rendered.position.z;
+        const float d = std::sqrt(dx * dx + dy * dy + dz * dz) + 0.05f * angle(s.pose.orientation, rendered.orientation);
+        if (d < best_d) {
+            best_d = d;
+            best = (app.sent_n - 1 - i) % 96;
+        }
+    }
+    const App::SentPose& s = app.sent[best];
+    const App::SentPose& prev = app.sent[(best + 95) % 96];
+    // Moving at least ~3 degrees per second, and a close match.
+    if (angle(s.pose.orientation, prev.pose.orientation) < 0.0007f || best_d > 0.002f) return;
+    const float late = static_cast<float>(display - s.t) / 1e6f;
+    if (late < -50 || late > 150) return;
+    app.predict_late_ms = late;
+    const float want = std::clamp(s.ahead_ms + late, 0.0f, 80.0f);
+    app.predict_ms += 0.05f * (want - app.predict_ms);
 }
 
 void RenderEye(App& app, Swapchain& sc, uint32_t image, const XrView& view, const std::vector<Vertex>& verts,
@@ -1885,13 +1944,27 @@ void Frame(App& app) {
     xrSyncActions(app.session, &sync);
 
     // Poses for the PC.
+    // (head / hands: for this headset's own frame; *_out: what goes to the PC.)
     XrSpaceLocation head{XR_TYPE_SPACE_LOCATION}, hands[2] = {{XR_TYPE_SPACE_LOCATION}, {XR_TYPE_SPACE_LOCATION}};
     xrLocateSpace(app.head, app.base, fs.predictedDisplayTime, &head);
     for (int h = 0; h < 2; ++h) xrLocateSpace(app.grip_spaces[h], app.base, fs.predictedDisplayTime, &hands[h]);
+    const float ahead = app.pc.predict ? app.predict_ms : 0.0f;
+    const XrTime pose_time = fs.predictedDisplayTime + static_cast<XrDuration>(ahead * 1e6f);
+    XrSpaceLocation head_out = head, hands_out[2] = {hands[0], hands[1]};
+    if (ahead > 0.1f) {
+        xrLocateSpace(app.head, app.base, pose_time, &head_out);
+        for (int h = 0; h < 2; ++h) xrLocateSpace(app.grip_spaces[h], app.base, pose_time, &hands_out[h]);
+    }
+    if (head_out.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) {
+        App::SentPose& sp = app.sent[app.sent_n++ % 96];
+        sp.t = pose_time;
+        sp.ahead_ms = ahead;
+        sp.pose = head_out.pose;
+    }
     std::string msg = "[";
-    AppendPose(msg, "hmd", head);
-    AppendPose(msg, "left_hand", hands[kLeft]);
-    AppendPose(msg, "right_hand", hands[kRight]);
+    AppendPose(msg, "hmd", head_out);
+    AppendPose(msg, "left_hand", hands_out[kLeft]);
+    AppendPose(msg, "right_hand", hands_out[kRight]);
     AppendInputs(app, msg, kLeft);
     AppendInputs(app, msg, kRight);
 
@@ -1906,6 +1979,7 @@ void Frame(App& app) {
             JsonString(m, "control", &app.pc.control);
             double refresh = 0;
             app.pc.refresh = JsonNumber(m, "refresh", &refresh) ? refresh : 0;
+            app.pc.predict = JsonBool(m, "predict", false);
             std::string name;
             if (JsonString(m, "pc", &name)) {
                 std::lock_guard<std::mutex> l(g_pc_mu);
@@ -2045,6 +2119,7 @@ void Frame(App& app) {
         XrPosef frame_head{};
         const bool reproject = video && app.video.FramePose(&frame_head);
         app.reprojected += reproject ? 1 : 0;
+        if (reproject && app.video.TakeFresh()) MeasureLookAhead(app, frame_head, fs.predictedDisplayTime);
 
         proj_views.resize(vc, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW});
         for (uint32_t i = 0; i < vc; ++i) {
@@ -2097,10 +2172,10 @@ void Frame(App& app) {
                  "{\"type\":\"link_stats\",\"display\":%.1f,\"received\":%.1f,\"decoded\":%.1f,\"shown\":%.1f,"
                  "\"repeats\":%.1f,\"dropped\":%.1f,\"buffer\":%d,\"wait_ms\":%.1f,\"wait_p95_ms\":%.1f,"
                  "\"reprojected\":%.0f,\"audio_packets\":%.1f,\"audio_underruns\":%d,\"decode_ms\":%.2f,"
-                 "\"decode_max_ms\":%.2f}",
+                 "\"decode_max_ms\":%.2f,\"predict_ms\":%.1f,\"late_ms\":%.1f}",
                  xr_frames / s, v.received / s, v.decoded / s, v.shown / s, v.repeats / s, v.dropped / s, v.buffer,
                  v.wait_avg_ms, v.wait_p95_ms, rep, v.audio_packets / s, v.audio_underruns, v.decode_avg_ms,
-                 v.decode_max_ms);
+                 v.decode_max_ms, app.pc.predict ? app.predict_ms : 0.0f, app.predict_late_ms);
         app.link_stats = st;
         app.st_display = xr_frames / s;
         app.st_received = v.received / s;

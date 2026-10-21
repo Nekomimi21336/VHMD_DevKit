@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import platform
 import socket
 import subprocess
@@ -59,6 +60,10 @@ class BridgeOptions:
     sync_target_ms: float = 0.0   # how long frames should wait on the headset (0: the driver's default)
     refresh: float = 0.0          # display refresh rate asked of the headset (0: its own)
     encoder_backend: str = "auto" # driver encoder: "auto" (AMF on AMD GPUs), "amf", "mf"
+    # Performance settings (each trades some quality or safety for latency):
+    auto_latency: bool = True     # frames wait on the headset only as long as their timing jitter needs
+    predict: bool = True          # the headset sends poses predicted for when the PC's image will show
+    eye_scale: float = 1.0        # video width per eye, share of the headset's (smaller: faster, softer)
 
 
 class Stats:
@@ -139,6 +144,7 @@ class Bridge:
         self.summary = ""
         self.sync_state: dict = {}      # the driver's last display_sync reply
         self.sync_shift_total = 0.0     # ms moved since the start (drift followed)
+        self.sync_target_ms = 0.0       # wait asked of the driver (auto_latency), 0 = the driver's default
         self.forward_us = (0.0, 0.0)    # pose message: received -> sent to the driver (avg, max), last second
         self._fwd_samples: list = []
         self._models_applied: Optional[str] = None   # render models set for this driver session
@@ -160,6 +166,7 @@ class Bridge:
                                      codec=o.codec, eye_width=o.eye_width, source=o.video_source,
                                      adaptive=o.adaptive, log=self.log)
             self.video.encoder_backend = o.encoder_backend
+            self.video.eye_scale = o.eye_scale
             self.video.start()
 
         self._udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -217,7 +224,8 @@ class Bridge:
         threading.Thread(target=fn, args=args, daemon=True).start()
 
     def set_video(self, bitrate: Optional[float] = None, codec: Optional[str] = None,
-                  buffer: Optional[int] = None) -> None:
+                  buffer: Optional[int] = None, encoder_backend: Optional[str] = None,
+                  eye_scale: Optional[float] = None) -> None:
         """New video settings; the headset reconnects to get them (about a second)."""
         if bitrate is not None:
             self.o.bitrate = bitrate
@@ -225,11 +233,16 @@ class Bridge:
             self.o.codec = codec
         if buffer is not None:
             self.o.buffer = buffer
+        if encoder_backend is not None:
+            self.o.encoder_backend = encoder_backend
+        if eye_scale is not None:
+            self.o.eye_scale = eye_scale
         if self.video:
-            if codec is None and buffer is None:   # bitrate only: no reconnect
-                self.video.set_bitrate(self.o.bitrate)
+            if codec is None and buffer is None and encoder_backend is None and eye_scale is None:
+                self.video.set_bitrate(self.o.bitrate)   # bitrate only: no reconnect
                 return
             self.video.bitrate, self.video.codec, self.video.buffer = self.o.bitrate, self.o.codec, self.o.buffer
+            self.video.encoder_backend, self.video.eye_scale = self.o.encoder_backend, self.o.eye_scale
             self.video.restart()
 
     def request(self, op: str, timeout: float = 0.3, **args) -> dict:
@@ -268,6 +281,7 @@ class Bridge:
             "forward_us": self.forward_us,
             "sync": dict(self.sync_state),
             "sync_total_ms": self.sync_shift_total,
+            "sync_target_ms": self.sync_target_ms,
             "summary": self.summary,
         }
 
@@ -304,6 +318,18 @@ class Bridge:
                "period_ms": m.get("period_ms"), "weight": m.get("weight", 1.0)}
         if self.o.sync_target_ms > 0:
             req["target_ms"] = self.o.sync_target_ms
+        elif self.o.auto_latency and m.get("period_ms") and m.get("weight"):
+            # How long frames wait is set by how much their arrival varies: the
+            # spread of the measured phase (circular standard deviation from the
+            # mean resultant length), times three, plus 1 ms; between 2 ms and
+            # 0.4 of a frame (the fixed default).
+            period, weight = float(m["period_ms"]), min(0.9999, max(1e-3, float(m["weight"])))
+            spread = math.sqrt(-2.0 * math.log(weight)) * period / (2 * math.pi)
+            want = min(0.4 * period, max(2.0, 1.0 + 3.0 * spread))
+            self.sync_target_ms = want if not self.sync_target_ms else self.sync_target_ms + 0.2 * (want - self.sync_target_ms)
+            req["target_ms"] = round(self.sync_target_ms, 2)
+        else:
+            self.sync_target_ms = 0.0
         if req["slack_ms"] is None or req["period_ms"] is None:
             return
         self._udp.sendto(json.dumps(req, separators=(",", ":")).encode(), self._driver)
@@ -450,7 +476,7 @@ class Bridge:
                     pass
 
             if self.connected():
-                status = {"type": "status", "pc": platform.node(), **self.pc_state}
+                status = {"type": "status", "pc": platform.node(), **self.pc_state, "predict": self.o.predict}
                 if self.o.refresh > 0:
                     status["refresh"] = self.o.refresh
                 self.link.send(json.dumps(status, separators=(",", ":")).encode())
@@ -508,7 +534,11 @@ def main() -> None:
     ap.add_argument("--buffer", type=int, default=0, choices=(0, 1, 2),
                     help="frames the headset holds back: 0 = newest (lowest latency), 1 = smoother (+1 frame)")
     ap.add_argument("--fixed-bitrate", action="store_true", help="keep --bitrate even when the network is slower")
-    ap.add_argument("--encoder", default="auto", choices=("auto", "amf", "mf"),
+    ap.add_argument("--fixed-latency", action="store_true",
+                    help="frames wait a fixed 0.4 frame on the headset (default: as little as their jitter allows)")
+    ap.add_argument("--no-predict", action="store_true", help="the headset sends poses for its own next frame only")
+    ap.add_argument("--eye-scale", type=float, default=1.0, help="video width per eye as a share of the headset's")
+    ap.add_argument("--driver-encoder", default="auto", choices=("auto", "amf", "mf"),
                     help="driver encoder: auto = AMD AMF (ultra low latency) when available, else Media Foundation")
     ap.add_argument("--refresh", type=float, default=0.0,
                     help="display refresh rate for the headset, e.g. 72 or 90 (VHMD follows it)")
@@ -522,7 +552,8 @@ def main() -> None:
         usb_only=args.usb_only, video=not args.no_video, bitrate=args.bitrate, codec=args.codec,
         eye_width=args.eye_width, video_source=args.video_source, encoder=args.encoder, buffer=args.buffer,
         adaptive=not args.fixed_bitrate, sync=not args.no_sync, sync_target_ms=args.sync_target_ms,
-        refresh=args.refresh, encoder_backend=args.encoder),
+        refresh=args.refresh, encoder_backend=args.driver_encoder, auto_latency=not args.fixed_latency,
+        predict=not args.no_predict, eye_scale=args.eye_scale),
         log=lambda m: print(m, flush=True))
     bridge.start()
     try:

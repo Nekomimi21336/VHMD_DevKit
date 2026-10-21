@@ -140,6 +140,7 @@ class VideoServer(threading.Thread):
         self.frames_in = self.frames_out = self.bytes_out = self.frames_dropped = 0
         self.current: Optional[socket.socket] = None   # the headset's connection, while there is one
         self.encoder_backend = "auto"   # driver encoder: "auto" (AMF on AMD), "amf", "mf" (Media Foundation)
+        self.eye_scale = 1.0            # video width per eye as a share of the headset's own (performance setting)
         # Adaptive bitrate (driver encoder): down when the network cannot keep
         # up (sending to the headset blocks), back up toward self.bitrate when it can.
         self.adaptive = adaptive
@@ -223,6 +224,8 @@ class VideoServer(threading.Thread):
         if not eye:
             info = headset_info.load()
             eye = int(info["render"][0]) if info else 0
+            if eye and self.eye_scale < 0.999:
+                eye = max(640, int(eye * self.eye_scale) // 16 * 16)
         self.bitrate_now = self.bitrate
         settings = {"bitrate_mbps": self.bitrate, "codec": self.codec, "eye_width": eye, "buffer": self.buffer,
                     "encoder": self.encoder_backend}

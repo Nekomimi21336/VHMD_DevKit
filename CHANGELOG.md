@@ -3,7 +3,8 @@
 ## 未リリース
 
 ### 追加
-- **AMD の GPU では AMF の超低遅延モードで圧縮**(`driver/src/windows/amf_encoder.*`、AMF SDK v1.5.3 のヘッダーを `third_party/amf` に同梱、MIT)。3840 × 1920 の HEVC で Submit から送り出しまで 8.8 → 6.95 ms。H.264 / AV1 も対応。AMF が使えなければ Media Foundation に自動で戻る(`headset_bridge --encoder auto|amf|mf`、ストリームの設定 `encoder`)。
+- **パフォーマンス設定**(PC のアプリの「パフォーマンス」、`headset_bridge` の引数): 動き(遅れを最小に / なめらか)、解像度 100 / 85 / 70%(`--eye-scale`)、表示までの余裕をタイミングに合わせて詰める(待ち 5.46 → 4.32 ms、`--fixed-latency`)、動きを先読みする(ヘッドセットが実際の表示の遅れを測って姿勢を先の時刻で送る、`--no-predict`)、AMD の超低遅延エンコーダー(`--driver-encoder mf` で切る)。PC のアプリの画面は縦に長いときスクロールする。
+- **AMD の GPU では AMF の超低遅延モードで圧縮**(`driver/src/windows/amf_encoder.*`、AMF SDK v1.5.3 のヘッダーを `third_party/amf` に同梱、MIT)。3840 × 1920 の HEVC で Submit から送り出しまで 8.8 → 6.95 ms。H.264 / AV1 も対応。AMF が使えなければ Media Foundation に自動で戻る(`headset_bridge --driver-encoder auto|amf|mf`、ストリームの設定 `encoder`)。
 - **既存の環境との共存**: `python -m vhmd_client.mode off`(PC のアプリの「元の環境」)で VHMD のドライバを止め、VHMD が変えた SteamVR の設定を最初に記録した値に戻す(`%LOCALAPPDATA%\VHMD\original_steamvr.json`)。PC のアプリに「SteamVR の使い方: VHMD Link / PICO Connect / 元の環境」の切り替え。
 - **遅れの測定と短縮**: ドライバが合成器のスレッドでの処理・圧縮の時間を、ヘッドセットが復号の時間を、`headset_bridge` が中継の時間を測って表示。圧縮器の出力をイベントで待つようにし(9.4 → 8.8 ms)、ヘッドセットのデコーダーに復号順の出力を指定(12.0 → 7.7 ms)。
 - **VHMD Link の PC アプリを単体の exe に**(`tools/build_link_exe.py`、PyInstaller): Python なしで動き、キーボード・マウス操作ツールも同じ exe(`--fps`)。`install_link.ps1` は exe があればそれをスタートメニューに登録し、リリースの zip に `VHMD Link/VHMD Link.exe` を入れる。
@@ -41,6 +42,7 @@
 - `math3d.to_euler`(`from_euler` の逆変換)と `math3d.conjugate`。`PreviewReader.read_scaled`(片目を縮小して、必要な画素だけ読む)。
 
 ### 修正
+- `headset_bridge` が起動しなかった(エンコーダーの選択の引数 `--encoder` が ffmpeg 用の `--encoder` と重なっていた。`--driver-encoder` に変更)。
 - VHMD Link: ヘッドセットがすぐにつなぎ直すと音が出なかった(新しい接続に音の形式を送っていなかった)。
 - VHMD Link: SteamVR の起動中にヘッドセットがつながると、映像が古い経路(ffmpeg)で待ったままになった。ドライバが応答しないあいだは接続を閉じ、ヘッドセットがつなぎ直す。
 - VMT の Joint / Follow で親を持つトラッカーが 0.5 秒で無効になる問題。親を持つ姿勢はタイムアウトしないようにした(VMT と同じ)。
