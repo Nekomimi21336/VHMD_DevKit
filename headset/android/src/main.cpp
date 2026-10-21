@@ -60,6 +60,7 @@
 #include <vector>
 
 #include "text.h"
+#include "udp_video.h"
 
 #define LOG_TAG "VHMDLink"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -596,13 +597,36 @@ PFNGLEGLIMAGETARGETTEXTURE2DOESPROC pGlEglImageTargetTexture2D = nullptr;
 class Video {
 public:
     void Start() {
+        // Video over UDP (when the PC chooses it): a port of our own, announced
+        // in the "headset" message; frames and sound arrive there as packets
+        // with parity (udp_video.h).
+        udp_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
+        if (udp_fd_ >= 0) {
+            int rcv = 8 << 20;
+            setsockopt(udp_fd_, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof(rcv));
+            timeval tv{0, 50000};
+            setsockopt(udp_fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            sockaddr_in a{};
+            a.sin_family = AF_INET;
+            socklen_t al = sizeof(a);
+            if (bind(udp_fd_, reinterpret_cast<sockaddr*>(&a), sizeof(a)) == 0 &&
+                getsockname(udp_fd_, reinterpret_cast<sockaddr*>(&a), &al) == 0) {
+                udp_port_ = ntohs(a.sin_port);
+                udp_thread_ = std::thread([this] { UdpLoop(); });
+            }
+        }
         thread_ = std::thread([this] { Run(); });
         drain_thread_ = std::thread([this] { DrainLoop(); });
     }
+    int UdpPort() const { return udp_port_; }
+    // A keyframe to ask the PC for (a frame was lost); true once per request.
+    bool TakeKeyRequest() { return key_request_.exchange(false); }
     void Stop() {
         stop_ = true;
         int fd = fd_.exchange(-1);
         if (fd >= 0) shutdown(fd, SHUT_RDWR);
+        if (udp_thread_.joinable()) udp_thread_.join();
+        if (udp_fd_ >= 0) close(udp_fd_);
         if (thread_.joinable()) thread_.join();
         if (drain_thread_.joinable()) drain_thread_.join();
         if (codec_) {
@@ -741,6 +765,7 @@ public:
         float wait_avg_ms, wait_p95_ms;   // decoded image waiting before it is shown
         long long bytes;                  // received on the video connection
         float decode_avg_ms, decode_max_ms;   // frame to decoder -> image out
+        int udp_lost, udp_recovered, skipped;   // UDP: frames lost / rebuilt with parity, frames skipped
     };
     Stats TakeStats() {
         std::lock_guard<std::mutex> l(queue_mu_);
@@ -748,6 +773,9 @@ public:
                 rx_close_.exchange(0), dec_close_.exchange(0), 0, 0, 0, 0, 0, bytes_.exchange(0)};
         audio_.TakeStats(&s.audio_packets, &s.audio_underruns, &s.audio_skipped);
         s.decode_avg_ms = s.decode_max_ms = 0;
+        s.udp_lost = udp_lost_frames_.exchange(0);
+        s.udp_recovered = udp_recovered_.load();
+        s.skipped = skipped_.exchange(0);
         if (!decode_ms_.empty()) {
             float sum = 0;
             for (float d : decode_ms_) {
@@ -807,21 +835,7 @@ private:
                 payload.resize(h.size);
                 if (h.size && !ReadAll(fd, payload.data(), h.size)) break;
                 bytes_ += sizeof(h) + h.size;
-                if (h.kind == kKindConfig)
-                    Configure(std::string(payload.begin(), payload.end()));
-                else if (h.kind == kKindFrame && codec_) {
-                    RememberPose(h);
-                    NoteGap(last_rx_, rx_close_);
-                    Feed(payload, h.frame_index);
-                } else if (h.kind == kKindAudioFormat) {
-                    const std::string j(payload.begin(), payload.end());
-                    double rate = 48000, channels = 2;
-                    JsonNumber(j, "rate", &rate);
-                    JsonNumber(j, "channels", &channels);
-                    audio_.Configure(static_cast<int>(rate), static_cast<int>(channels));
-                } else if (h.kind == kKindAudio) {
-                    audio_.Push(reinterpret_cast<const int16_t*>(payload.data()), payload.size() / 2);
-                }
+                HandleMessage(h, payload);
             }
             LOGI("video: disconnected");
             int old = fd_.exchange(-1);
@@ -967,6 +981,82 @@ private:
         LOGI("video: %s decoder started", mime_.c_str());
     }
 
+    // One message from the PC (TCP, or put back together from UDP packets).
+    void HandleMessage(const VideoHeader& h, const std::vector<uint8_t>& payload) {
+        std::lock_guard<std::mutex> l(msg_mu_);
+        if (h.kind == kKindConfig) {
+            Configure(std::string(payload.begin(), payload.end()));
+        } else if (h.kind == kKindFrame && codec_) {
+            // After a lost frame the decoder needs a keyframe: skip until one.
+            if (waiting_key_) {
+                if (!(h.flags & 2)) {
+                    ++skipped_;
+                    return;
+                }
+                waiting_key_ = false;
+                LOGI("video: keyframe after a lost frame");
+            }
+            RememberPose(h);
+            NoteGap(last_rx_, rx_close_);
+            Feed(payload, h.frame_index);
+        } else if (h.kind == kKindAudioFormat) {
+            const std::string j(payload.begin(), payload.end());
+            double rate = 48000, channels = 2;
+            JsonNumber(j, "rate", &rate);
+            JsonNumber(j, "channels", &channels);
+            audio_.Configure(static_cast<int>(rate), static_cast<int>(channels));
+        } else if (h.kind == kKindAudio) {
+            audio_.Push(reinterpret_cast<const int16_t*>(payload.data()), payload.size() / 2);
+        }
+    }
+
+    // UDP packets: rebuilt with the parity; a frame that cannot be rebuilt
+    // means waiting for a keyframe (asked for, again every 250 ms meanwhile).
+    void UdpLoop() {
+        vhmd_link::UdpReassembler r;
+        std::vector<uint8_t> buf(65536), msg, payload;
+        auto asked = std::chrono::steady_clock::now();
+        while (!stop_) {
+            const ssize_t n = recv(udp_fd_, buf.data(), buf.size(), 0);
+            const auto now = std::chrono::steady_clock::now();
+            // Losses first: a frame completing gives up older unfinished ones, and
+            // then it has to wait for a keyframe too.
+            auto note_losses = [&] {
+                uint64_t lost_frames = 0;
+                r.TakeLost(&lost_frames);
+                if (!lost_frames) return;
+                udp_lost_frames_ += static_cast<int>(lost_frames);
+                std::lock_guard<std::mutex> l(msg_mu_);
+                if (!waiting_key_) {
+                    waiting_key_ = true;
+                    key_request_ = true;
+                    asked = now;
+                }
+            };
+            const bool got = n > 0 && r.Push(buf.data(), static_cast<size_t>(n), now, &msg);
+            note_losses();
+            if (got && msg.size() >= sizeof(VideoHeader)) {
+                VideoHeader h;
+                memcpy(&h, msg.data(), sizeof(h));
+                if (memcmp(h.magic, "VHV1", 4) == 0 && sizeof(h) + h.size <= msg.size()) {
+                    payload.assign(msg.begin() + sizeof(h), msg.begin() + sizeof(h) + h.size);
+                    bytes_ += msg.size();
+                    HandleMessage(h, payload);
+                }
+            }
+            r.Expire(now);
+            note_losses();
+            {
+                std::lock_guard<std::mutex> l(msg_mu_);
+                if (waiting_key_ && now - asked > std::chrono::milliseconds(250)) {
+                    key_request_ = true;
+                    asked = now;
+                }
+            }
+            udp_recovered_ = static_cast<int>(r.recovered);
+        }
+    }
+
     void Feed(const std::vector<uint8_t>& au, uint64_t index) {
         ssize_t i = AMediaCodec_dequeueInputBuffer(codec_, 20000);
         if (i < 0) return;   // decoder full: drop this frame
@@ -1019,6 +1109,13 @@ private:
     std::chrono::steady_clock::time_point last_rx_{}, last_dec_{};
     std::atomic<int> rx_close_{0}, dec_close_{0};
     std::atomic<long long> bytes_{0};
+    // video over UDP
+    int udp_fd_ = -1, udp_port_ = 0;
+    std::thread udp_thread_;
+    std::mutex msg_mu_;                     // one message handled at a time (TCP and UDP threads)
+    bool waiting_key_ = false;              // guarded by msg_mu_
+    std::atomic<bool> key_request_{false};
+    std::atomic<int> udp_lost_frames_{0}, udp_recovered_{0}, skipped_{0};
     int shown_ = 0;
     std::mutex pose_mu_;
     FrameRec poses_[kPoseRing];
@@ -1590,8 +1687,8 @@ void AppendHeadsetInfo(App& app, std::string& out, const std::vector<XrView>& ey
         n += snprintf(buf + n, sizeof(buf) - n, "%s[%.5f,%.5f,%.5f,%.6f,%.6f,%.6f,%.6f]", i ? "," : "", p.position.x,
                       p.position.y, p.position.z, p.orientation.w, p.orientation.x, p.orientation.y, p.orientation.z);
     }
-    snprintf(buf + n, sizeof(buf) - n, "],\"edition\":\"%s\",\"version\":\"%s\"}", kDev ? "dev" : "link",
-             VHMD_LINK_VERSION);
+    snprintf(buf + n, sizeof(buf) - n, "],\"edition\":\"%s\",\"version\":\"%s\",\"video_udp_port\":%d}",
+             kDev ? "dev" : "link", VHMD_LINK_VERSION, app.video.UdpPort());
     if (out.size() > 1) out += ',';
     out += buf;
 }
@@ -2037,6 +2134,8 @@ void Frame(App& app) {
         }
     }
 
+    if (app.video.TakeKeyRequest()) msg += ",{\"type\":\"link_request\",\"keyframe\":true}";
+
     // Eye poses and fields of view relative to the head.
     std::vector<XrView> eye_local(app.swapchains.size(), {XR_TYPE_VIEW});
     {
@@ -2172,10 +2271,11 @@ void Frame(App& app) {
                  "{\"type\":\"link_stats\",\"display\":%.1f,\"received\":%.1f,\"decoded\":%.1f,\"shown\":%.1f,"
                  "\"repeats\":%.1f,\"dropped\":%.1f,\"buffer\":%d,\"wait_ms\":%.1f,\"wait_p95_ms\":%.1f,"
                  "\"reprojected\":%.0f,\"audio_packets\":%.1f,\"audio_underruns\":%d,\"decode_ms\":%.2f,"
-                 "\"decode_max_ms\":%.2f,\"predict_ms\":%.1f,\"late_ms\":%.1f}",
+                 "\"decode_max_ms\":%.2f,\"predict_ms\":%.1f,\"late_ms\":%.1f,\"udp_lost\":%.2f,\"udp_skipped\":%.1f}",
                  xr_frames / s, v.received / s, v.decoded / s, v.shown / s, v.repeats / s, v.dropped / s, v.buffer,
                  v.wait_avg_ms, v.wait_p95_ms, rep, v.audio_packets / s, v.audio_underruns, v.decode_avg_ms,
-                 v.decode_max_ms, app.pc.predict ? app.predict_ms : 0.0f, app.predict_late_ms);
+                 v.decode_max_ms, app.pc.predict ? app.predict_ms : 0.0f, app.predict_late_ms, v.udp_lost / s,
+                 v.skipped / s);
         app.link_stats = st;
         app.st_display = xr_frames / s;
         app.st_received = v.received / s;

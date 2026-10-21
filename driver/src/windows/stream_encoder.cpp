@@ -190,12 +190,12 @@ struct StreamEncoder::Impl {
     // One message to the client (any thread). False if there is no client
     // or it is gone.
     bool Send(uint32_t kind, uint64_t index, const uint8_t* a, size_t na, const uint8_t* b, size_t nb,
-              const float* pose) {
+              const float* pose, bool keyframe = false) {
         VideoHeader h{};
         std::memcpy(h.magic, "VHV1", 4);
         h.kind = kind;
         h.size = uint32_t(na + nb);
-        h.flags = pose ? 1 : 0;
+        h.flags = (pose ? 1u : 0u) | (keyframe ? 2u : 0u);   // bit 0: pose valid, bit 1: keyframe
         h.frame_index = index;
         h.time_us = NowUs();
         if (pose) std::memcpy(h.pose, pose, sizeof(h.pose));
@@ -503,6 +503,12 @@ void StreamEncoder::NetLoop() {
                 impl_->bitrate_mbps = std::clamp(j["bitrate_mbps"].get<double>(), 1.0, 500.0);
                 impl_->bitrate_changed = true;
             }
+            // {"keyframe": true}: the client lost a frame (video over UDP) and
+            // needs a fresh start; the next frame is a keyframe.
+            if (j.is_object() && j.value("keyframe", false)) {
+                impl_->keyframe = true;
+                impl_->q_cv.notify_all();
+            }
         }
         wanted_ = false;
         {
@@ -536,7 +542,9 @@ void StreamEncoder::EncodeLoop() {
         return;
     }
     auto send_msg = [&](uint32_t kind, uint64_t index, const uint8_t* a, size_t na, const uint8_t* b, size_t nb,
-                        const float* pose) { return m.Send(kind, index, a, na, b, nb, pose); };
+                        const float* pose, bool keyframe = false) {
+        return m.Send(kind, index, a, na, b, nb, pose, keyframe);
+    };
 
     auto teardown = [&]() {
         if (m.mft) {
@@ -809,7 +817,8 @@ void StreamEncoder::EncodeLoop() {
                     }
                     if (config_ok)
                         send_msg(kKindFrame, found ? f.index : 0, add_header ? m.seq_header.data() : nullptr,
-                                 add_header ? m.seq_header.size() : 0, data, len, found && f.pose_ok ? f.pose : nullptr);
+                                 add_header ? m.seq_header.size() : 0, data, len, found && f.pose_ok ? f.pose : nullptr,
+                                 clean != 0);
                     buf->Unlock();
                     std::lock_guard<std::mutex> l(stats_mu_);
                     ++stats_.encoded;
@@ -942,7 +951,8 @@ void StreamEncoder::EncodeLoop() {
                 std::lock_guard<std::mutex> l(m.client_mu);
                 config_ok = m.config_sent;
             }
-            if (config_ok) send_msg(kKindFrame, f.index, nullptr, 0, au.data(), au.size(), f.pose_ok ? f.pose : nullptr);
+            if (config_ok)
+                send_msg(kKindFrame, f.index, nullptr, 0, au.data(), au.size(), f.pose_ok ? f.pose : nullptr, key);
             const uint64_t t = NowUs();
             std::lock_guard<std::mutex> l(stats_mu_);
             ++stats_.encoded;

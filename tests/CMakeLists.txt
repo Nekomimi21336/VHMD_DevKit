@@ -5,6 +5,7 @@ add_executable(vhmd_unit_tests
   unit/test_osc.cpp
   unit/test_config_state.cpp
   unit/test_visuals.cpp
+  unit/test_udp_video.cpp
 )
 target_link_libraries(vhmd_unit_tests PRIVATE vhmd_core)
 target_compile_options(vhmd_unit_tests PRIVATE ${VHMD_WARNINGS})

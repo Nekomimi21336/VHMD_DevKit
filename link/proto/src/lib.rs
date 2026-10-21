@@ -11,6 +11,66 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub mod udp;
+
+/// Sets a socket's send (SO_SNDBUF) or receive (SO_RCVBUF) buffer. A video
+/// frame arrives as a burst of packets (70 KB and more): with the default
+/// 64 KB the system drops some before they are read.
+pub fn set_socket_buffer<S: SocketHandle>(s: &S, send: bool, bytes: i32) {
+    s.set_buffer(send, bytes);
+}
+
+pub trait SocketHandle {
+    fn set_buffer(&self, send: bool, bytes: i32);
+}
+
+#[cfg(windows)]
+mod sockbuf {
+    use std::os::windows::io::AsRawSocket;
+    #[link(name = "ws2_32")]
+    extern "system" {
+        fn setsockopt(s: usize, level: i32, name: i32, val: *const i32, len: i32) -> i32;
+    }
+    pub fn set(raw: usize, send: bool, bytes: i32) {
+        unsafe {
+            setsockopt(raw, 0xffff, if send { 0x1001 } else { 0x1002 }, &bytes, 4);
+        }
+    }
+    impl super::SocketHandle for std::net::UdpSocket {
+        fn set_buffer(&self, send: bool, bytes: i32) {
+            set(self.as_raw_socket() as usize, send, bytes)
+        }
+    }
+    impl super::SocketHandle for std::net::TcpStream {
+        fn set_buffer(&self, send: bool, bytes: i32) {
+            set(self.as_raw_socket() as usize, send, bytes)
+        }
+    }
+}
+
+#[cfg(unix)]
+mod sockbuf {
+    use std::os::unix::io::AsRawFd;
+    extern "C" {
+        fn setsockopt(s: i32, level: i32, name: i32, val: *const i32, len: u32) -> i32;
+    }
+    pub fn set(fd: i32, send: bool, bytes: i32) {
+        unsafe {
+            setsockopt(fd, 1, if send { 7 } else { 8 }, &bytes, 4); // SOL_SOCKET, SO_SNDBUF / SO_RCVBUF (Linux)
+        }
+    }
+    impl super::SocketHandle for std::net::UdpSocket {
+        fn set_buffer(&self, send: bool, bytes: i32) {
+            set(self.as_raw_fd(), send, bytes)
+        }
+    }
+    impl super::SocketHandle for std::net::TcpStream {
+        fn set_buffer(&self, send: bool, bytes: i32) {
+            set(self.as_raw_fd(), send, bytes)
+        }
+    }
+}
+
 pub const POSE_PORT: u16 = 39580;
 pub const VIDEO_PORT: u16 = 39581;
 pub const DISCOVERY_PORT: u16 = 39582;

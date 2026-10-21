@@ -68,6 +68,8 @@ class BridgeOptions:
     predict: bool = True          # the headset sends poses predicted for when the PC's image will show
     eye_scale: float = 1.0        # video width per eye, share of the headset's (smaller: faster, softer)
     native: str = "auto"          # the data path in vhmd-link-relay: "auto" (when built), "on", "off" (Python)
+    udp_video: bool = False       # frames and sound over UDP with parity (native data path; experimental)
+    fec: int = 30                 # parity packets per 100 (UDP video)
 
 
 class Stats:
@@ -221,7 +223,7 @@ class Bridge:
         self.link = native_relay.NativeLink(self._native)
         if o.video:
             self.video = native_relay.NativeVideo(self._native, o.bitrate, o.codec, o.buffer, o.encoder_backend,
-                                                  o.eye_width, o.eye_scale, o.adaptive)
+                                                  o.eye_width, o.eye_scale, o.adaptive, o.udp_video, o.fec)
         self.data_path = f"native {self._native.kind}"
         self.log(f"data path: native ({exe.name}); network: discovery on UDP {DISCOVERY_PORT}, poses on UDP / TCP "
                  f"{o.port}, video on TCP {VIDEO_PORT}" + ("" if o.usb_only else " (any device on the LAN can connect)"))
@@ -282,7 +284,7 @@ class Bridge:
 
     def set_video(self, bitrate: Optional[float] = None, codec: Optional[str] = None,
                   buffer: Optional[int] = None, encoder_backend: Optional[str] = None,
-                  eye_scale: Optional[float] = None) -> None:
+                  eye_scale: Optional[float] = None, udp: Optional[bool] = None, fec: Optional[int] = None) -> None:
         """New video settings; the headset reconnects to get them (about a second)."""
         if bitrate is not None:
             self.o.bitrate = bitrate
@@ -294,6 +296,13 @@ class Bridge:
             self.o.encoder_backend = encoder_backend
         if eye_scale is not None:
             self.o.eye_scale = eye_scale
+        if udp is not None or fec is not None:
+            self.o.udp_video = self.o.udp_video if udp is None else udp
+            self.o.fec = self.o.fec if fec is None else fec
+            if isinstance(self.video, native_relay.NativeVideo):
+                self.video.udp, self.video.fec = self.o.udp_video, self.o.fec
+                self.video.apply(restart=False)   # the relay reconnects when the transport changes
+            return
         if self.video:
             if codec is None and buffer is None and encoder_backend is None and eye_scale is None:
                 self.video.set_bitrate(self.o.bitrate)   # bitrate only: no reconnect
@@ -370,11 +379,38 @@ class Bridge:
             self.info = m
             headset_info.update(m, log=self.log)
             if isinstance(self.video, native_relay.NativeVideo):
-                self.video.headset_changed()
+                self.video.headset_changed(m)
         elif t == "link_stats":
             self.stats.headset = m
+            self._udp_adapt(m)
         elif t == "link_timing" and self.o.sync:
             self._display_sync(m)
+
+    def _udp_adapt(self, m: dict) -> None:
+        """Video over UDP: sending never blocks, so the bitrate follows the
+        frames the headset lost (could not rebuild): down 20 % when it loses
+        more than one a second, back up 10 % after 10 s without."""
+        v = self.video
+        if not isinstance(v, native_relay.NativeVideo) or v._transport()[0] != "udp" or not self.o.adaptive:
+            return
+        now = time.monotonic()
+        lost = float(m.get("udp_lost") or 0)
+        cur = getattr(self, "_udp_rate", v.bitrate)
+        if lost > 1.0:
+            new = max(8.0, cur * 0.8)
+            self._udp_calm_since = now
+        elif now - getattr(self, "_udp_calm_since", now) > 10.0 and cur < v.bitrate:
+            new = min(v.bitrate, cur * 1.1)
+            self._udp_calm_since = now
+        else:
+            if not hasattr(self, "_udp_calm_since"):
+                self._udp_calm_since = now
+            return
+        if abs(new - cur) >= 0.5:
+            self._udp_rate = new
+            self.log(f"video (UDP): {'lowering' if new < cur else 'raising'} the bitrate to {new:.0f} Mbit/s "
+                     f"({lost:.1f} frames/s lost)")
+            self._native.video({"bitrate_mbps": round(new, 1)})
 
     def _display_sync(self, m: dict) -> None:
         """The headset's frame timing to the driver, which moves its vsync clock
@@ -609,6 +645,9 @@ def main() -> None:
     ap.add_argument("--buffer", type=int, default=0, choices=(0, 1, 2),
                     help="frames the headset holds back: 0 = newest (lowest latency), 1 = smoother (+1 frame)")
     ap.add_argument("--fixed-bitrate", action="store_true", help="keep --bitrate even when the network is slower")
+    ap.add_argument("--udp-video", action="store_true",
+                    help="frames and sound over UDP with parity (native data path, experimental)")
+    ap.add_argument("--fec", type=int, default=30, help="UDP video: parity packets per 100 (keyframes get twice)")
     ap.add_argument("--native", default="auto", choices=("auto", "on", "off"),
                     help="data path in vhmd-link-relay (auto: when built) or in Python (off)")
     ap.add_argument("--fixed-latency", action="store_true",
@@ -630,7 +669,8 @@ def main() -> None:
         eye_width=args.eye_width, video_source=args.video_source, encoder=args.encoder, buffer=args.buffer,
         adaptive=not args.fixed_bitrate, sync=not args.no_sync, sync_target_ms=args.sync_target_ms,
         refresh=args.refresh, encoder_backend=args.driver_encoder, auto_latency=not args.fixed_latency,
-        predict=not args.no_predict, eye_scale=args.eye_scale, native=args.native),
+        predict=not args.no_predict, eye_scale=args.eye_scale, native=args.native, udp_video=args.udp_video,
+        fec=args.fec),
         log=lambda m: print(m, flush=True))
     bridge.start()
     try:

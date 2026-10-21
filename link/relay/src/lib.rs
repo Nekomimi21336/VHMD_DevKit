@@ -12,6 +12,11 @@
 //!   the driver's encoder (127.0.0.1:39583), sends the settings line, and
 //!   forwards the messages unchanged; the bitrate follows the network (lower
 //!   when sending blocks, back up when it does not).
+//! - Video over UDP (optional, "transport": "udp"): frames and sound go as UDP
+//!   packets with parity (proto::udp) to the headset's "video_udp_port"; the
+//!   TCP connection keeps the configuration. The headset's
+//!   {"type":"link_request","keyframe":true} (a frame it could not rebuild)
+//!   goes straight to the driver as a keyframe request.
 //!
 //! It runs as its own program or, preferably, inside the PC app's process as a
 //! DLL (vhmdlinkrelay.dll, `vhmd_link_relay_start`): then the network ports
@@ -52,11 +57,24 @@ struct VideoSettings {
     encoder: String,
     eye_width: i64,
     adaptive: bool,
+    udp: bool,      // frames and sound over UDP with parity
+    udp_port: u16,  // the headset's port for them
+    fec: u32,       // parity fragments per 100 data fragments
 }
 
 impl Default for VideoSettings {
     fn default() -> Self {
-        VideoSettings { bitrate: 40.0, codec: "hevc".into(), buffer: 0, encoder: "auto".into(), eye_width: 0, adaptive: true }
+        VideoSettings {
+            bitrate: 40.0,
+            codec: "hevc".into(),
+            buffer: 0,
+            encoder: "auto".into(),
+            eye_width: 0,
+            adaptive: true,
+            udp: false,
+            udp_port: 0,
+            fec: 20,
+        }
     }
 }
 
@@ -70,6 +88,8 @@ struct Stats {
     relay_ms: Vec<f64>,
     forward_us: Vec<f64>,
     last: String,
+    udp_packets: u64,
+    keyframe_requests: u64,
 }
 
 enum Peer {
@@ -91,6 +111,7 @@ struct State {
     quit: AtomicBool,
     started: Instant,
     haptics: AtomicU64,
+    last_key_request: Mutex<Option<Instant>>,
 }
 
 struct Ctx {
@@ -143,12 +164,31 @@ impl Ctx {
             Ok(t) => t,
             Err(_) => return,
         };
-        let own = text.contains("\"type\":\"headset\"") || text.contains("\"type\":\"link_stats\"") || text.contains("\"type\":\"link_timing\"");
+        let own = text.contains("\"type\":\"headset\"")
+            || text.contains("\"type\":\"link_stats\"")
+            || text.contains("\"type\":\"link_timing\"")
+            || text.contains("\"type\":\"link_request\"");
         let out: std::borrow::Cow<str> = if own {
             let mut rest = String::with_capacity(text.len());
             rest.push('[');
             for obj in array_objects(text) {
                 match message_type(obj).as_deref() {
+                    Some("link_request") => {
+                        // Lost a frame it could not rebuild: a keyframe, now (not via the app).
+                        // At most one every 250 ms: a keyframe takes a moment to arrive.
+                        let mut last = self.st.last_key_request.lock().unwrap();
+                        let due = last.map_or(true, |t| t.elapsed() > Duration::from_millis(250));
+                        if due {
+                            *last = Some(Instant::now());
+                        }
+                        drop(last);
+                        if due && json_bool(obj, "keyframe") == Some(true) {
+                            if let Some(d) = self.st.driver_stream.lock().unwrap().as_mut() {
+                                let _ = d.write_all(b"{\"keyframe\":true}\n");
+                            }
+                            self.st.stats.lock().unwrap().keyframe_requests += 1;
+                        }
+                    }
                     Some("headset") | Some("link_stats") | Some("link_timing") => self.event("MSG", obj),
                     _ => {
                         if rest.len() > 1 {
@@ -177,27 +217,8 @@ impl Ctx {
 }
 
 // -- socket options -------------------------------------------------------------
-#[cfg(windows)]
 fn set_sndbuf(s: &TcpStream, bytes: i32) {
-    use std::os::windows::io::AsRawSocket;
-    #[link(name = "ws2_32")]
-    extern "system" {
-        fn setsockopt(s: usize, level: i32, name: i32, val: *const i32, len: i32) -> i32;
-    }
-    unsafe {
-        setsockopt(s.as_raw_socket() as usize, 0xffff, 0x1001, &bytes, 4);
-    }
-}
-
-#[cfg(unix)]
-fn set_sndbuf(s: &TcpStream, bytes: i32) {
-    use std::os::unix::io::AsRawFd;
-    extern "C" {
-        fn setsockopt(s: i32, level: i32, name: i32, val: *const i32, len: u32) -> i32;
-    }
-    unsafe {
-        setsockopt(s.as_raw_fd(), 1, 7, &bytes, 4); // SOL_SOCKET, SO_SNDBUF (Linux)
-    }
+    set_socket_buffer(s, true, bytes);
 }
 
 // -- start ------------------------------------------------------------------------
@@ -260,6 +281,7 @@ pub fn start(cfg: Config) -> Result<u16, String> {
         quit: AtomicBool::new(false),
         started: Instant::now(),
         haptics: AtomicU64::new(0),
+        last_key_request: Mutex::new(None),
     });
     let ctx = Arc::new(Ctx {
         st: st.clone(),
@@ -402,7 +424,7 @@ pub fn start(cfg: Config) -> Result<u16, String> {
             let json = format!(
                 "{{\"msgs\":{},\"bytes\":{},\"video_in\":{},\"video_out\":{},\"video_bytes\":{},\"relay_ms\":[{ra:.3},{rp:.3},{rm:.3}],\
                  \"forward_us\":[{fa:.1},{fm:.1}],\"link\":{link},\"last_seen_s\":{seen:.2},\"video_connected\":{},\"bitrate_now\":{:.1},\
-                 \"haptics\":{},\"uptime_s\":{:.0},\"last\":{}}}",
+                 \"haptics\":{},\"uptime_s\":{:.0},\"udp_packets\":{},\"keyframe_requests\":{},\"last\":{}}}",
                 stats.msgs,
                 stats.bytes,
                 stats.video_in,
@@ -412,6 +434,8 @@ pub fn start(cfg: Config) -> Result<u16, String> {
                 *c.st.bitrate_now.lock().unwrap(),
                 c.st.haptics.load(Ordering::Relaxed),
                 c.st.started.elapsed().as_secs_f64(),
+                stats.udp_packets,
+                stats.keyframe_requests,
                 json_quote(&stats.last),
             );
             c.event("STATS", &json);
@@ -516,11 +540,27 @@ fn apply_video_settings(ctx: &Ctx, p: &str) {
     if let Some(a) = json_bool(p, "adaptive") {
         v.adaptive = a;
     }
+    if let Some(t) = json_string(p, "transport") {
+        v.udp = t == "udp";
+    }
+    if let Some(port) = json_number(p, "udp_port") {
+        v.udp_port = port as u16;
+    }
+    if let Some(f) = json_number(p, "fec") {
+        v.fec = (f as u32).min(100);
+    }
+    if json_bool(p, "keyframe") == Some(true) {
+        if let Some(d) = ctx.st.driver_stream.lock().unwrap().as_mut() {
+            let _ = d.write_all(b"{\"keyframe\":true}\n");
+        }
+    }
     let restart = json_bool(p, "restart").unwrap_or(false)
         || v.codec != old.codec
         || v.buffer != old.buffer
         || v.encoder != old.encoder
-        || v.eye_width != old.eye_width;
+        || v.eye_width != old.eye_width
+        || v.udp != old.udp
+        || (v.udp && (v.udp_port != old.udp_port || v.fec != old.fec));
     let bitrate_changed = (v.bitrate - old.bitrate).abs() > 0.01;
     let new_bitrate = v.bitrate;
     drop(v);
@@ -569,6 +609,17 @@ fn relay_video(c: &Ctx, mut conn: TcpStream) -> std::io::Result<()> {
     drv.write_all(settings.as_bytes())?;
     *c.st.driver_stream.lock().unwrap() = Some(drv.try_clone()?);
     c.log(&format!("video: from the driver's encoder ({})", settings.trim()));
+    // Frames and sound over UDP (with parity) when the headset asked for it.
+    let udp = if v.udp && v.udp_port != 0 {
+        let to = SocketAddr::new(conn.peer_addr()?.ip(), v.udp_port);
+        let sock = UdpSocket::bind(SocketAddr::new(conn.local_addr()?.ip(), 0))?;
+        set_socket_buffer(&sock, true, 8 << 20);
+        c.log(&format!("video: frames over UDP to {to} with {}% parity", v.fec));
+        Some((sock, to, udp::Packetizer::new(udp::DEFAULT_FRAG, v.fec)))
+    } else {
+        None
+    };
+    let mut udp = udp;
 
     let mut reader = BufReader::with_capacity(1 << 20, drv);
     let mut msg: Vec<u8> = Vec::with_capacity(1 << 20);
@@ -587,7 +638,18 @@ fn relay_video(c: &Ctx, mut conn: TcpStream) -> std::io::Result<()> {
             c.log(&format!("video: {}", String::from_utf8_lossy(&msg[HEADER_SIZE..])));
         }
         let t = Instant::now();
-        conn.write_all(&msg)?;
+        match udp.as_mut() {
+            Some((sock, to, pk)) if h.kind == KIND_FRAME || h.kind == KIND_AUDIO => {
+                // Keyframes matter most (everything after needs them): twice the parity.
+                let fec = if h.flags & 2 != 0 { (pk.fec * 2).clamp(40, 100) } else { pk.fec };
+                let packets = pk.packets_with(&msg, fec, h.kind as u8);
+                c.st.stats.lock().unwrap().udp_packets += packets.len() as u64;
+                for p in packets {
+                    let _ = sock.send_to(&p, *to);
+                }
+            }
+            _ => conn.write_all(&msg)?,
+        }
         let now = Instant::now();
         blocked += (now - t).as_secs_f64();
         if h.kind == KIND_FRAME {

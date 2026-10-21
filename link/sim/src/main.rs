@@ -16,8 +16,14 @@
 //!   (bridge / relay, SteamVR, render, encode, transit),
 //! - look-ahead: like the app, when the PC asks for it ("predict").
 //!
-//!   vhmd-link-sim [--pc ADDR] [--usb] [--seconds N] [--rate HZ]
-//!                 [--motion turn|still] [--save FILE] [--check] [--snapshot FILE.png]
+//! Video over UDP (--udp): asks for frames and sound as UDP packets with parity
+//! (link/proto udp), rebuilds lost packets, and after a frame it could not
+//! rebuild skips frames until a keyframe and asks the PC for one, like the app.
+//! --loss PCT drops that share of the packets on purpose (--burst N: N in a row).
+//!
+//!   vhmd-link-sim [--pc ADDR] [--usb] [--udp] [--loss PCT] [--burst N]
+//!                 [--seconds N] [--rate HZ] [--motion turn|still]
+//!                 [--save FILE] [--check] [--snapshot FILE.png]
 //!                 [--edition NAME] [--no-info] [--json FILE] [--quiet]
 
 use std::collections::VecDeque;
@@ -47,6 +53,9 @@ struct Opts {
     info: bool,
     json: Option<String>,
     quiet: bool,
+    udp: bool,
+    loss: f64,
+    burst: u32,
 }
 
 fn parse_args() -> Opts {
@@ -63,6 +72,9 @@ fn parse_args() -> Opts {
         info: true,
         json: None,
         quiet: false,
+        udp: false,
+        loss: 0.0,
+        burst: 1,
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -87,6 +99,9 @@ fn parse_args() -> Opts {
             "--no-info" => o.info = false,
             "--json" => o.json = Some(val(&mut i)),
             "--quiet" => o.quiet = true,
+            "--udp" => o.udp = true,
+            "--loss" => o.loss = val(&mut i).parse().expect("--loss"),
+            "--burst" => o.burst = val(&mut i).parse().expect("--burst"),
             "-h" | "--help" => {
                 println!("{}", include_str!("main.rs").lines().take_while(|l| l.starts_with("//!")).map(|l| l.trim_start_matches("//!").strip_prefix(' ').unwrap_or("")).collect::<Vec<_>>().join("\n"));
                 std::process::exit(0);
@@ -186,6 +201,13 @@ struct Totals {
     dropped: u64,
     haptics: u64,
     status: String,
+    udp_packets: u64,
+    udp_dropped: u64, // dropped here on purpose (--loss)
+    udp_recovered: u64,
+    udp_lost: u64,
+    udp_lost_frames: u64,
+    skipped: u64,     // frames not shown while waiting for a keyframe
+    key_requests: u64,
     transit_sum: f64,
     transit_max: f64,
     pose_lat_sum: f64,
@@ -207,6 +229,10 @@ struct Shared {
     connected: bool,
     predict: bool,
     sent: VecDeque<Sent>,
+    last_index: u64,
+    out: Option<File>,
+    waiting_key: bool,
+    key_request: bool,
 }
 
 // -- finding the PC ---------------------------------------------------------------
@@ -268,6 +294,17 @@ fn main() {
         });
     }
 
+    // Video over UDP: a port of our own for the PC to send frames to.
+    let mut udp_video_port = 0u16;
+    if o.udp {
+        let vs = UdpSocket::bind("0.0.0.0:0").expect("udp video socket");
+        set_socket_buffer(&vs, false, 8 << 20);
+        udp_video_port = vs.local_addr().unwrap().port();
+        let (sh, st) = (shared.clone(), stop.clone());
+        let (loss, burst, quiet) = (o.loss, o.burst, o.quiet);
+        thread::spawn(move || udp_video_loop(vs, sh, st, loss, burst, quiet));
+    }
+
     // Video.
     {
         let (sh, st) = (shared.clone(), stop.clone());
@@ -293,7 +330,7 @@ fn main() {
     let mut have_frame = false;
     let mut predict_ms = 0f64;
     let mut late_ms = 0f64;
-    let mut prev_counts = [0u64; 6];
+    let mut prev_counts = [0u64; 8];
     let mut display_frames = 0u64;
     let mut link_stats = String::new();
     let mut lines = 0;
@@ -382,9 +419,10 @@ fn main() {
             msg.push_str(&format!(
                 ",{{\"type\":\"headset\",\"model\":\"VHMD Link Simulator\",\"refresh\":{:.1},\"render\":[1920,1920],\
                  \"fov\":[[-0.82903,0.82903,0.82903,-0.82903],[-0.82903,0.82903,0.82903,-0.82903]],\
-                 \"eyes\":[[-0.036,0,0,1,0,0,0],[0.036,0,0,1,0,0,0]],\"edition\":{},\"version\":\"0.6.0\"}}",
+                 \"eyes\":[[-0.036,0,0,1,0,0,0],[0.036,0,0,1,0,0,0]],\"edition\":{},\"version\":\"0.6.0\"{}}}",
                 o.rate,
-                json_quote(&o.edition)
+                json_quote(&o.edition),
+                if udp_video_port != 0 { format!(",\"video_udp_port\":{udp_video_port}") } else { String::new() }
             ));
             if !link_stats.is_empty() {
                 msg.push(',');
@@ -405,6 +443,14 @@ fn main() {
             pc_sum = 0.0;
             ps_sum = 0.0;
             ph_n = 0;
+        }
+        {
+            let mut s = shared.lock().unwrap();
+            if s.key_request {
+                s.key_request = false;
+                s.totals.key_requests += 1;
+                msg.push_str(",{\"type\":\"link_request\",\"keyframe\":true}");
+            }
         }
         msg.push(']');
         let sent_us = now_us();
@@ -433,15 +479,18 @@ fn main() {
             let s = shared.lock().unwrap();
             // Counts over these 2 s, from the running totals.
             let t = &s.totals;
-            let now_counts = [display_frames, t.frames, t.shown, t.repeats, t.dropped, t.audio_packets];
+            let now_counts = [display_frames, t.frames, t.shown, t.repeats, t.dropped, t.audio_packets, t.udp_lost_frames, t.udp_recovered];
             let d: Vec<f64> = now_counts.iter().zip(prev_counts.iter()).map(|(a, b)| (a - b) as f64 / secs).collect();
             prev_counts = now_counts;
             link_stats = format!(
                 "{{\"type\":\"link_stats\",\"display\":{:.1},\"received\":{:.1},\"decoded\":{:.1},\"shown\":{:.1},\"repeats\":{:.1},\
                  \"dropped\":{:.1},\"buffer\":0,\"wait_ms\":{wa:.1},\"wait_p95_ms\":{wp:.1},\"reprojected\":100,\"audio_packets\":{:.1},\
-                 \"audio_underruns\":0,\"decode_ms\":0,\"decode_max_ms\":0,\"predict_ms\":{:.1},\"late_ms\":{late_ms:.1}}}",
+                 \"audio_underruns\":0,\"decode_ms\":0,\"decode_max_ms\":0,\"predict_ms\":{:.1},\"late_ms\":{late_ms:.1},\
+                 \"udp_lost\":{:.2},\"udp_recovered\":{:.2}}}",
                 d[0], d[1], d[1], d[2], d[3], d[4], d[5],
-                if s.predict { predict_ms } else { 0.0 }
+                if s.predict { predict_ms } else { 0.0 },
+                d[6],
+                d[7]
             );
         }
         if last_print.elapsed() >= Duration::from_secs(1) {
@@ -502,7 +551,7 @@ fn main() {
         "{{\"seconds\":{secs:.1},\"display_frames\":{display_frames},\"codec\":{},\"width\":{},\"height\":{},\"frames\":{},\"fps\":{:.2},\
          \"mbit_s\":{:.2},\"lost\":{},\"out_of_order\":{},\"transit_ms\":{:.3},\"transit_max_ms\":{:.3},\"pose_to_frame_ms\":{:.2},\
          \"pose_to_frame_max_ms\":{:.2},\"shown\":{},\"repeats\":{},\"dropped\":{},\"shown_per_s\":{:.2},\"wait_ms\":{:.2},\
-         \"audio_packets\":{},\"audio_format\":{},\"haptics\":{},\"look_ahead_ms\":{:.1},\"late_ms\":{late_ms:.1},\"decode\":{},\"pc_status\":{},\"started_us\":{start_us}}}",
+         \"audio_packets\":{},\"audio_format\":{},\"haptics\":{},\"udp_packets\":{},\"udp_dropped\":{},\"udp_recovered\":{},\"udp_lost\":{},\"skipped_frames\":{},\"keyframe_requests\":{},\"look_ahead_ms\":{:.1},\"late_ms\":{late_ms:.1},\"decode\":{},\"pc_status\":{},\"started_us\":{start_us}}}",
         json_quote(&t.codec),
         t.width,
         t.height,
@@ -523,6 +572,12 @@ fn main() {
         t.audio_packets,
         json_quote(&t.audio_format),
         t.haptics,
+        t.udp_packets,
+        t.udp_dropped,
+        t.udp_recovered,
+        t.udp_lost,
+        t.skipped,
+        t.key_requests,
         if s.predict { predict_ms } else { 0.0 },
         json_quote(&decode),
         json_quote(&t.status),
@@ -578,8 +633,7 @@ fn back_message(sh: &Arc<Mutex<Shared>>, text: &str) {
 }
 
 fn video_loop(pc: IpAddr, sh: Arc<Mutex<Shared>>, stop: Arc<AtomicBool>, save: Option<String>, quiet: bool) {
-    let mut out = save.as_ref().and_then(|p| File::create(p).ok());
-    let mut last_index = 0u64;
+    sh.lock().unwrap().out = save.as_ref().and_then(|p| File::create(p).ok());
     while !stop.load(Ordering::Relaxed) {
         let mut conn = match TcpStream::connect_timeout(&(pc, VIDEO_PORT).into(), Duration::from_millis(500)) {
             Ok(c) => c,
@@ -606,87 +660,170 @@ fn video_loop(pc: IpAddr, sh: Arc<Mutex<Shared>>, stop: Arc<AtomicBool>, save: O
             if h.size > 0 && !matches!(read_full(&mut conn, &mut payload, &stop), Ok(true)) {
                 break;
             }
-            let arrived = Instant::now();
-            let arrived_us = now_us();
             let mut s = sh.lock().unwrap();
             s.connected = true;
-            match h.kind {
-                KIND_CONFIG => {
-                    let text = String::from_utf8_lossy(&payload).into_owned();
-                    s.totals.configs += 1;
-                    s.totals.codec = json_string(&text, "codec").unwrap_or_default();
-                    s.totals.width = json_number(&text, "width").unwrap_or(0.0) as u64;
-                    s.totals.height = json_number(&text, "height").unwrap_or(0.0) as u64;
-                    if !quiet {
-                        println!("video: {} {}x{}", s.totals.codec, s.totals.width, s.totals.height);
-                    }
-                }
-                KIND_FRAME => {
-                    s.totals.frames += 1;
-                    s.totals.bytes += h.size as u64;
-                    s.w_frames += 1;
-                    s.w_bytes += h.size as u64;
-                    if last_index != 0 && h.index != 0 {
-                        if h.index > last_index + 1 {
-                            s.totals.lost += h.index - last_index - 1;
-                        } else if h.index <= last_index {
-                            s.totals.out_of_order += 1;
-                        }
-                    }
-                    if h.index != 0 {
-                        last_index = h.index;
-                    }
-                    let transit = (arrived_us as f64 - h.time_us as f64) / 1000.0;
-                    s.transit.add(transit);
-                    s.totals.transit_sum += transit;
-                    s.totals.transit_max = s.totals.transit_max.max(transit);
-                    let pose = h.pose_valid().then(|| Pose {
-                        p: [h.pose[0] as f64, h.pose[1] as f64, h.pose[2] as f64],
-                        q: [h.pose[3] as f64, h.pose[4] as f64, h.pose[5] as f64, h.pose[6] as f64],
-                    });
-                    // Pose -> frame: when was the pose this frame was rendered with sent?
-                    if let Some(rp) = pose {
-                        let mut best: Option<(u64, f64)> = None;
-                        let mut moving = false;
-                        let n = s.sent.len();
-                        for (i, x) in s.sent.iter().enumerate() {
-                            let d = ((x.pose.p[0] - rp.p[0]).powi(2) + (x.pose.p[1] - rp.p[1]).powi(2) + (x.pose.p[2] - rp.p[2]).powi(2)).sqrt()
-                                + 0.05 * angle_between(&x.pose.q, &rp.q);
-                            if best.map_or(true, |(_, bd)| d < bd) {
-                                best = Some((x.sent_us, d));
-                                moving = i > 0 && i < n && angle_between(&x.pose.q, &s.sent[i - 1].pose.q) > 0.0007;
-                            }
-                        }
-                        if let Some((sent_us, d)) = best {
-                            if moving && d < 0.002 {
-                                let lat = (arrived_us as f64 - sent_us as f64) / 1000.0;
-                                s.pose_lat.add(lat);
-                                s.totals.pose_lat_sum += lat;
-                                s.totals.pose_lat_n += 1;
-                                s.totals.pose_lat_max = s.totals.pose_lat_max.max(lat);
-                            }
-                        }
-                    }
-                    s.queue.push_back(Arrived { index: h.index, arrived, arrived_us, pose });
-                    while s.queue.len() > 8 {
-                        s.queue.pop_front();
-                    }
-                    if let Some(f) = out.as_mut() {
-                        let _ = f.write_all(&payload);
-                    }
-                }
-                KIND_AUDIO => {
-                    s.totals.audio_packets += 1;
-                    s.w_audio += 1;
-                }
-                KIND_AUDIO_FORMAT => s.totals.audio_format = String::from_utf8_lossy(&payload).into_owned(),
-                _ => {}
-            }
+            on_message(&mut s, &h, &payload, quiet);
         }
         sh.lock().unwrap().connected = false;
         if !quiet {
             println!("video: connection ended; reconnecting");
         }
+    }
+}
+
+/// Frames and sound over UDP: packets put back together (lost ones rebuilt
+/// from the parity); a frame that cannot be: wait for a keyframe and ask for one.
+fn udp_video_loop(sock: UdpSocket, sh: Arc<Mutex<Shared>>, stop: Arc<AtomicBool>, loss: f64, burst: u32, quiet: bool) {
+    sock.set_read_timeout(Some(Duration::from_millis(50))).ok();
+    let mut r = udp::Reassembler::default();
+    let mut buf = vec![0u8; 65536];
+    let mut rng: u64 = 0x9E37_79B9_7F4A_7C15 ^ now_us();
+    let mut burst_left = 0u32;
+    let mut key_asked = Instant::now();
+    while !stop.load(Ordering::Relaxed) {
+        let got = sock.recv_from(&mut buf);
+        let now = Instant::now();
+        if let Ok((n, _)) = got {
+            // Losses on purpose, to try the parity and the keyframe recovery.
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            let drop = if burst_left > 0 {
+                burst_left -= 1;
+                true
+            } else if (rng % 1_000_000) as f64 / 10_000.0 < loss {
+                burst_left = burst.saturating_sub(1);
+                true
+            } else {
+                false
+            };
+            if drop {
+                sh.lock().unwrap().totals.udp_dropped += 1;
+            } else if let Some(msg) = r.push(&buf[..n], now) {
+                // A frame completing gives up older unfinished ones: note those
+                // losses first, so this frame already waits for a keyframe.
+                note_losses(&mut r, &sh, now, &mut key_asked);
+                if msg.len() >= HEADER_SIZE {
+                    let hb: &[u8; HEADER_SIZE] = msg[..HEADER_SIZE].try_into().unwrap();
+                    if let Some(h) = Header::parse(hb) {
+                        let mut s = sh.lock().unwrap();
+                        s.connected = true;
+                        on_message(&mut s, &h, &msg[HEADER_SIZE..], quiet);
+                    }
+                }
+            }
+        }
+        r.expire(now);
+        note_losses(&mut r, &sh, now, &mut key_asked);
+        let mut s = sh.lock().unwrap();
+        s.totals.udp_packets = r.packets;
+        s.totals.udp_recovered = r.recovered;
+    }
+}
+
+fn note_losses(r: &mut udp::Reassembler, sh: &Arc<Mutex<Shared>>, now: Instant, key_asked: &mut Instant) {
+    let lost = r.take_lost();
+    let mut s = sh.lock().unwrap();
+    {
+        s.totals.udp_lost += lost.len() as u64;
+        s.totals.udp_lost_frames += lost.iter().filter(|&&(_, k)| k as u32 == KIND_FRAME).count() as u64;
+        // A lost frame: the decoder needs a keyframe (a lost sound packet does not).
+        if lost.iter().any(|&(_, kind)| kind as u32 == KIND_FRAME) && !s.waiting_key {
+            s.waiting_key = true;
+            s.key_request = true;
+            *key_asked = now;
+        }
+        // Still waiting (the keyframe may have been lost too): ask again.
+        if s.waiting_key && now - *key_asked > Duration::from_millis(250) {
+            s.key_request = true;
+            *key_asked = now;
+        }
+    }
+}
+
+/// One video message (from TCP or rebuilt from UDP packets).
+fn on_message(s: &mut Shared, h: &Header, payload: &[u8], quiet: bool) {
+    let arrived = Instant::now();
+    let arrived_us = now_us();
+    match h.kind {
+        KIND_CONFIG => {
+            let text = String::from_utf8_lossy(payload).into_owned();
+            s.totals.configs += 1;
+            s.totals.codec = json_string(&text, "codec").unwrap_or_default();
+            s.totals.width = json_number(&text, "width").unwrap_or(0.0) as u64;
+            s.totals.height = json_number(&text, "height").unwrap_or(0.0) as u64;
+            if !quiet {
+                println!("video: {} {}x{}", s.totals.codec, s.totals.width, s.totals.height);
+            }
+        }
+        KIND_FRAME => {
+            // After a lost frame, the decoder needs a keyframe: skip until one.
+            if s.waiting_key {
+                if h.flags & 2 == 0 {
+                    s.totals.skipped += 1;
+                    return;
+                }
+                s.waiting_key = false;
+            }
+            s.totals.frames += 1;
+            s.totals.bytes += h.size as u64;
+            s.w_frames += 1;
+            s.w_bytes += h.size as u64;
+            let last_index = s.last_index;
+            if last_index != 0 && h.index != 0 {
+                if h.index > last_index + 1 {
+                    s.totals.lost += h.index - last_index - 1;
+                } else if h.index <= last_index {
+                    s.totals.out_of_order += 1;
+                }
+            }
+            if h.index != 0 {
+                s.last_index = h.index;
+            }
+            let transit = (arrived_us as f64 - h.time_us as f64) / 1000.0;
+            s.transit.add(transit);
+            s.totals.transit_sum += transit;
+            s.totals.transit_max = s.totals.transit_max.max(transit);
+            let pose = h.pose_valid().then(|| Pose {
+                p: [h.pose[0] as f64, h.pose[1] as f64, h.pose[2] as f64],
+                q: [h.pose[3] as f64, h.pose[4] as f64, h.pose[5] as f64, h.pose[6] as f64],
+            });
+            // Pose -> frame: when was the pose this frame was rendered with sent?
+            if let Some(rp) = pose {
+                let mut best: Option<(u64, f64)> = None;
+                let mut moving = false;
+                for (i, x) in s.sent.iter().enumerate() {
+                    let d = ((x.pose.p[0] - rp.p[0]).powi(2) + (x.pose.p[1] - rp.p[1]).powi(2) + (x.pose.p[2] - rp.p[2]).powi(2)).sqrt()
+                        + 0.05 * angle_between(&x.pose.q, &rp.q);
+                    if best.map_or(true, |(_, bd)| d < bd) {
+                        best = Some((x.sent_us, d));
+                        moving = i > 0 && angle_between(&x.pose.q, &s.sent[i - 1].pose.q) > 0.0007;
+                    }
+                }
+                if let Some((sent_us, d)) = best {
+                    if moving && d < 0.002 {
+                        let lat = (arrived_us as f64 - sent_us as f64) / 1000.0;
+                        s.pose_lat.add(lat);
+                        s.totals.pose_lat_sum += lat;
+                        s.totals.pose_lat_n += 1;
+                        s.totals.pose_lat_max = s.totals.pose_lat_max.max(lat);
+                    }
+                }
+            }
+            s.queue.push_back(Arrived { index: h.index, arrived, arrived_us, pose });
+            while s.queue.len() > 8 {
+                s.queue.pop_front();
+            }
+            if let Some(f) = s.out.as_mut() {
+                let _ = f.write_all(payload);
+            }
+        }
+        KIND_AUDIO => {
+            s.totals.audio_packets += 1;
+            s.w_audio += 1;
+        }
+        KIND_AUDIO_FORMAT => s.totals.audio_format = String::from_utf8_lossy(payload).into_owned(),
+        _ => {}
     }
 }
 

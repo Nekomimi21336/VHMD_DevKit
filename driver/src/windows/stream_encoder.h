@@ -15,7 +15,8 @@
 // time, render pose) and the payload. The client may first send one line of
 // JSON with settings: {"bitrate_mbps": 30, "codec": "h264"|"hevc"|"av1" (AV1 falls back to HEVC),
 // "eye_width": 1920, "fps": 72, "encoder": "auto"|"amf"|"mf"}; later lines
-// {"bitrate_mbps": 25} change the bitrate while streaming. Encoding only runs
+// {"bitrate_mbps": 25} change the bitrate while streaming, {"keyframe": true}
+// asks for a keyframe. Frames carry flag bit 1 when they are keyframes. Encoding only runs
 // while a client is connected. Encoder: on AMD GPUs AMF in its ultra-low-latency
 // usage (windows/amf_encoder.h), else / as fallback the Media Foundation path.
 //

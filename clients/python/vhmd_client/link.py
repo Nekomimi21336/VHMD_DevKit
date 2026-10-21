@@ -45,7 +45,7 @@ RUN_NAME = "VHMD Link"
 QUALITY = (("low", 20.0), ("standard", 40.0), ("high", 60.0), ("max", 80.0))
 DEFAULTS = {"quality": "standard", "codec": "hevc", "buffer": 0, "refresh": 72, "auto_steamvr": True,
             # performance settings (each trades some quality or safety for less latency)
-            "auto_latency": True, "predict": True, "amf": True, "eye_scale": 1.0,
+            "auto_latency": True, "predict": True, "amf": True, "eye_scale": 1.0, "udp_video": False, "fec": 30,
             "dev_view": False}
 
 TEXT = {
@@ -78,6 +78,9 @@ TEXT = {
         "perf_amf": "AMD ultra-low-latency encoder (AMF)",
         "perf_amf_hint": "About 2 ms less per frame on AMD GPUs. Off: Windows' standard encoder (Media Foundation).",
         "perf_scale": "Resolution", "s100": "100% (sharpest)", "s85": "85%", "s70": "70% (fastest)",
+        "perf_udp_video": "Send the picture over UDP with error correction (experimental)",
+        "perf_udp_video_hint": "A lost Wi-Fi packet no longer holds up the picture; lost parts are rebuilt. Uses more bandwidth. Needs the native data path.",
+        "perf_fec": "Error correction", "f20": "20% (light)", "f30": "30%", "f50": "50% (strong; bursty Wi-Fi)",
         "refresh": "Refresh rate", "r72": "72 Hz", "r90": "90 Hz (more GPU load)",
         "dev_view": "Developer view", "startup": "Open when Windows starts",
         "take_back": "Give control to the headset", "fps_tool": "Keyboard/mouse control", "log": "Log",
@@ -116,6 +119,9 @@ TEXT = {
         "perf_amf": "AMD の超低遅延エンコーダー(AMF)",
         "perf_amf_hint": "AMD の GPU で 1 フレーム約 2 ms 速い。切ると Windows 標準のエンコーダー(Media Foundation)。",
         "perf_scale": "解像度", "s100": "100%(一番きれい)", "s85": "85%", "s70": "70%(一番速い)",
+        "perf_udp_video": "映像を UDP と誤り訂正で送る(実験的)",
+        "perf_udp_video_hint": "Wi-Fi でパケットが落ちても映像が待たされず、落ちた分は組み立て直す。通信量が増える。ネイティブのデータの通り道が必要。",
+        "perf_fec": "誤り訂正", "f20": "20%(軽い)", "f30": "30%", "f50": "50%(強い・電波が途切れがち)",
         "refresh": "リフレッシュレート", "r72": "72 Hz", "r90": "90 Hz(GPU の負荷が増える)",
         "dev_view": "開発者向けの表示", "startup": "Windows の起動時に開く",
         "take_back": "操作をヘッドセットに戻す", "fps_tool": "キーボード・マウス操作", "log": "ログ",
@@ -245,7 +251,8 @@ class LinkApp:
                                            buffer=int(self.s["buffer"]), refresh=float(self.s["refresh"]),
                                            auto_latency=bool(self.s["auto_latency"]), predict=bool(self.s["predict"]),
                                            encoder_backend="auto" if self.s["amf"] else "mf",
-                                           eye_scale=float(self.s["eye_scale"])),
+                                           eye_scale=float(self.s["eye_scale"]),
+                                           udp_video=bool(self.s["udp_video"]), fec=int(self.s["fec"])),
                              log=self.log)
         try:
             self.bridge.start()
@@ -376,8 +383,9 @@ class LinkApp:
         self.b_var = self.combo(grid, 0, t["smooth"], [(0, t["b0"]), (1, t["b1"])], "buffer")
         self.s_var = self.combo(grid, 1, t["perf_scale"], [(1.0, t["s100"]), (0.85, t["s85"]), (0.7, t["s70"])],
                                 "eye_scale")
+        self.f_var = self.combo(grid, 2, t["perf_fec"], [(20, t["f20"]), (30, t["f30"]), (50, t["f50"])], "fec")
         self.perf_vars = {}
-        for key in ("auto_latency", "predict", "amf"):
+        for key in ("auto_latency", "predict", "amf", "udp_video"):
             var = tk.BooleanVar(value=bool(self.s[key]))
             ttk.Checkbutton(c, text=t["perf_" + key], style="Card.TCheckbutton", variable=var,
                             command=lambda k=key, v=var: self.set_perf(k, v.get())).pack(anchor="w", pady=(6, 0))
@@ -417,6 +425,10 @@ class LinkApp:
                 self.bridge.o.refresh = float(value)
                 self.log(f"refresh rate: {value} Hz")
                 return
+            if key == "fec":
+                self.bridge.set_video(fec=int(value))
+                self.log(f"error correction: {value}%")
+                return
             if key == "eye_scale":
                 self.bridge.set_video(eye_scale=float(value))
                 self.log(f"resolution: {float(value) * 100:.0f}%")
@@ -443,6 +455,8 @@ class LinkApp:
             self.bridge.o.predict = on           # told to the headset with the next status
         elif key == "amf":
             self.bridge.set_video(encoder_backend="auto" if on else "mf")
+        elif key == "udp_video":
+            self.bridge.set_video(udp=on)
         self.log(f"performance: {key} {'on' if on else 'off'}")
 
     # -- actions -----------------------------------------------------------------

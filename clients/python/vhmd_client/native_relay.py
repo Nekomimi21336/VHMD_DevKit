@@ -166,11 +166,14 @@ class NativeVideo:
     """VideoServer's interface over the relay's video path."""
 
     def __init__(self, relay: NativeRelay, bitrate: float, codec: str, buffer: int, encoder_backend: str,
-                 eye_width: int, eye_scale: float, adaptive: bool) -> None:
+                 eye_width: int, eye_scale: float, adaptive: bool, udp: bool = False, fec: int = 20) -> None:
         self.relay = relay
         self.bitrate, self.codec, self.buffer = bitrate, codec, buffer
         self.encoder_backend, self.eye_width, self.eye_scale, self.adaptive = encoder_backend, eye_width, eye_scale, adaptive
+        self.udp, self.fec = udp, fec          # frames over UDP with parity, when the headset offers a port
+        self.udp_port = 0                      # the headset's (its "headset" message: video_udp_port)
         self._sent_eye = None
+        self._sent_udp = None
         self.apply(restart=False)
 
     def _eye(self) -> int:
@@ -183,17 +186,25 @@ class NativeVideo:
             eye = max(640, int(eye * self.eye_scale) // 16 * 16)
         return eye
 
+    def _transport(self):
+        on = self.udp and self.udp_port > 0
+        return ("udp" if on else "tcp", self.udp_port if on else 0)
+
     def apply(self, restart: bool) -> None:
         eye = self._eye()
         self._sent_eye = eye
+        transport, port = self._transport()
+        self._sent_udp = (transport, port, self.fec)
         self.relay.video({"bitrate_mbps": self.bitrate, "codec": self.codec, "buffer": self.buffer,
                           "encoder": self.encoder_backend, "eye_width": eye, "adaptive": self.adaptive,
-                          "restart": restart})
+                          "transport": transport, "udp_port": port, "fec": self.fec, "restart": restart})
 
-    def headset_changed(self) -> None:
-        """The headset described itself: a new eye width takes a reconnect."""
-        if self._eye() != self._sent_eye:
-            self.apply(restart=False)   # the relay reconnects when the eye width changes
+    def headset_changed(self, info: dict) -> None:
+        """The headset described itself: a new eye width or UDP port takes a reconnect."""
+        self.udp_port = int(info.get("video_udp_port") or 0)
+        transport, port = self._transport()
+        if self._eye() != self._sent_eye or (transport, port, self.fec) != self._sent_udp:
+            self.apply(restart=False)   # the relay reconnects when these change
 
     @property
     def current(self) -> bool:
