@@ -7,3 +7,4 @@ tests/integration/results/
 .vs/
 build-linux/
 headset/.cache/
+link/target/

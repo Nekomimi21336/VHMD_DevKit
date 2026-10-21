@@ -3,6 +3,10 @@
 ## 未リリース
 
 ### 追加
+- **VHMD Link のネイティブ部分を別のソフトウェアとして `link/` に**(Rust、標準ライブラリだけ):
+  - `vhmd-link-sim`: PC の上で動くヘッドセットの代役。姿勢・表示の説明・統計・タイミングを送り、映像と音を受け取って 72 Hz の表示を模す。ドライバの送り出しから届くまで、姿勢を送ってからその姿勢で描かれた映像が届くまでを 1 つの時計で測り、`--check` で映像を ffmpeg で復号して確かめる。ヘッドセットなしで VHMD Link 全体を試せる。
+  - `vhmdlinkrelay.dll`(単独の `vhmd-link-relay` も): 姿勢・映像・振動・PC の検出のデータの通り道。PC のアプリが自分のプロセスに読み込むので、ファイアウォールに新しいプログラムとして聞かれない。Python が止まっても止まらない(Python のロックを 40 ms ずつ持つ負荷で: 新しい画像 63.4 → 71.4 回/秒、姿勢の転送の最大 366 → 0.5 ms)。`headset_bridge --native auto|on|off`。`VHMD Link.exe` に同梱。
+  - `tests/integration/link_load_test.py`: Python とネイティブの比較。
 - **パフォーマンス設定**(PC のアプリの「パフォーマンス」、`headset_bridge` の引数): 動き(遅れを最小に / なめらか)、解像度 100 / 85 / 70%(`--eye-scale`)、表示までの余裕をタイミングに合わせて詰める(待ち 5.46 → 4.32 ms、`--fixed-latency`)、動きを先読みする(ヘッドセットが実際の表示の遅れを測って姿勢を先の時刻で送る、`--no-predict`)、AMD の超低遅延エンコーダー(`--driver-encoder mf` で切る)。PC のアプリの画面は縦に長いときスクロールする。
 - **AMD の GPU では AMF の超低遅延モードで圧縮**(`driver/src/windows/amf_encoder.*`、AMF SDK v1.5.3 のヘッダーを `third_party/amf` に同梱、MIT)。3840 × 1920 の HEVC で Submit から送り出しまで 8.8 → 6.95 ms。H.264 / AV1 も対応。AMF が使えなければ Media Foundation に自動で戻る(`headset_bridge --driver-encoder auto|amf|mf`、ストリームの設定 `encoder`)。
 - **既存の環境との共存**: `python -m vhmd_client.mode off`(PC のアプリの「元の環境」)で VHMD のドライバを止め、VHMD が変えた SteamVR の設定を最初に記録した値に戻す(`%LOCALAPPDATA%\VHMD\original_steamvr.json`)。PC のアプリに「SteamVR の使い方: VHMD Link / PICO Connect / 元の環境」の切り替え。

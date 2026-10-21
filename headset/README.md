@@ -81,6 +81,16 @@ Pico 4 Ultra・Wi-Fi・HEVC 3840 × 1920・40 Mbit/s・72 Hz、1 フレームあ
 - Python の部分(中継・姿勢の転送)は 1 フレームあたり 0.15〜0.2 ms ほどで、全体(約 23 ms)の 1% 前後。CPU は 72 fps で 1 コアの約 5%。ここを Rust などに書き換えても縮むのは 0.2 ms ほど。
 - 全体の目安(1 フレーム、平均): 合成器 0.25 + 圧縮 6.95 + 中継 0.15 + Wi-Fi 数 ms + 復号 8.5 + 表示までの待ち 5.5 ≒ 23 ms(前は約 29 ms)。
 
+### ヘッドセットなしで試す・ネイティブのデータの通り道
+
+`link/`(Rust)に、ヘッドセットの代役 `vhmd-link-sim` と、データの通り道 `vhmdlinkrelay.dll` があります。詳しくは [link/README.md](../link/README.md)。
+
+```powershell
+cd link; cargo build --release; cd ..
+python -m vhmd_client.headset_bridge --usb-only --no-adb        # 別の窓で(Wi-Fi のヘッドセットは加わらない)
+link\target\release\vhmd-link-sim.exe --pc 127.0.0.1 --usb --seconds 30 --check
+```
+
 ### パフォーマンス設定
 
 画質や安定性と引き換えに遅れを減らすものは、PC のアプリの「パフォーマンス」で個別にオン・オフできます(`headset_bridge` では引数)。

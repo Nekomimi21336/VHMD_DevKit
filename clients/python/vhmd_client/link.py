@@ -503,6 +503,7 @@ class LinkApp:
         self.root.focus_force()
 
     def quit(self) -> None:
+        self.bridge.close()
         self.tray.stop()
         self.root.destroy()
 
@@ -604,7 +605,7 @@ class LinkApp:
                 f"underruns {h.get('audio_underruns', 0)}  decode {h.get('decode_ms', 0):.2f} ms "
                 f"(max {h.get('decode_max_ms', 0):.1f})",
                 f"{t['control']}: {t['anyone'] if control == 'any' else control}   {st['summary']}",
-                f"Relay  video +{st['relay_ms'][0]:.2f} ms (p99 {st['relay_ms'][1]:.2f}, max {st['relay_ms'][2]:.2f})   "
+                f"Relay  [{st['data_path']}]  video +{st['relay_ms'][0]:.2f} ms (p99 {st['relay_ms'][1]:.2f}, max {st['relay_ms'][2]:.2f})   "
                 f"pose +{st['forward_us'][0]:.0f} us (max {st['forward_us'][1]:.0f})",
                 f"Ahead  {h.get('predict_ms', 0):.1f} ms   shown {h.get('late_ms', 0):+.1f} ms after the predicted time",
             ]

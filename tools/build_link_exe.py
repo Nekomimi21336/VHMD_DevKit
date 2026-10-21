@@ -7,7 +7,9 @@ needed on the PC that runs it), with PyInstaller.
 
 The exe also runs the keyboard/mouse tool (`"VHMD Link.exe" --fps`). pyopenvr
 is bundled when it is installed (used to save SteamVR settings while it runs,
-and by the keyboard/mouse tool to show SteamVR's poses).
+and by the keyboard/mouse tool to show SteamVR's poses). The native data path
+(link/: vhmd-link-relay) is built with cargo when Rust is installed and bundled;
+without it the app uses its Python data path.
 """
 
 from __future__ import annotations
@@ -36,6 +38,13 @@ def main() -> None:
     sys.path.insert(0, str(CLIENTS))
     from vhmd_client.link import draw_icon
 
+    # The native relay (standard library only: builds offline).
+    relay = ROOT / "link" / "target" / "release" / ("vhmdlinkrelay.dll" if sys.platform == "win32" else "libvhmdlinkrelay.so")
+    if shutil.which("cargo"):
+        subprocess.run(["cargo", "build", "--release", "--offline", "-p", "vhmd-link-relay"], cwd=ROOT / "link", check=True)
+    if not relay.exists():
+        print("note: vhmd-link-relay not built (no Rust): the exe uses the Python data path")
+
     work = ROOT / "build" / "pyinstaller"
     work.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=work) as tmp:
@@ -49,6 +58,8 @@ def main() -> None:
                "--specpath", str(work),
                # Not used by the app; keeps the bundle small.
                "--exclude-module", "numpy", "--exclude-module", "PIL", "--exclude-module", "pytest"]
+        if relay.exists():
+            cmd += ["--add-binary", f"{relay};."]
         if importlib.util.find_spec("openvr") is not None:
             cmd += ["--collect-all", "openvr"]
         else:

@@ -16,6 +16,9 @@ controllers show as axes in SteamVR.
     python -m vhmd_client.headset_bridge [--usb-only] [--no-adb] [--no-video]
 
 The PC app (`python -m vhmd_client.link`) runs the same Bridge with a window.
+With the native relay built (link/: vhmd-link-relay, see native_relay.py),
+poses, video, haptics and discovery go through it instead of Python (--native
+auto|on|off).
 The network ports accept any device on the LAN: use it on a trusted network,
 or --usb-only.
 """
@@ -33,7 +36,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from . import headset_info
+from . import headset_info, native_relay
 from .client import DEFAULT_HOST, DEFAULT_PORT
 from .headset_stream import VIDEO_PORT, VideoServer
 
@@ -64,6 +67,7 @@ class BridgeOptions:
     auto_latency: bool = True     # frames wait on the headset only as long as their timing jitter needs
     predict: bool = True          # the headset sends poses predicted for when the PC's image will show
     eye_scale: float = 1.0        # video width per eye, share of the headset's (smaller: faster, softer)
+    native: str = "auto"          # the data path in vhmd-link-relay: "auto" (when built), "on", "off" (Python)
 
 
 class Stats:
@@ -154,6 +158,8 @@ class Bridge:
         self._replies: dict = {}
         self._reply_cv = threading.Condition()
         self._seq = 0
+        self._native: Optional[native_relay.NativeRelay] = None
+        self.data_path = "python"
 
     # -- setup ----------------------------------------------------------------
     def start(self) -> None:
@@ -161,6 +167,11 @@ class Bridge:
         if o.adb:
             self._adb_reverse()
         host = "127.0.0.1" if o.usb_only else "0.0.0.0"
+        if o.native != "off" and self._start_native(host):
+            self._thread(self._monitor)
+            if o.adb:
+                self._thread(self._adb_watch)
+            return
         if o.video:
             self.video = VideoServer(host=host, bitrate_mbps=o.bitrate, encoder=o.encoder, buffer=o.buffer,
                                      codec=o.codec, eye_width=o.eye_width, source=o.video_source,
@@ -190,6 +201,52 @@ class Bridge:
         self._thread(self._monitor)
         if o.adb:
             self._thread(self._adb_watch)
+
+    def _start_native(self, host: str) -> bool:
+        """The data path in vhmd-link-relay; False to use Python's (not built,
+        or it did not start and native is "auto")."""
+        exe = native_relay.find()
+        if exe is None:
+            if self.o.native == "on":
+                raise OSError("vhmd-link-relay not found (build it: cargo build --release in link/)")
+            return False
+        try:
+            self._native = native_relay.NativeRelay(exe, host, platform.node(), self._native_event)
+        except OSError as e:
+            if self.o.native == "on" or "already running" in str(e):
+                raise
+            self.log(f"native relay did not start ({e}); using the Python data path")
+            return False
+        o = self.o
+        self.link = native_relay.NativeLink(self._native)
+        if o.video:
+            self.video = native_relay.NativeVideo(self._native, o.bitrate, o.codec, o.buffer, o.encoder_backend,
+                                                  o.eye_width, o.eye_scale, o.adaptive)
+        self.data_path = f"native {self._native.kind}"
+        self.log(f"data path: native ({exe.name}); network: discovery on UDP {DISCOVERY_PORT}, poses on UDP / TCP "
+                 f"{o.port}, video on TCP {VIDEO_PORT}" + ("" if o.usb_only else " (any device on the LAN can connect)"))
+        return True
+
+    def _native_event(self, kind: str, payload: bytes) -> None:
+        if kind == "MSG":
+            try:
+                self._own_message(json.loads(payload))
+            except ValueError:
+                pass
+        elif kind == "REPLY":
+            self._on_reply(payload)
+        elif kind == "LOG":
+            self.log(payload.decode(errors="replace"))
+
+    def close(self) -> None:
+        if self._native:
+            self._native.close()
+
+    def _send_driver(self, data: bytes) -> None:
+        if self._native:
+            self._native.driver(data)
+        else:
+            self._udp.sendto(data, self._driver)
 
     def _adb_reverse(self, quiet: bool = False) -> bool:
         """USB: lets the headset reach this PC's ports as its own 127.0.0.1."""
@@ -252,7 +309,7 @@ class Bridge:
         with self._reply_cv:
             self._seq += 1
             seq = 900000 + self._seq
-        self._udp.sendto(json.dumps({"type": "config", "op": op, "seq": seq, **args}).encode(), self._driver)
+        self._send_driver(json.dumps({"type": "config", "op": op, "seq": seq, **args}).encode())
         with self._reply_cv:
             if not self._reply_cv.wait_for(lambda: seq in self._replies, timeout):
                 raise TimeoutError(f"no reply to '{op}' from the driver")
@@ -283,6 +340,7 @@ class Bridge:
             "sync_total_ms": self.sync_shift_total,
             "sync_target_ms": self.sync_target_ms,
             "summary": self.summary,
+            "data_path": self.data_path,
         }
 
     # -- headset -> driver ----------------------------------------------------
@@ -299,17 +357,24 @@ class Bridge:
                 msgs = []
             rest = [m for m in msgs if m.get("type") not in ("headset", "link_stats", "link_timing")]
             for m in msgs:
-                if m.get("type") == "headset":
-                    self.info = m
-                    headset_info.update(m, log=self.log)
-                elif m.get("type") == "link_stats":
-                    self.stats.headset = m
-                elif m.get("type") == "link_timing" and self.o.sync:
-                    self._display_sync(m)
+                self._own_message(m)
             data = json.dumps(rest, separators=(",", ":")).encode()
         self._udp.sendto(data, self._driver)
         self.stats.add(data)
         self._fwd_samples.append((time.perf_counter() - t0) * 1e6)
+
+    def _own_message(self, m: dict) -> None:
+        """The headset's own messages (from Python's or the native data path)."""
+        t = m.get("type")
+        if t == "headset":
+            self.info = m
+            headset_info.update(m, log=self.log)
+            if isinstance(self.video, native_relay.NativeVideo):
+                self.video.headset_changed()
+        elif t == "link_stats":
+            self.stats.headset = m
+        elif t == "link_timing" and self.o.sync:
+            self._display_sync(m)
 
     def _display_sync(self, m: dict) -> None:
         """The headset's frame timing to the driver, which moves its vsync clock
@@ -332,7 +397,7 @@ class Bridge:
             self.sync_target_ms = 0.0
         if req["slack_ms"] is None or req["period_ms"] is None:
             return
-        self._udp.sendto(json.dumps(req, separators=(",", ":")).encode(), self._driver)
+        self._send_driver(json.dumps(req, separators=(",", ":")).encode())
 
     def _accept(self, srv: socket.socket) -> None:
         while True:
@@ -395,19 +460,22 @@ class Bridge:
             if b'"haptic"' in data:
                 self.link.send(data)
             elif b'"seq"' in data:
-                try:
-                    reply = json.loads(data)
-                except ValueError:
-                    continue
-                if reply.get("seq") == -1:   # display_sync, not waited for
-                    self.sync_state = reply
-                    self.sync_shift_total += reply.get("shift_ms", 0.0) or 0.0
-                    continue
-                with self._reply_cv:
-                    self._replies[reply.get("seq")] = reply
-                    while len(self._replies) > 32:   # unanswered leftovers
-                        self._replies.pop(next(iter(self._replies)))
-                    self._reply_cv.notify_all()
+                self._on_reply(data)
+
+    def _on_reply(self, data: bytes) -> None:
+        try:
+            reply = json.loads(data)
+        except ValueError:
+            return
+        if reply.get("seq") == -1:   # display_sync, not waited for
+            self.sync_state = reply
+            self.sync_shift_total += reply.get("shift_ms", 0.0) or 0.0
+            return
+        with self._reply_cv:
+            self._replies[reply.get("seq")] = reply
+            while len(self._replies) > 32:   # unanswered leftovers
+                self._replies.pop(next(iter(self._replies)))
+            self._reply_cv.notify_all()
 
     # -- once a second ----------------------------------------------------------
     def _monitor(self) -> None:
@@ -418,15 +486,22 @@ class Bridge:
             time.sleep(max(0.0, 1.0 - (time.monotonic() - window)))
             now = time.monotonic()
             dt, window = max(0.001, now - window), now
-            n, b, last = self.stats.take()
-            fin = fout = vb = 0
-            if self.video:
-                fin, fout, vb = self.video.take_stats()
-            self.rates = {"msgs": round(n / dt), "kib": b / 1024 / dt, "video_in": round(fin / dt),
-                          "video_out": round(fout / dt), "mbps": vb * 8 / 1e6 / dt}
+            if self._native:
+                s = self._native.stats   # the relay's last second
+                n, last = int(s.get("msgs", 0)), s.get("last", "")
+                self.rates = {"msgs": n, "kib": s.get("bytes", 0) / 1024, "video_in": s.get("video_in", 0),
+                              "video_out": s.get("video_out", 0), "mbps": s.get("video_bytes", 0) * 8 / 1e6}
+                self.forward_us = tuple(s.get("forward_us") or (0.0, 0.0))
+            else:
+                n, b, last = self.stats.take()
+                fin = fout = vb = 0
+                if self.video:
+                    fin, fout, vb = self.video.take_stats()
+                self.rates = {"msgs": round(n / dt), "kib": b / 1024 / dt, "video_in": round(fin / dt),
+                              "video_out": round(fout / dt), "mbps": vb * 8 / 1e6 / dt}
+                fwd, self._fwd_samples = self._fwd_samples, []
+                self.forward_us = (sum(fwd) / len(fwd), max(fwd)) if fwd else (0.0, 0.0)
             self.summary = summary(last) if n else ""
-            fwd, self._fwd_samples = self._fwd_samples, []
-            self.forward_us = (sum(fwd) / len(fwd), max(fwd)) if fwd else (0.0, 0.0)
 
             # SteamVR and the driver: is it up, who has control of the HMD.
             if now - last_steamvr_check > 3.0:
@@ -534,6 +609,8 @@ def main() -> None:
     ap.add_argument("--buffer", type=int, default=0, choices=(0, 1, 2),
                     help="frames the headset holds back: 0 = newest (lowest latency), 1 = smoother (+1 frame)")
     ap.add_argument("--fixed-bitrate", action="store_true", help="keep --bitrate even when the network is slower")
+    ap.add_argument("--native", default="auto", choices=("auto", "on", "off"),
+                    help="data path in vhmd-link-relay (auto: when built) or in Python (off)")
     ap.add_argument("--fixed-latency", action="store_true",
                     help="frames wait a fixed 0.4 frame on the headset (default: as little as their jitter allows)")
     ap.add_argument("--no-predict", action="store_true", help="the headset sends poses for its own next frame only")
@@ -553,7 +630,7 @@ def main() -> None:
         eye_width=args.eye_width, video_source=args.video_source, encoder=args.encoder, buffer=args.buffer,
         adaptive=not args.fixed_bitrate, sync=not args.no_sync, sync_target_ms=args.sync_target_ms,
         refresh=args.refresh, encoder_backend=args.driver_encoder, auto_latency=not args.fixed_latency,
-        predict=not args.no_predict, eye_scale=args.eye_scale),
+        predict=not args.no_predict, eye_scale=args.eye_scale, native=args.native),
         log=lambda m: print(m, flush=True))
     bridge.start()
     try:

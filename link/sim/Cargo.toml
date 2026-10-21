@@ -1,0 +1,9 @@
+[package]
+name = "vhmd-link-sim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A VHMD Link headset on the PC, for testing the link without a headset"
+
+[dependencies]
+vhmd-link-proto = { path = "../proto" }

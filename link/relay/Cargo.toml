@@ -1,0 +1,17 @@
+[package]
+name = "vhmd-link-relay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "VHMD Link's data path between the headset and the VHMD driver"
+
+[dependencies]
+vhmd-link-proto = { path = "../proto" }
+
+[lib]
+name = "vhmdlinkrelay"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "vhmd-link-relay"
+path = "src/main.rs"

@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COMMON = [
     "README.md", "README.en.md", "README.zh-CN.md", "README.ko.md",
     "LICENSE", "THIRD_PARTY_NOTICES.md", "CHANGELOG.md",
-    "docs", "clients/python",
+    "docs", "clients/python", "link/Cargo.toml", "link/Cargo.lock", "link/proto", "link/relay", "link/sim", "link/README.md",
     "tests/integration",  # linux_check.py / soak_test.py etc., so testers need no clone
 ]
 TOOLS = {
@@ -78,6 +78,11 @@ def collect(platform: str, driver_dir: Path, apk_dir: Path | None = None,
                 files.append((f"headset/{name}", apk_dir / name))
             else:
                 print(f"note: {apk_dir / name} not built; not in the archive")
+    # VHMD Link's native programs: the headset simulator for testing without a
+    # headset (the relay is inside the PC app's folder).
+    sim = ROOT / "link" / "target" / "release" / ("vhmd-link-sim.exe" if platform == "win64" else "vhmd-link-sim")
+    if sim.exists() and (platform == "win64") == (sim.suffix == ".exe"):
+        files.append((f"tools/{sim.name}", sim))
     if platform == "win64" and exe_dir:
         if (exe_dir / "VHMD Link.exe").exists():
             for s in sorted(p for p in exe_dir.rglob("*") if p.is_file()):

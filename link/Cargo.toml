@@ -1,0 +1,20 @@
+# VHMD Link's native parts, separate from the VHMD driver:
+#   proto  - the PC <-> headset protocol (video framing, ports, small JSON helpers)
+#   relay  - vhmd-link-relay: the data path between the headset and the driver
+#            (poses, video, haptics); the PC app (Python) drives it
+#   sim    - vhmd-link-sim: a headset on the PC, for testing without one
+# Standard library only: builds offline.
+[workspace]
+members = ["proto", "relay", "sim"]
+resolver = "2"
+
+[workspace.package]
+version = "0.6.0"
+edition = "2021"
+license = "MIT"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
