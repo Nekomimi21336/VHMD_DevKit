@@ -137,6 +137,7 @@ HMD:
 ```
 
 - `curl`: 親指, 人差し指, 中指, 薬指, 小指 の曲げ 0(開き)〜1(握り)。`splay`: -1〜1(省略時 0)。OpenVR サンプル `handskeletonsimulation` の手モデルでボーンを生成します。
+- `pack`: `bones` と `positions` を小さくしたもの。31 ボーン、各 7 個のリトルエンディアン int16(回転 w x y z は 1/32767、位置 x y z は 0.1 mm)を base64 にした文字列。1 パケットに収まります(VHMD Link の手のトラッキングが使います)。
 - `bones`: OpenVR ハンドスケルトン(31 ボーン, `HandSkeletonBone` 順)の**親ボーン空間**の回転。`[w,x,y,z,px,py,pz]` で位置を同時指定するか、`positions` を別に渡せます(省略時は開いた手の参照位置)。
 - 最後の `skeleton` から 500 ms 以上何も来ない間は、`trigger`/`grip`/ボタンのタッチ状態から指の曲げを自動生成します(`driver/src/math/finger_curls.h`)。親指を下ろしてグリップを離しているときは、トリガーから指を離すとピース、トリガーを引くとロックの形になります。
 - SteamVR へは `WithController` / `WithoutController` 両方のモーションレンジに同じ値を送ります。

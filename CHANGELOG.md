@@ -3,7 +3,7 @@
 ## 未リリース
 
 ### 追加
-- **手のトラッキング**: コントローラーを置くと、手を SteamVR の手として送る。標準の `XR_EXT_hand_tracking` を使い、指は曲げ、親指と人差し指のつまみはトリガーとして送る。既定はオフで、PC のアプリの「コントローラーを置いたら手のトラッキングに切り替える」で使う(`headset_bridge --hand-tracking`)。コントローラー用の補正は手には掛けない。
+- **手のトラッキング**: コントローラーを置くと、手を SteamVR の手として送る。標準の `XR_EXT_hand_tracking` を使い、全関節を SteamVR の骨に変換して送る(`skeleton` の `pack`)。親指と人差し指のつまみはトリガーになる。既定はオフで、PC のアプリの「コントローラーを置いたら手のトラッキングに切り替える」で使う(`headset_bridge --hand-tracking`)。コントローラー用の補正は手には掛けない。
 - **ヘッドセットのマイク**: PC のアプリの「ヘッドセットのマイクを使う」で、ヘッドセットのマイクの音を仮想オーディオケーブル(既定は VB-CABLE の `CABLE Input`)へ再生する。VRChat などのアプリは `CABLE Output` をマイクとして使う。既定はオフ(`headset_bridge --mic`、`--mic-device`、メッセージ `mic`、`config` の `mic`)。「自分の声を試し聞きする(ループバック)」で PC の既定の出力でも鳴らせる(`--mic-monitor`)。
 - **電池と装着を SteamVR に**: ヘッドセットとコントローラーの電池の残量、ヘッドセットの充電中、装着の状態を送る。ヘッドセットを外すと SteamVR が待機し、着けると戻る。PC のアプリの「ヘッドセットを外したら SteamVR を待機させる」で切れる(`headset_bridge --no-wear-detect`)。Pico 4 Ultra のコントローラーは定義 `pico4s_controller` で読むようにした。
 - **SteamVR に送っている機器の一覧と操作**: PC のアプリの「SteamVR に送っている機器」に、機器ごとの状態と受信数を 1 秒ごとに表示する。コントローラーとトラッカーは、その場で固定する停止 / 再開と、SteamVR から外す切断 / 再接続ができる(`config` の `tracking`、`VHMDClient.tracking`)。ドライバで行うので UDP や VMT で送るトラッカーにも効く。

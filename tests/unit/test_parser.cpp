@@ -1,6 +1,9 @@
 #include "test_framework.h"
 
+#include <cstdint>
+#include <string>
 #include <variant>
+#include <vector>
 
 #include "protocol/parser.h"
 
@@ -18,6 +21,41 @@ TEST(parser_pose_basic) {
     CHECK(p->vel.has_value());
     CHECK(!p->angvel.has_value());
     CHECK(p->ts.has_value());
+}
+
+TEST(parser_skeleton_packed_bones) {
+    // 31 bones of 7 int16; bone 3 turned half way round X, at 1 cm on X. Base64 by hand.
+    std::vector<uint8_t> bytes(31 * 14, 0);
+    for (size_t i = 0; i < 31; ++i) {
+        bytes[i * 14] = 0xFF;   // w = 32767
+        bytes[i * 14 + 1] = 0x7F;
+    }
+    bytes[3 * 14 + 8] = 100;    // x = 100 * 0.1 mm
+    static const char kDigits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string text;
+    for (size_t i = 0; i + 2 < bytes.size(); i += 3) {
+        const uint32_t v = uint32_t(bytes[i]) << 16 | uint32_t(bytes[i + 1]) << 8 | bytes[i + 2];
+        for (int s = 18; s >= 0; s -= 6) text += kDigits[(v >> s) & 63];
+    }
+    auto good = [&](const std::string& pack) {
+        return ParseJsonPacket(R"({"type":"skeleton","id":"left_hand","pack":")" + pack + R"("})");
+    };
+    // 434 bytes end in 2 extra: padded.
+    const uint32_t v = uint32_t(bytes[432]) << 16 | uint32_t(bytes[433]) << 8;
+    text += kDigits[(v >> 18) & 63];
+    text += kDigits[(v >> 12) & 63];
+    text += kDigits[(v >> 6) & 63];
+    text += '=';
+
+    auto r = good(text);
+    CHECK(r.errors.empty());
+    const auto* s = std::get_if<SkeletonMessage>(&r.messages.at(0));
+    CHECK(s != nullptr);
+    if (!s) return;
+    CHECK(s->rotations.size() == 31 && s->positions.size() == 31);
+    CHECK_NEAR(s->rotations[3].w, 1.0, 1e-6);
+    CHECK_NEAR(s->positions[3].x, 0.01, 1e-6);
+    CHECK(good("AAAA").messages.empty());
 }
 
 TEST(parser_mic) {

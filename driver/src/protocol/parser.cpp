@@ -155,6 +155,32 @@ std::string ParseInput(const json& obj, const ParseLimits& lim, Message& out) {
     return {};
 }
 
+// Standard base64 with padding; false on anything else.
+bool DecodeBase64(const std::string& text, std::vector<uint8_t>& out) {
+    if (text.size() % 4) return false;
+    uint32_t bits = 0;
+    int have = 0;
+    out.reserve(text.size() / 4 * 3);
+    for (size_t i = 0; i < text.size(); ++i) {
+        const char c = text[i];
+        int v = -1;
+        if (c >= 'A' && c <= 'Z') v = c - 'A';
+        else if (c >= 'a' && c <= 'z') v = c - 'a' + 26;
+        else if (c >= '0' && c <= '9') v = c - '0' + 52;
+        else if (c == '+') v = 62;
+        else if (c == '/') v = 63;
+        else if (c == '=' && i + 2 >= text.size()) continue;
+        if (v < 0) return false;
+        bits = (bits << 6) | static_cast<uint32_t>(v);
+        have += 6;
+        if (have >= 8) {
+            have -= 8;
+            out.push_back(static_cast<uint8_t>(bits >> have));
+        }
+    }
+    return true;
+}
+
 std::string ParseSkeleton(const json& obj, const ParseLimits& lim, Message& out) {
     SkeletonMessage m;
     if (auto e = ReadId(obj, m.id); !e.empty()) return e;
@@ -190,6 +216,28 @@ std::string ParseSkeleton(const json& obj, const ParseLimits& lim, Message& out)
     }
     if (!m.positions.empty() && m.rotations.empty()) return "'positions' requires 'bones'";
 
+    // "pack": base64 of 31 bones, each 7 little-endian int16: rotation w x y z in
+    // 1/32767, position in 0.1 mm. What a tracked hand fits one packet with.
+    if (auto pack = obj.find("pack"); pack != obj.end()) {
+        std::vector<uint8_t> bytes;
+        constexpr size_t kPerBone = 7;
+        if (!pack->is_string() || !DecodeBase64(pack->get_ref<const std::string&>(), bytes) ||
+            bytes.size() != kSkeletonBoneCount * kPerBone * sizeof(int16_t)) {
+            return "pack: not 31 packed bones";
+        }
+        std::array<int16_t, kSkeletonBoneCount * kPerBone> v{};
+        std::memcpy(v.data(), bytes.data(), bytes.size());
+        m.rotations.clear();
+        m.positions.clear();
+        for (size_t i = 0; i < kSkeletonBoneCount; ++i) {
+            const int16_t* b = v.data() + i * kPerBone;
+            Quat q{b[0] / 32767.0, b[1] / 32767.0, b[2] / 32767.0, b[3] / 32767.0};
+            if (!Normalize(q)) return "pack: zero rotation";
+            m.rotations.push_back(q);
+            m.positions.push_back({b[4] / 10000.0, b[5] / 10000.0, b[6] / 10000.0});
+        }
+    }
+
     auto curl = obj.find("curl");
     if (curl != obj.end()) {
         std::array<float, 5> c{};
@@ -202,7 +250,7 @@ std::string ParseSkeleton(const json& obj, const ParseLimits& lim, Message& out)
         if (auto e = ReadFloatArray5(*splay, s, -1.0f, 1.0f); !e.empty()) return "splay: " + e;
         m.splay = s;
     }
-    if (m.rotations.empty() && !m.curl) return "skeleton needs 'bones' or 'curl'";
+    if (m.rotations.empty() && !m.curl) return "skeleton needs 'bones', 'pack' or 'curl'";
     (void)lim;
     out = std::move(m);
     return {};
@@ -234,32 +282,6 @@ std::string ParseGaze(const json& obj, const ParseLimits& lim, Message& out) {
     }
     out = std::move(m);
     return {};
-}
-
-// Standard base64 with padding; false on anything else.
-bool DecodeBase64(const std::string& text, std::vector<uint8_t>& out) {
-    if (text.size() % 4) return false;
-    uint32_t bits = 0;
-    int have = 0;
-    out.reserve(text.size() / 4 * 3);
-    for (size_t i = 0; i < text.size(); ++i) {
-        const char c = text[i];
-        int v = -1;
-        if (c >= 'A' && c <= 'Z') v = c - 'A';
-        else if (c >= 'a' && c <= 'z') v = c - 'a' + 26;
-        else if (c >= '0' && c <= '9') v = c - '0' + 52;
-        else if (c == '+') v = 62;
-        else if (c == '/') v = 63;
-        else if (c == '=' && i + 2 >= text.size()) continue;
-        if (v < 0) return false;
-        bits = (bits << 6) | static_cast<uint32_t>(v);
-        have += 6;
-        if (have >= 8) {
-            have -= 8;
-            out.push_back(static_cast<uint8_t>(bits >> have));
-        }
-    }
-    return true;
 }
 
 std::string ParseMic(const json& obj, Message& out) {

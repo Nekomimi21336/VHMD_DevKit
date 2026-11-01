@@ -28,7 +28,7 @@
 #include <android/hardware_buffer.h>
 #include <jni.h>
 #include <aaudio/AAudio.h>
-#include <hand_curls.h>
+#include <hand_bones.h>
 #include <android/configuration.h>
 #include <media/NdkImageReader.h>
 #include <media/NdkMediaCodec.h>
@@ -1346,7 +1346,7 @@ struct App {
     std::chrono::steady_clock::time_point held_time[2]{};
     bool hand_mode = false;      // SteamVR gets tracked hands, not controllers
     bool hand_mode_told = false; // what the driver was last told
-    std::chrono::steady_clock::time_point hand_retry{}, hand_changed{}, next_hand_mode{}, next_hand_log[2]{};
+    std::chrono::steady_clock::time_point hand_retry{}, hand_changed{}, next_hand_mode{};
     int worn = -1;               // as the runtime last said; -1 = it has not
     bool mic_asked = false;      // the permission was asked for
     int mic_state = 0;           // 0 off, 1 waiting for the permission, 2 on
@@ -1890,13 +1890,6 @@ void AppendBody(App& app, std::string& out, XrTime time) {
     }
 }
 
-// Where SteamVR's hand model puts the device, seen from the tracked wrist (+Y the
-// back of the hand, -Z the fingers). Left, right; from the model's open hand.
-const XrPosef kDeviceInWrist[2] = {
-    {{0.3072f, -0.2294f, -0.5951f, 0.7063f}, {0.0944f, -0.0106f, -0.1435f}},
-    {{0.3072f, 0.2294f, 0.5951f, 0.7063f}, {-0.0944f, -0.0106f, -0.1435f}},
-};
-
 void LocateHands(App& app, XrTime time) {
     if (!app.has_hands) return;
     if (app.hand_tracker[0] == XR_NULL_HANDLE) {
@@ -1981,30 +1974,33 @@ void UpdateHandMode(App& app, std::string& out, const XrSpaceLocation* grips) {
 XrSpaceLocation HandPose(App& app, int hand) {
     XrSpaceLocation l{XR_TYPE_SPACE_LOCATION};
     if (app.hand_active[hand]) {
+        const vhmd::HandPose& d = vhmd::kDeviceInWrist[hand];
         l.locationFlags = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
-        l.pose = Compose(app.hand_joints[hand][XR_HAND_JOINT_WRIST_EXT].pose, kDeviceInWrist[hand]);
+        l.pose = Compose(app.hand_joints[hand][XR_HAND_JOINT_WRIST_EXT].pose,
+                         {{d.rot.x, d.rot.y, d.rot.z, d.rot.w}, {d.pos.x, d.pos.y, d.pos.z}});
     }
     return l;
 }
 
-// The fingers, and a pinch as the trigger.
+// Every bone of the hand, in a message of its own (it would not fit the pose
+// packet), and a pinch as the trigger.
 void AppendHand(App& app, std::string& out, int hand) {
     if (!app.hand_active[hand]) return;
-    vhmd::HandJoints joints;
+    const XrPosef& w = app.hand_joints[hand][XR_HAND_JOINT_WRIST_EXT].pose;
+    const XrQuaternionf inv{-w.orientation.x, -w.orientation.y, -w.orientation.z, w.orientation.w};
+    const XrVector3f back = Rotate(inv, {-w.position.x, -w.position.y, -w.position.z});
+    std::array<vhmd::HandPose, vhmd::kHandJoints> joints;
     for (size_t i = 0; i < joints.size(); ++i) {
-        const XrVector3f& p = app.hand_joints[hand][i].pose.position;
-        joints[i] = {p.x, p.y, p.z};
+        const XrPosef p = Compose({inv, back}, app.hand_joints[hand][i].pose);
+        joints[i] = {{p.orientation.w, p.orientation.x, p.orientation.y, p.orientation.z}, {p.position.x, p.position.y, p.position.z}};
     }
-    const std::array<float, 5> curl = vhmd::JointCurls(joints);
-    const float pinch = vhmd::JointPinch(joints);
+    const std::array<vhmd::HandPose, vhmd::kHandBones> bones = vhmd::HandBones(joints, hand);
+    int16_t packed[vhmd::kHandBones * 7];
+    for (size_t i = 0; i < bones.size(); ++i) vhmd::PackBone(bones[i], packed + i * 7);
     const char* id = hand == kLeft ? "left_hand" : "right_hand";
-    const auto now = std::chrono::steady_clock::now();
-    if (now >= app.next_hand_log[hand]) {
-        app.next_hand_log[hand] = now + std::chrono::seconds(2);
-        LOGI("%s curl %.2f %.2f %.2f %.2f %.2f pinch %.2f", id, curl[0], curl[1], curl[2], curl[3], curl[4], pinch);
-    }
-    out += Fmt(",{\"type\":\"skeleton\",\"id\":\"%s\",\"src\":\"manual\",\"curl\":[%.2f,%.2f,%.2f,%.2f,%.2f]}", id, curl[0],
-               curl[1], curl[2], curl[3], curl[4]);
+    app.sender.PostKept(Fmt("[{\"type\":\"skeleton\",\"id\":\"%s\",\"src\":\"manual\",\"pack\":\"", id) +
+                        Base64(reinterpret_cast<const uint8_t*>(packed), sizeof(packed)) + "\"}]\n");
+    const float pinch = vhmd::HandPinch(joints);
     out += Fmt(",{\"type\":\"input\",\"id\":\"%s\",\"src\":\"manual\",\"values\":{\"trigger\":%.2f,\"trigger_click\":%s}}", id,
                pinch, pinch >= 0.95f ? "true" : "false");
 }
