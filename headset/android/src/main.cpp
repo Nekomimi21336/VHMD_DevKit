@@ -1300,7 +1300,8 @@ struct App {
     XrAction grip_pose = XR_NULL_HANDLE, trigger = XR_NULL_HANDLE, trigger_touch = XR_NULL_HANDLE,
              squeeze = XR_NULL_HANDLE, stick = XR_NULL_HANDLE, stick_click = XR_NULL_HANDLE,
              stick_touch = XR_NULL_HANDLE, btn_a = XR_NULL_HANDLE, btn_b = XR_NULL_HANDLE, btn_x = XR_NULL_HANDLE,
-             btn_y = XR_NULL_HANDLE, menu = XR_NULL_HANDLE, haptic = XR_NULL_HANDLE;
+             btn_y = XR_NULL_HANDLE, touch_a = XR_NULL_HANDLE, touch_b = XR_NULL_HANDLE, touch_x = XR_NULL_HANDLE,
+             touch_y = XR_NULL_HANDLE, menu = XR_NULL_HANDLE, haptic = XR_NULL_HANDLE;
     XrSpace grip_spaces[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
 
     // PICO Motion Trackers (XR_BD_body_tracking).
@@ -1554,6 +1555,10 @@ void SuggestBindings(App& app, const char* profile, bool has_menu_left, bool has
         b.push_back({app.btn_y, "/user/hand/left/input/y/click"});
         b.push_back({app.btn_a, "/user/hand/right/input/a/click"});
         b.push_back({app.btn_b, "/user/hand/right/input/b/click"});
+        b.push_back({app.touch_x, "/user/hand/left/input/x/touch"});
+        b.push_back({app.touch_y, "/user/hand/left/input/y/touch"});
+        b.push_back({app.touch_a, "/user/hand/right/input/a/touch"});
+        b.push_back({app.touch_b, "/user/hand/right/input/b/touch"});
     }
     if (has_menu_left) b.push_back({app.menu, "/user/hand/left/input/menu/click"});
     b.push_back({app.haptic, "/user/hand/left/output/haptic"});
@@ -1587,6 +1592,10 @@ bool CreateActions(App& app) {
     app.btn_b = MakeAction(app, "b", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
     app.btn_x = MakeAction(app, "x", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
     app.btn_y = MakeAction(app, "y", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
+    app.touch_a = MakeAction(app, "a_touch", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
+    app.touch_b = MakeAction(app, "b_touch", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
+    app.touch_x = MakeAction(app, "x_touch", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
+    app.touch_y = MakeAction(app, "y_touch", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
     app.menu = MakeAction(app, "menu", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
     app.haptic = MakeAction(app, "haptic", XR_ACTION_TYPE_VIBRATION_OUTPUT, true);
 
@@ -1748,13 +1757,18 @@ void AppendInputs(App& app, std::string& out, int hand) {
     if (hand == kLeft)
         // The menu button goes as SteamVR's system input, which opens its dashboard
         // (the PC app can bind it to something else).
-        snprintf(buf + n, sizeof(buf) - n, ",\"x\":%s,\"y\":%s,\"system\":%s}}",
+        snprintf(buf + n, sizeof(buf) - n, ",\"x\":%s,\"y\":%s,\"x_touch\":%s,\"y_touch\":%s,\"system\":%s}}",
                  GetBool(app, app.btn_x, XR_NULL_PATH) ? "true" : "false",
                  GetBool(app, app.btn_y, XR_NULL_PATH) ? "true" : "false",
+                 GetBool(app, app.touch_x, XR_NULL_PATH) ? "true" : "false",
+                 GetBool(app, app.touch_y, XR_NULL_PATH) ? "true" : "false",
                  GetBool(app, app.menu, XR_NULL_PATH) ? "true" : "false");
     else
-        snprintf(buf + n, sizeof(buf) - n, ",\"a\":%s,\"b\":%s}}", GetBool(app, app.btn_a, XR_NULL_PATH) ? "true" : "false",
-                 GetBool(app, app.btn_b, XR_NULL_PATH) ? "true" : "false");
+        snprintf(buf + n, sizeof(buf) - n, ",\"a\":%s,\"b\":%s,\"a_touch\":%s,\"b_touch\":%s}}",
+                 GetBool(app, app.btn_a, XR_NULL_PATH) ? "true" : "false",
+                 GetBool(app, app.btn_b, XR_NULL_PATH) ? "true" : "false",
+                 GetBool(app, app.touch_a, XR_NULL_PATH) ? "true" : "false",
+                 GetBool(app, app.touch_b, XR_NULL_PATH) ? "true" : "false");
     out += ',';
     out += buf;
 }
