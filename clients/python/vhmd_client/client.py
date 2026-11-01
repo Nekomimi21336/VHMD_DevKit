@@ -234,6 +234,18 @@ class VHMDClient:
     def set_role(self, tracker_id: str, role: str) -> Dict[str, Any]:
         return self.request("set_role", id=tracker_id, role=role)
 
+    def tracking(self, device_id: str, mode: Optional[str] = None) -> str:
+        """What SteamVR gets of a controller or tracker: "active", "paused" (held
+        where it is) or "disconnected". Without a mode, returns the current one. It
+        lasts until SteamVR ends."""
+        args: Dict[str, Any] = {"id": device_id}
+        if mode is not None:
+            args["mode"] = mode
+        r = self.request("tracking", **args)
+        if not r.get("ok"):
+            raise RuntimeError(r.get("error", "tracking failed"))
+        return r["mode"]
+
     def offset(self, device_id: str, pos: Optional[Sequence[float]] = None, ypr: Optional[Sequence[float]] = None,
                space: Optional[str] = None) -> Dict[str, Any]:
         """Correct where a controller or tracker is: pos in meters, ypr (yaw,

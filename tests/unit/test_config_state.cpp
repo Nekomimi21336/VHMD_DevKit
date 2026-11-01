@@ -562,6 +562,75 @@ TEST(router_offset_op) {
     CHECK(with_offset == 2);
 }
 
+TEST(tracking_paused_holds_the_pose_and_disconnected_reports_off) {
+    DriverConfig cfg = DefaultConfig();
+    cfg.smoothing = 0.0;
+    DeviceConfig dev = cfg.devices[1];
+    dev.timeout_policy = TimeoutPolicy::Disconnect;
+    DeviceState s(dev, cfg);
+    auto now = Clock::now();
+    auto pose = [&](double x) {
+        PoseMessage m;
+        m.id = dev.id;
+        m.pos = {x, 1, 0};
+        m.vel = Vec3{1, 0, 0};
+        s.SubmitPose(m, now);
+    };
+    pose(0.1);
+    s.ComputeOutput(now);
+
+    s.SetTracking(TrackingMode::Paused, now);
+    pose(0.5);
+    InputMessage press;
+    press.id = dev.id;
+    press.values = {{"a", 1.0f}};
+    s.SubmitInput(press, now);
+    OutputPose held = s.ComputeOutput(now);
+    CHECK_NEAR(held.pos.x, 0.1, 1e-9);
+    CHECK_NEAR(held.vel.x, 0.0, 1e-9);                // no drift from the last speed
+    CHECK(held.pose_valid && held.connected);
+    CHECK(s.TakeChangedInputs().size() == 1);         // only the motion stops
+    CHECK(s.Stats(now).pose_packets == 2);            // the sender still shows
+    now += std::chrono::seconds(30);
+    held = s.ComputeOutput(now);
+    CHECK(held.pose_valid && held.connected);         // no timeout while held
+
+    s.SetTracking(TrackingMode::Disconnected, now);
+    auto released = s.TakeChangedInputs();
+    CHECK(released.size() == 1 && released[0].second == 0.0f);   // nothing stays pressed
+    pose(0.6);
+    s.SubmitInput(press, now);
+    OutputPose off = s.ComputeOutput(now);
+    CHECK(!off.pose_valid && !off.connected);
+    CHECK(s.TakeChangedInputs().empty());
+
+    s.SetTracking(TrackingMode::Active, now);
+    pose(0.7);
+    OutputPose back = s.ComputeOutput(now);
+    CHECK(back.pose_valid && back.connected);
+    CHECK_NEAR(back.pos.x, 0.7, 1e-9);
+}
+
+TEST(router_tracking_op) {
+    DriverConfig cfg = DefaultConfig();
+    std::vector<std::shared_ptr<DeviceState>> states;
+    for (const auto& d : cfg.devices) states.push_back(std::make_shared<DeviceState>(d, cfg));
+    MessageRouter router(cfg, states);
+    const auto now = Clock::now();
+    auto ask = [&](const char* text) { return nlohmann::json::parse(*router.HandleDatagram(text, now)); };
+
+    auto set = ask(R"({"type":"config","op":"tracking","id":"left_hand","mode":"paused"})");
+    CHECK(set["ok"].get<bool>() && set["id"] == "left_hand" && set["mode"] == "paused");
+    CHECK(ask(R"({"type":"config","op":"tracking","id":"left_hand"})")["mode"] == "paused");
+    CHECK(!ask(R"({"type":"config","op":"tracking","id":"hmd","mode":"paused"})")["ok"].get<bool>());
+    CHECK(!ask(R"({"type":"config","op":"tracking","id":"nope","mode":"paused"})")["ok"].get<bool>());
+    CHECK(!ask(R"({"type":"config","op":"tracking","id":"left_hand","mode":"nap"})")["ok"].get<bool>());
+
+    for (const auto& d : ask(R"({"type":"config","op":"list"})")["devices"]) {
+        CHECK(d["tracking"] == (d["id"] == "left_hand" ? "paused" : "active"));
+    }
+}
+
 TEST(router_render_models_op) {
     DriverConfig cfg = DefaultConfig();
     CHECK(cfg.render_models == "labeled");

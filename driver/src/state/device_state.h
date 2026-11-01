@@ -11,6 +11,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "config/driver_config.h"
@@ -49,6 +50,15 @@ struct DeviceOffset {
 
 // The pose after the device's correction.
 void ApplyOffset(OutputPose& out, const DeviceOffset& offset);
+
+// What SteamVR gets of a device (config op "tracking"). Paused holds it where it
+// is, connected and tracked. Disconnected reports it as off, with its inputs
+// released, and new data does not bring it back. Either way packets go on being
+// counted, so `status` shows the sender is still there.
+enum class TrackingMode { Active, Paused, Disconnected };
+
+std::optional<TrackingMode> ParseTrackingMode(std::string_view s);
+const char* ToString(TrackingMode mode);
 
 struct DeviceStats {
     uint64_t pose_packets = 0;
@@ -94,9 +104,16 @@ public:
     void SetOffset(const Vec3& pos, const Vec3& ypr, bool room);
     DeviceOffset Offset() const;
 
+    // Stays until changed (also over "reset"), not saved.
+    void SetTracking(TrackingMode mode, Clock::time_point now);
+    TrackingMode Tracking() const;
+
     const DeviceConfig& Config() const { return cfg_; }
 
 private:
+    void StopMotion(Clock::time_point now);   // no more prediction from the last pose
+    void ReleaseInputs();
+
     DeviceConfig cfg_;
     double timeout_s_;
     TimeoutPolicy policy_;
@@ -110,6 +127,7 @@ private:
     std::optional<Clock::time_point> last_output_;
     PoseSmoother smoother_;
     DeviceOffset offset_;
+    TrackingMode tracking_ = TrackingMode::Active;
 
     std::map<std::string, float> pending_inputs_;
     std::set<std::string> seen_inputs_;   // every input name received, for Handover

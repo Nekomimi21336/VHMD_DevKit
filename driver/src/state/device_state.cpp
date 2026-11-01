@@ -13,6 +13,21 @@ double UnixNow() {
 
 } // namespace
 
+std::optional<TrackingMode> ParseTrackingMode(std::string_view s) {
+    if (s == "active") return TrackingMode::Active;
+    if (s == "paused") return TrackingMode::Paused;
+    if (s == "disconnected") return TrackingMode::Disconnected;
+    return std::nullopt;
+}
+
+const char* ToString(TrackingMode mode) {
+    switch (mode) {
+    case TrackingMode::Paused: return "paused";
+    case TrackingMode::Disconnected: return "disconnected";
+    default: return "active";
+    }
+}
+
 DeviceState::DeviceState(const DeviceConfig& cfg, const DriverConfig& global)
     : cfg_(cfg),
       timeout_s_(global.timeout_ms / 1000.0),
@@ -36,6 +51,7 @@ void DeviceState::SubmitPose(const PoseMessage& m, Clock::time_point now) {
     last_update_ = now;
     ++pose_packets_;
     if (m.ts) latency_ms_ = (UnixNow() - *m.ts) * 1000.0;
+    if (tracking_ != TrackingMode::Active) return;
 
     explicit_invalid_ = !m.valid;
     if (!m.valid) return; // keep the previous pose for when tracking resumes
@@ -46,6 +62,7 @@ void DeviceState::SubmitInput(const InputMessage& m, Clock::time_point now) {
     std::lock_guard<std::mutex> lock(mu_);
     (void)now;
     ++input_packets_;
+    if (tracking_ == TrackingMode::Disconnected) return;
     // Every received value is re-applied (coalesced to the latest per name and
     // tick). No "unchanged" filtering here: several names can alias the same
     // component ("b", "secondary", "/input/b/click"), so a per-name cache
@@ -58,7 +75,7 @@ void DeviceState::SubmitInput(const InputMessage& m, Clock::time_point now) {
 
 void DeviceState::SubmitSkeleton(const SkeletonMessage& m) {
     std::lock_guard<std::mutex> lock(mu_);
-    skeleton_ = m;
+    if (tracking_ != TrackingMode::Disconnected) skeleton_ = m;
 }
 
 void DeviceState::SubmitGaze(const GazeMessage& m) {
@@ -96,6 +113,22 @@ DeviceOffset DeviceState::Offset() const {
     return offset_;
 }
 
+void DeviceState::SetTracking(TrackingMode mode, Clock::time_point now) {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (mode == tracking_) return;
+    tracking_ = mode;
+    StopMotion(now);
+    if (mode == TrackingMode::Disconnected) {
+        ReleaseInputs();
+        skeleton_.reset();
+    }
+}
+
+TrackingMode DeviceState::Tracking() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    return tracking_;
+}
+
 OutputPose DeviceState::ComputeOutput(Clock::time_point now) {
     std::lock_guard<std::mutex> lock(mu_);
     OutputPose out;
@@ -108,7 +141,7 @@ OutputPose DeviceState::ComputeOutput(Clock::time_point now) {
     const Clock::time_point ref = last_update_.value_or(created_);
     // A pose relative to a parent (VMT Joint / Follow) keeps following it without
     // new packets, like VMT; the parent's own validity decides.
-    out.timed_out = latest_.parent.empty() && Seconds(now - ref) > timeout_s_;
+    out.timed_out = tracking_ != TrackingMode::Paused && latest_.parent.empty() && Seconds(now - ref) > timeout_s_;
 
     smoother_.Update(latest_.pos, latest_.rot, smoothing_, dt);
     out.pos = smoother_.Position();
@@ -138,6 +171,10 @@ OutputPose DeviceState::ComputeOutput(Clock::time_point now) {
             out.connected = false;
             break;
         }
+    }
+    if (tracking_ == TrackingMode::Disconnected) {
+        out.pose_valid = false;
+        out.connected = false;
     }
     return out;
 }
@@ -179,10 +216,18 @@ DeviceStats DeviceState::Stats(Clock::time_point now) const {
 
 void DeviceState::Handover(Clock::time_point now) {
     std::lock_guard<std::mutex> lock(mu_);
+    ReleaseInputs();
+    StopMotion(now);
+}
+
+void DeviceState::ReleaseInputs() {
     for (const auto& name : seen_inputs_) {
         if (name == "proximity" || name == "battery" || name == "charging") continue;
         pending_inputs_[name] = 0.0f;
     }
+}
+
+void DeviceState::StopMotion(Clock::time_point now) {
     latest_.vel.reset();
     latest_.angvel.reset();
     latest_.acc.reset();

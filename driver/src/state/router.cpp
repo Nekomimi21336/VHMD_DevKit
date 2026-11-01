@@ -233,6 +233,7 @@ std::string MessageRouter::StatusJson(Clock::time_point now, std::optional<doubl
         };
         if (!c.role.empty()) e["role"] = c.role;
         if (const DeviceOffset o = d->Offset(); !o.IsZero()) e["offset"] = OffsetJson(o);
+        e["tracking"] = ToString(d->Tracking());
         e["on_demand"] = c.on_demand;
         e["timeout_policy"] = ToString(config_.EffectivePolicy(c));
         e["age_s"] = s.seconds_since_update < 0 ? json(nullptr) : json(s.seconds_since_update);
@@ -361,6 +362,23 @@ std::optional<std::string> MessageRouter::HandleConfig(const ConfigMessage& m, C
             r["ok"] = true;
             r["id"] = dev->Config().id;
             r["offset"] = OffsetJson(dev->Offset());
+        }
+    } else if (m.op == "tracking") {
+        // {"op":"tracking","id":"left_foot","mode":"paused"}; no mode = query. Not the
+        // HMD: the picture is drawn for its pose.
+        DeviceState* dev = Find(m.id);
+        const auto mode = ParseTrackingMode(m.mode);
+        if (!dev || dev->Config().kind == DeviceKind::Hmd) {
+            r["ok"] = false;
+            r["error"] = "unknown controller or tracker id";
+        } else if (!m.mode.empty() && !mode) {
+            r["ok"] = false;
+            r["error"] = "mode must be active, paused or disconnected";
+        } else {
+            if (mode) dev->SetTracking(*mode, now);
+            r["ok"] = true;
+            r["id"] = dev->Config().id;
+            r["mode"] = ToString(dev->Tracking());
         }
     } else if (m.op == "refresh_rate") {
         if (m.hz && (!(*m.hz >= kMinRefreshHz) || *m.hz > kMaxRefreshHz)) {

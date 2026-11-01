@@ -363,6 +363,17 @@ class Bridge:
         req = {"type": "config", "op": "offset", **offsets.message(device_id, value)}
         self._send_driver(json.dumps(req, separators=(",", ":")).encode())
 
+    def set_tracking(self, device_id: str, mode: str) -> str:
+        """What SteamVR gets of a device (see tracking.py); returns what went wrong."""
+        try:
+            r = self.request("tracking", id=device_id, mode=mode)
+        except (OSError, TimeoutError, ValueError) as e:
+            return str(e)
+        if not r.get("ok"):
+            return r.get("error", "refused")
+        self.devices = [{**d, "tracking": r["mode"]} if d["id"] == r["id"] else d for d in self.devices]
+        return ""
+
     def request(self, op: str, timeout: float = 0.3, **args) -> dict:
         """A config request to the driver, sent from the socket the poses use: the
         driver sends haptic events to whoever sent last, so asking from another
@@ -577,7 +588,6 @@ class Bridge:
     def _monitor(self) -> None:
         from . import mode
         last_steamvr_check = 0.0
-        last_devices_check = 0.0
         window = time.monotonic()
         while True:
             time.sleep(max(0.0, 1.0 - (time.monotonic() - window)))
@@ -620,14 +630,15 @@ class Bridge:
                 self.pc_state["steamvr"] = True
 
             # The driver's devices; its corrections end with SteamVR, so they go again.
-            if self.pc_state["driver"] and now - last_devices_check > 3.0:
-                last_devices_check = now
+            if self.pc_state["driver"]:
                 try:
                     self.devices = self.request("status").get("devices", [])
                     for msg in offsets.pending(self.devices, self.o.offsets):
                         self.request("offset", **msg)
                 except (OSError, TimeoutError, ValueError):
                     pass
+            else:
+                self.devices = []
 
             # Controllers as axes for the Dev edition, labelled shapes otherwise.
             edition = self.info.get("edition")

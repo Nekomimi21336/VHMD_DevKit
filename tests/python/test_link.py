@@ -14,7 +14,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "clients" / "python"))
 
-from vhmd_client import bindings, headset_bridge, native_relay, offsets  # noqa: E402
+from vhmd_client import bindings, headset_bridge, native_relay, offsets, tracking  # noqa: E402
 
 
 class FakeRelay:
@@ -408,6 +408,51 @@ def test_offset_defaults(tmp_path, monkeypatch):
     assert link.load_settings()["offsets"] == {"left_hand": want, "right_hand": want}
     link.SETTINGS.write_text('{"offsets": {}}', encoding="utf-8")
     assert link.load_settings()["offsets"] == {}   # cleared by the user: stays cleared
+
+
+def test_tracking_rows():
+    devices = [{"id": "hmd", "kind": "hmd", "index": 0, "tracking": "active", "age_s": 0.01, "rate_hz": 71.6},
+               {"id": "left_hand", "kind": "controller", "index": 1, "role": "left", "tracking": "paused",
+                "age_s": 0.01, "rate_hz": 72},
+               {"id": "tracker_0", "kind": "tracker", "index": 2, "role": "waist", "tracking": "disconnected",
+                "age_s": 0.01, "rate_hz": 72},
+               {"id": "tracker_1", "kind": "tracker", "index": 3, "role": "left_foot", "tracking": "active",
+                "age_s": 4.0, "rate_hz": 0},
+               {"id": "tracker_2", "kind": "tracker", "index": 4, "role": "right_foot", "age_s": None},
+               {"id": "tracker_3", "kind": "tracker", "index": -1, "tracking": "active"}]
+    rows = tracking.rows(devices)
+    assert [(r["id"], r["name"], r["state"], r["rate"]) for r in rows] == [
+        ("hmd", "hmd", "tracking", 72), ("left_hand", "left_hand", "paused", 72), ("tracker_0", "waist", "disconnected", 72),
+        ("tracker_1", "left_foot", "silent", 0), ("tracker_2", "right_foot", "silent", 0)]   # not with SteamVR: left out
+    assert rows[0]["actions"] == []                  # the HMD: the picture needs it
+    assert rows[1]["actions"] == [("resume", "active"), ("disconnect", "disconnected")]
+    assert rows[2]["actions"] == [("reconnect", "active")]
+    assert rows[3]["actions"] == [("pause", "paused"), ("disconnect", "disconnected")]
+
+
+def test_bridge_set_tracking():
+    b = object.__new__(headset_bridge.Bridge)
+    b.devices = [{"id": "tracker_1", "tracking": "active"}, {"id": "tracker_2", "tracking": "active"}]
+    asked = []
+
+    def request(op, **args):
+        asked.append((op, args))
+        return {"ok": True, "id": "tracker_1", "mode": "paused"}
+
+    b.request = request
+    assert b.set_tracking("left_foot", "paused") == ""   # a role also names the device
+    assert asked == [("tracking", {"id": "left_foot", "mode": "paused"})]
+    assert [d["tracking"] for d in b.devices] == ["paused", "active"]   # shown before the next status
+
+    b.request = lambda *_a, **_k: {"ok": False, "error": "unknown op"}
+    assert b.set_tracking("tracker_2", "paused") == "unknown op"
+    assert b.devices[1]["tracking"] == "active"
+
+    def timed_out(*_a, **_k):
+        raise TimeoutError("no reply")
+
+    b.request = timed_out
+    assert b.set_tracking("tracker_2", "paused") == "no reply"
 
 
 # -- switching SteamVR between VHMD and the original ---------------------------

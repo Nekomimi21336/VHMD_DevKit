@@ -32,7 +32,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Dict, Optional
 
-from . import bindings, headset_info, mode, offsets
+from . import bindings, headset_info, mode, offsets, tracking
 from .fps import PALETTES, setup_style, ui_language, windows_theme
 from .headset_bridge import Bridge, BridgeOptions
 from .tray import TrayIcon
@@ -73,6 +73,13 @@ TEXT = {
         "q_low": "Low (20 Mbit/s)", "q_standard": "Standard (40 Mbit/s)", "q_high": "High (60 Mbit/s)", "q_max": "Highest (80 Mbit/s)",
         "c_hevc": "HEVC (recommended)", "c_h264": "H.264", "c_av1": "AV1 (newer GPUs)",
         "b0": "Lowest latency", "b1": "Smoother (+1 frame)",
+        "track": "Sent to SteamVR",
+        "track_hint": "Pause holds a device where it is. Disconnect takes it off SteamVR until you reconnect it. "
+                      "Both end with SteamVR.",
+        "track_none": "Nothing is being sent to SteamVR.", "track_failed": "Could not change {name}: {error}",
+        "track_tracking": "Tracking", "track_silent": "No data", "track_paused": "Paused",
+        "track_disconnected": "Disconnected", "track_rate": "{rate}/s", "track_pause": "Pause", "track_resume": "Resume",
+        "track_disconnect": "Disconnect", "track_reconnect": "Reconnect", "d_hmd": "Headset",
         "off": "Position and angle correction",
         "off_hint": "Controllers move along their own axes, trackers along the room's. Changes apply at once.",
         "off_device": "Device", "off_x": "Left-right X (cm)", "off_y": "Up-down Y (cm)", "off_z": "Back-front Z (cm)",
@@ -129,6 +136,12 @@ TEXT = {
         "q_low": "低(20 Mbit/s)", "q_standard": "標準(40 Mbit/s)", "q_high": "高(60 Mbit/s)", "q_max": "最高(80 Mbit/s)",
         "c_hevc": "HEVC(推奨)", "c_h264": "H.264", "c_av1": "AV1(新しい GPU)",
         "b0": "遅れを最小に", "b1": "なめらか(+1 フレーム)",
+        "track": "SteamVR に送っている機器",
+        "track_hint": "停止はその場で固定します。切断は再接続するまで SteamVR から外します。どちらも SteamVR を終了すると元に戻ります。",
+        "track_none": "SteamVR に送っている機器はありません。", "track_failed": "{name} を変更できませんでした: {error}",
+        "track_tracking": "追跡中", "track_silent": "受信なし", "track_paused": "停止中",
+        "track_disconnected": "切断中", "track_rate": "{rate}/秒", "track_pause": "停止", "track_resume": "再開",
+        "track_disconnect": "切断", "track_reconnect": "再接続", "d_hmd": "ヘッドセット",
         "off": "位置と角度の補正",
         "off_hint": "コントローラーは本体の向き、トラッカーは部屋の向きに沿って動きます。変えるとすぐ反映されます。",
         "off_device": "機器", "off_x": "左右 X(cm)", "off_y": "上下 Y(cm)", "off_z": "前後 Z(cm)",
@@ -451,6 +464,17 @@ class LinkApp:
                 self.bind_combo(grid, len(self.bind_vars), hand, button)
         ttk.Button(c, text=t["bind_reset"], command=self.reset_bindings).pack(anchor="w", pady=(6, 0))
 
+        # What SteamVR gets
+        c = self.card(self.body, t["track"])
+        ttk.Label(c, text=t["track_hint"], style="CardMuted.TLabel", wraplength=470, justify="left").pack(anchor="w")
+        self.track_grid = ttk.Frame(c, style="Card.TFrame")
+        self.track_grid.pack(fill="x", pady=(4, 0))
+        self.track_grid.columnconfigure(0, weight=1)
+        self.track_rows: dict = {}
+        self.track_none = ttk.Label(self.track_grid, text=t["track_none"], style="CardMuted.TLabel")
+        self.track_msg = ttk.Label(c, style="CardMuted.TLabel", wraplength=470, justify="left")
+        self.update_tracking()
+
         # Position and angle corrections
         c = self.card(self.body, t["off"])
         ttk.Label(c, text=t["off_hint"], style="CardMuted.TLabel", wraplength=470, justify="left").pack(anchor="w")
@@ -571,6 +595,63 @@ class LinkApp:
         for name, var in self.bind_vars.items():
             var.set(self.bind_label(name))
         self.log("button bindings: defaults")
+
+    def track_row(self, row: int, name: str) -> dict:
+        t, pal, grid = self.t, self.pal, self.track_grid
+        w = {"name": ttk.Label(grid, text=t.get("d_" + name, name), style="Card.TLabel"),
+             "dot": tk.Label(grid, text="●", bg=pal["card"], fg=pal["muted"], font=self.fonts["small_bold"]),
+             "state": ttk.Label(grid, style="Card.TLabel", width=9),
+             "rate": ttk.Label(grid, style="CardMuted.TLabel", width=7, anchor="e"),
+             "buttons": [ttk.Button(grid, width=7) for _ in range(2)], "actions": None}
+        w["name"].grid(row=row, column=0, sticky="w", pady=2)
+        w["dot"].grid(row=row, column=1, padx=(8, 3))
+        w["state"].grid(row=row, column=2, sticky="w")
+        w["rate"].grid(row=row, column=3, padx=(0, 8))
+        for i, button in enumerate(w["buttons"]):
+            button.grid(row=row, column=4 + i, padx=(4, 0), pady=1)
+        return w
+
+    def update_tracking(self) -> None:
+        """The list of what SteamVR gets, as the driver last reported it."""
+        t, pal = self.t, self.pal
+        rows = tracking.rows(self.bridge.devices)
+        if [r["id"] for r in rows] != list(self.track_rows):
+            for w in self.track_rows.values():
+                for widget in (w["name"], w["dot"], w["state"], w["rate"], *w["buttons"]):
+                    widget.destroy()
+            self.track_rows = {r["id"]: self.track_row(i, r["name"]) for i, r in enumerate(rows)}
+        if rows:
+            self.track_none.grid_forget()
+        else:
+            self.track_none.grid(row=0, column=0, sticky="w", pady=2)
+        colors = {"tracking": "#22c55e", "paused": "#f59e0b"}
+        for r in rows:
+            w = self.track_rows[r["id"]]
+            w["dot"].config(fg=colors.get(r["state"], pal["muted"]))
+            w["state"].config(text=t["track_" + r["state"]])
+            w["rate"].config(text=t["track_rate"].format(rate=r["rate"]) if r["rate"] else "")
+            if r["actions"] != w["actions"]:
+                w["actions"] = r["actions"]
+                for i, button in enumerate(w["buttons"]):
+                    if i < len(r["actions"]):
+                        key, set_mode = r["actions"][i]
+                        button.config(text=t["track_" + key],
+                                      command=lambda d=r["id"], n=r["name"], m=set_mode: self.set_tracking(d, n, m))
+                        button.grid()
+                    else:
+                        button.grid_remove()
+
+    def set_tracking(self, device: str, name: str, set_mode: str) -> None:
+        error = self.bridge.set_tracking(device, set_mode)
+        if error:
+            text = self.t["track_failed"].format(name=self.t.get("d_" + name, name), error=error)
+            self.track_msg.config(text=text)
+            self.track_msg.pack(anchor="w", pady=(4, 0))
+            self.log(f"tracking of {device}: {error}")
+        else:
+            self.track_msg.pack_forget()
+            self.log(f"tracking of {device}: {set_mode}")
+        self.update_tracking()
 
     def offset_id(self) -> str:
         name = self.off_device.get()
@@ -721,6 +802,7 @@ class LinkApp:
     def refresh(self) -> None:
         t, pal = self.t, self.pal
         self.update_offset_devices()
+        self.update_tracking()
         while True:
             try:
                 ev = self.tray.events.get_nowait()
