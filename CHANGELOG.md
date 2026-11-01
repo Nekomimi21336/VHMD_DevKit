@@ -3,6 +3,7 @@
 ## 未リリース
 
 ### 追加
+- **PICO Motion Tracker を SteamVR の腰と足のトラッカーに**: ヘッドセットのアプリが `XR_BD_body_tracking` で体の関節を読み、`waist` / `left_foot` / `right_foot` として送る。PC のアプリの「体のトラッキング」で切れる(`headset_bridge --no-body-tracking`)。
 - **コントローラーのボタンの割り当て**: ボタンを押したときに SteamVR へ送る入力を、同じ手の中で変えられる。PC のアプリの「コントローラーのボタン」(すぐ反映)と `headset_bridge --bind left.menu=menu`。
 - **中心をくっきり・周辺を粗く(フォービエイテッド圧縮)**: 圧縮の前に GPU で目ごとの外側を縮め、ヘッドセットが表示のときに引き伸ばす。強(中央 40%・外側 1/4)で送る画素が 30% になり、圧縮 7.15 → 4.7 ms、姿勢から映像まで 22.6 → 20.0 ms。PC のアプリの「パフォーマンス」と `headset_bridge --foveation 1|2`。
 - **映像を UDP と誤り訂正(Reed-Solomon)で送る(実験的)**: パケットが落ちても映像が待たされず、落ちた分は組み立て直す。組み立てられなかった画像の後はキーフレームまで飛ばしてキーフレームを頼む(ドライバの映像に `keyframe` の印、`{"keyframe": true}` の行で要求)。PC のアプリの「パフォーマンス」と `headset_bridge --udp-video --fec`。ヘッドセットのアプリ(`udp_video.h`)・`vhmd-link-sim`・中継 DLL が対応。わざと 5% 落としても新しい画像 70.6 回/秒、復号の誤り 0。

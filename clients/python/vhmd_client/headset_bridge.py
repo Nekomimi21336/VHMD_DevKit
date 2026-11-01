@@ -85,6 +85,7 @@ class BridgeOptions:
     fec: int = 30                 # parity packets per 100 (UDP video)
     foveation: int = 0            # foveated encoding: 0 off, 1 light, 2 strong (FOVEATION)
     bindings: Dict[str, str] = field(default_factory=dict)   # changes from bindings.DEFAULTS
+    body_tracking: bool = True    # what the PICO Motion Trackers track, as SteamVR trackers
 
 
 class Stats:
@@ -178,6 +179,7 @@ class Bridge:
         self._native: Optional[native_relay.NativeRelay] = None
         self.data_path = "python"
         self._hands = bindings.compiled(bindings.table(options.bindings))
+        self._body_state = 0            # 0 none, 1 waiting for the Motion Trackers, 2 tracked
 
     # -- setup ----------------------------------------------------------------
     def start(self) -> None:
@@ -426,6 +428,11 @@ class Bridge:
         elif t == "link_stats":
             self.stats.headset = m
             self._udp_adapt(m)
+            body = m.get("body", 0)
+            if body != self._body_state:
+                self._body_state = body
+                self.log({2: "body tracking: Motion Trackers tracked (waist, feet)", 1: "body tracking: waiting for the "
+                          "Motion Trackers", 0: "body tracking: off"}.get(body, f"body tracking: {body}"))
         elif t == "link_timing" and self.o.sync:
             self._display_sync(m)
 
@@ -630,7 +637,8 @@ class Bridge:
                     pass
 
             if self.connected():
-                status = {"type": "status", "pc": platform.node(), **self.pc_state, "predict": self.o.predict}
+                status = {"type": "status", "pc": platform.node(), **self.pc_state, "predict": self.o.predict,
+                          "body": self.o.body_tracking}
                 if self.o.refresh > 0:
                     status["refresh"] = self.o.refresh
                 self.link.send(json.dumps(status, separators=(",", ":")).encode())
@@ -706,6 +714,8 @@ def main() -> None:
     ap.add_argument("--bind", action="append", default=[], metavar="HAND.BUTTON=INPUT",
                     help="what a button presses in SteamVR, e.g. left.menu=menu; repeat for more "
                          "(default: left.menu=system, the SteamVR dashboard)")
+    ap.add_argument("--no-body-tracking", action="store_true",
+                    help="do not send what the PICO Motion Trackers track as SteamVR trackers")
     ap.add_argument("--no-sync", action="store_true", help="do not move VHMD's vsync to the headset's display")
     ap.add_argument("--sync-target-ms", type=float, default=0.0,
                     help="how long frames should wait on the headset before shown (default: 0.4 frame)")
@@ -722,7 +732,7 @@ def main() -> None:
         adaptive=not args.fixed_bitrate, sync=not args.no_sync, sync_target_ms=args.sync_target_ms,
         refresh=args.refresh, encoder_backend=args.driver_encoder, auto_latency=not args.fixed_latency,
         predict=not args.no_predict, eye_scale=args.eye_scale, native=args.native, udp_video=args.udp_video,
-        fec=args.fec, foveation=args.foveation, bindings=bound),
+        fec=args.fec, foveation=args.foveation, bindings=bound, body_tracking=not args.no_body_tracking),
         log=lambda m: print(m, flush=True))
     bridge.start()
     try:

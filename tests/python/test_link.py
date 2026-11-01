@@ -296,6 +296,15 @@ def test_adb_reverse_only_over_usb():
     assert headset_bridge.usb_serials("List of devices attached\n\n") == []
 
 
+def test_body_tracking_state_logged_on_change():
+    logs = []
+    b = headset_bridge.Bridge(headset_bridge.BridgeOptions(), log=logs.append)
+    for state in (0, 1, 1, 2, 2, 1):
+        b._own_message({"type": "link_stats", "body": state})
+    assert len(logs) == 3 and "tracked" in logs[1] and "waiting" in logs[2]
+    assert headset_bridge.BridgeOptions().body_tracking is True
+
+
 # -- switching SteamVR between VHMD and the original ---------------------------
 @pytest.fixture
 def steamvr(tmp_path, monkeypatch):

@@ -125,6 +125,20 @@ adb connect 192.168.0.15:5555
 - USB も同時につないでいると 2 台に見えるので、`adb -s 192.168.0.15:5555 logcat` のように指定します。
 - PC のアプリの `adb reverse` は USB の接続だけに行います。Wi-Fi の adb に使うと、姿勢と映像が adb のトンネルを通って遅くなるためです。
 
+### PICO Motion Tracker(腰と足)
+
+ヘッドセットで較正した PICO Motion Tracker の動きを、SteamVR の腰と両足のトラッカーとして送ります。ヘッドセットのアプリが OpenXR の `XR_BD_body_tracking` でランタイムが解いた体の関節を読み、頭・手と同じ座標と同じ時刻で PC に送ります。
+
+| SteamVR のトラッカー | ヘッドセットの関節 |
+|---|---|
+| `waist` | 骨盤(`PELVIS`) |
+| `left_foot` / `right_foot` | 足首(`LEFT_ANKLE` / `RIGHT_ANKLE`。人型アバターの足のボーンの位置) |
+
+- 関節がすべて取れているときだけ送ります。Motion Tracker がなければ何も送らず、SteamVR にトラッカーは現れません。
+- 取れなくなると、1 回だけ「無効」と送って止めます。トラッカーは SteamVR を終了するまで灰色で残ります。
+- PC のアプリの「体のトラッキング」で切れます(`headset_bridge --no-body-tracking`)。
+- Pico 4 Ultra と Motion Tracker 2 台で確認: SteamVR に 3 台が約 72 回/秒で届き、立った状態で腰 0.87 m、足 0.09 m、左右の足の間隔約 21 cm。
+
 ### コントローラーのボタン
 
 左の三本線ボタンは、SteamVR のメニュー(ダッシュボード)を開く `system` として届きます。SteamVR のメニューを開けるのは `system` だけで、`menu` では開きません。

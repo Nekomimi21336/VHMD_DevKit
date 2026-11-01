@@ -1257,6 +1257,7 @@ struct App {
         std::string control;    // who moves the HMD: "manual", "auto", another sender, "" = anyone
         double refresh = 0;     // display refresh rate the PC wants (0 = the headset's own)
         bool predict = false;   // performance setting: send poses predicted for when the PC's image shows
+        bool body = false;      // send what the PICO Motion Trackers track as SteamVR trackers
         std::chrono::steady_clock::time_point at{};
     } pc;
     std::string shown_control;  // last owner announced in a notice
@@ -1301,6 +1302,13 @@ struct App {
              stick_touch = XR_NULL_HANDLE, btn_a = XR_NULL_HANDLE, btn_b = XR_NULL_HANDLE, btn_x = XR_NULL_HANDLE,
              btn_y = XR_NULL_HANDLE, menu = XR_NULL_HANDLE, haptic = XR_NULL_HANDLE;
     XrSpace grip_spaces[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
+
+    // PICO Motion Trackers (XR_BD_body_tracking).
+    bool has_body = false;
+    XrBodyTrackerBD body = XR_NULL_HANDLE;
+    PFN_xrLocateBodyJointsBD body_locate = nullptr;
+    std::chrono::steady_clock::time_point body_retry{};
+    bool body_tracked = false;
 
     GLuint program = 0, vbo = 0, vao = 0;
     GLint mvp_loc = -1;
@@ -1349,6 +1357,10 @@ bool CreateInstance(App& app) {
             exts.push_back(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
             app.has_refresh_rate = true;
         }
+        if (strcmp(p.extensionName, XR_BD_BODY_TRACKING_EXTENSION_NAME) == 0) {
+            exts.push_back(XR_BD_BODY_TRACKING_EXTENSION_NAME);
+            app.has_body = true;
+        }
     }
     LOGI("%u runtime extensions; Pico controller profile: %s", n, app.has_bd_controller ? "yes" : "no");
 
@@ -1373,9 +1385,13 @@ bool CreateInstance(App& app) {
     XrSystemGetInfo si{XR_TYPE_SYSTEM_GET_INFO};
     si.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
     if (!Check(xrGetSystem(app.instance, &si, &app.system), "xrGetSystem")) return false;
+    XrSystemBodyTrackingPropertiesBD body_props{XR_TYPE_SYSTEM_BODY_TRACKING_PROPERTIES_BD};
     XrSystemProperties sp{XR_TYPE_SYSTEM_PROPERTIES};
+    if (app.has_body) sp.next = &body_props;
     xrGetSystemProperties(app.instance, app.system, &sp);
     app.system_name = sp.systemName;
+    app.has_body = app.has_body && body_props.supportsBodyTracking;
+    LOGI("body tracking: %s", app.has_body ? "supported" : "not supported");
     return true;
 }
 
@@ -1665,6 +1681,54 @@ void AppendPose(std::string& out, const char* id, const XrSpaceLocation& loc) {
     }
     if (out.size() > 1) out += ',';
     out += buf;
+}
+
+// The body the runtime solves from the PICO Motion Trackers, as SteamVR trackers
+// (they appear with their first pose, so nothing shows without Motion Trackers).
+// A humanoid avatar's foot bone is the ankle.
+void AppendBody(App& app, std::string& out, XrTime time) {
+    static const struct {
+        const char* id;
+        XrBodyJointBD joint;
+    } kTrackers[] = {{"waist", XR_BODY_JOINT_PELVIS_BD},
+                     {"left_foot", XR_BODY_JOINT_LEFT_ANKLE_BD},
+                     {"right_foot", XR_BODY_JOINT_RIGHT_ANKLE_BD}};
+    if (!app.has_body) return;
+    if (app.body == XR_NULL_HANDLE) {
+        const auto now = std::chrono::steady_clock::now();
+        if (!app.pc.body || now < app.body_retry) return;
+        app.body_retry = now + std::chrono::seconds(5);
+        PFN_xrCreateBodyTrackerBD create = nullptr;
+        xrGetInstanceProcAddr(app.instance, "xrCreateBodyTrackerBD", reinterpret_cast<PFN_xrVoidFunction*>(&create));
+        xrGetInstanceProcAddr(app.instance, "xrLocateBodyJointsBD",
+                              reinterpret_cast<PFN_xrVoidFunction*>(&app.body_locate));
+        if (!create || !app.body_locate) return;
+        XrBodyTrackerCreateInfoBD ci{XR_TYPE_BODY_TRACKER_CREATE_INFO_BD};
+        ci.jointSet = XR_BODY_JOINT_SET_FULL_BODY_JOINTS_BD;
+        const XrResult r = create(app.session, &ci, &app.body);
+        LOGI("body tracker: %d", static_cast<int>(r));
+        if (XR_FAILED(r)) return;
+    }
+    XrBodyJointLocationBD joints[XR_BODY_JOINT_COUNT_BD] = {};
+    XrBodyJointsLocateInfoBD li{XR_TYPE_BODY_JOINTS_LOCATE_INFO_BD};
+    li.baseSpace = app.base;
+    li.time = time;
+    XrBodyJointLocationsBD loc{XR_TYPE_BODY_JOINT_LOCATIONS_BD};
+    loc.jointLocationCount = XR_BODY_JOINT_COUNT_BD;
+    loc.jointLocations = joints;
+    const XrResult r = app.body_locate(app.body, &li, &loc);
+    const bool tracked = app.pc.body && XR_SUCCEEDED(r) && loc.allJointPosesTracked;
+    if (tracked != app.body_tracked) LOGI("body tracking: %s (%d)", tracked ? "tracked" : "lost", static_cast<int>(r));
+    if (!tracked && !app.body_tracked) return;
+    app.body_tracked = tracked;
+    for (const auto& t : kTrackers) {
+        XrSpaceLocation l{XR_TYPE_SPACE_LOCATION};
+        if (tracked) {
+            l.locationFlags = joints[t.joint].locationFlags;
+            l.pose = joints[t.joint].pose;
+        }
+        AppendPose(out, t.id, l);   // no longer tracked: said once, as not valid
+    }
 }
 
 void AppendInputs(App& app, std::string& out, int hand) {
@@ -2096,6 +2160,7 @@ void Frame(App& app) {
     AppendPose(msg, "hmd", head_out);
     AppendPose(msg, "left_hand", hands_out[kLeft]);
     AppendPose(msg, "right_hand", hands_out[kRight]);
+    AppendBody(app, msg, pose_time);
     AppendInputs(app, msg, kLeft);
     AppendInputs(app, msg, kRight);
 
@@ -2111,6 +2176,7 @@ void Frame(App& app) {
             double refresh = 0;
             app.pc.refresh = JsonNumber(m, "refresh", &refresh) ? refresh : 0;
             app.pc.predict = JsonBool(m, "predict", false);
+            app.pc.body = JsonBool(m, "body", false);
             std::string name;
             if (JsonString(m, "pc", &name)) {
                 std::lock_guard<std::mutex> l(g_pc_mu);
@@ -2300,16 +2366,17 @@ void Frame(App& app) {
         app.st_haptics = app.haptics;
         app.haptics = 0;
         // The same numbers for the PC: over Wi-Fi there is no logcat.
-        char st[384];
+        char st[416];
         snprintf(st, sizeof(st),
                  "{\"type\":\"link_stats\",\"display\":%.1f,\"received\":%.1f,\"decoded\":%.1f,\"shown\":%.1f,"
                  "\"repeats\":%.1f,\"dropped\":%.1f,\"buffer\":%d,\"wait_ms\":%.1f,\"wait_p95_ms\":%.1f,"
                  "\"reprojected\":%.0f,\"audio_packets\":%.1f,\"audio_underruns\":%d,\"decode_ms\":%.2f,"
-                 "\"decode_max_ms\":%.2f,\"predict_ms\":%.1f,\"late_ms\":%.1f,\"udp_lost\":%.2f,\"udp_skipped\":%.1f}",
+                 "\"decode_max_ms\":%.2f,\"predict_ms\":%.1f,\"late_ms\":%.1f,\"udp_lost\":%.2f,\"udp_skipped\":%.1f,"
+                 "\"body\":%d}",
                  xr_frames / s, v.received / s, v.decoded / s, v.shown / s, v.repeats / s, v.dropped / s, v.buffer,
                  v.wait_avg_ms, v.wait_p95_ms, rep, v.audio_packets / s, v.audio_underruns, v.decode_avg_ms,
                  v.decode_max_ms, app.pc.predict ? app.predict_ms : 0.0f, app.predict_late_ms, v.udp_lost / s,
-                 v.skipped / s);
+                 v.skipped / s, app.body_tracked ? 2 : app.body != XR_NULL_HANDLE ? 1 : 0);
         app.link_stats = st;
         app.st_display = xr_frames / s;
         app.st_received = v.received / s;

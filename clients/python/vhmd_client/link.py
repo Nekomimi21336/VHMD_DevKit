@@ -47,6 +47,7 @@ DEFAULTS = {"quality": "standard", "codec": "hevc", "buffer": 0, "refresh": 72, 
             # performance settings (each trades some quality or safety for less latency)
             "auto_latency": True, "predict": True, "amf": True, "eye_scale": 1.0, "udp_video": False, "fec": 30, "foveation": 0,
             "bindings": {},                    # changes from bindings.DEFAULTS
+            "body_tracking": True,
             "dev_view": False}
 
 TEXT = {
@@ -71,6 +72,8 @@ TEXT = {
         "q_low": "Low (20 Mbit/s)", "q_standard": "Standard (40 Mbit/s)", "q_high": "High (60 Mbit/s)", "q_max": "Highest (80 Mbit/s)",
         "c_hevc": "HEVC (recommended)", "c_h264": "H.264", "c_av1": "AV1 (newer GPUs)",
         "b0": "Lowest latency", "b1": "Smoother (+1 frame)",
+        "body": "Body tracking", "perf_body_tracking": "Use PICO Motion Trackers (waist and feet in SteamVR)",
+        "perf_body_tracking_hint": "Calibrate them on the headset first. The SteamVR trackers appear once they are tracked.",
         "bind": "Controller buttons", "bind_hint": "What each button presses in SteamVR. Changes apply at once.",
         "bind_reset": "Back to defaults", "b_left_menu": "Left menu button (three lines)", "b_left_x": "Left X",
         "b_left_y": "Left Y", "b_left_joystick_click": "Left stick press", "b_right_a": "Right A", "b_right_b": "Right B",
@@ -119,6 +122,8 @@ TEXT = {
         "q_low": "低(20 Mbit/s)", "q_standard": "標準(40 Mbit/s)", "q_high": "高(60 Mbit/s)", "q_max": "最高(80 Mbit/s)",
         "c_hevc": "HEVC(推奨)", "c_h264": "H.264", "c_av1": "AV1(新しい GPU)",
         "b0": "遅れを最小に", "b1": "なめらか(+1 フレーム)",
+        "body": "体のトラッキング", "perf_body_tracking": "PICO Motion Tracker を使う(SteamVR に腰と足のトラッカーを出す)",
+        "perf_body_tracking_hint": "先にヘッドセットで較正してください。トラッキングが始まると SteamVR にトラッカーが現れます。",
         "bind": "コントローラーのボタン", "bind_hint": "ボタンを押したときに SteamVR へ送る入力。変えるとすぐ反映されます。",
         "bind_reset": "既定に戻す", "b_left_menu": "左の三本線ボタン", "b_left_x": "左 X", "b_left_y": "左 Y",
         "b_left_joystick_click": "左スティックの押し込み", "b_right_a": "右 A", "b_right_b": "右 B",
@@ -277,7 +282,8 @@ class LinkApp:
                                            encoder_backend="auto" if self.s["amf"] else "mf",
                                            eye_scale=float(self.s["eye_scale"]),
                                            udp_video=bool(self.s["udp_video"]), fec=int(self.s["fec"]),
-                                           foveation=int(self.s["foveation"]), bindings=dict(self.s["bindings"])),
+                                           foveation=int(self.s["foveation"]), bindings=dict(self.s["bindings"]),
+                                           body_tracking=bool(self.s["body_tracking"])),
                              log=self.log)
         try:
             self.bridge.start()
@@ -431,6 +437,14 @@ class LinkApp:
                 self.bind_combo(grid, len(self.bind_vars), hand, button)
         ttk.Button(c, text=t["bind_reset"], command=self.reset_bindings).pack(anchor="w", pady=(6, 0))
 
+        # Body tracking
+        c = self.card(self.body, t["body"])
+        var = tk.BooleanVar(value=bool(self.s["body_tracking"]))
+        ttk.Checkbutton(c, text=t["perf_body_tracking"], style="Card.TCheckbutton", variable=var,
+                        command=lambda: self.set_perf("body_tracking", var.get())).pack(anchor="w", pady=(6, 0))
+        ttk.Label(c, text=t["perf_body_tracking_hint"], style="CardMuted.TLabel", wraplength=470,
+                  justify="left").pack(anchor="w", padx=(22, 0))
+
         # Developer
         self.dev_card_outer = tk.Frame(self.body, bg=pal["border"], padx=1, pady=1)
         dc = ttk.Frame(self.dev_card_outer, style="Card.TFrame", padding=(14, 10))
@@ -526,6 +540,8 @@ class LinkApp:
             self.bridge.o.auto_latency = on
         elif key == "predict":
             self.bridge.o.predict = on           # told to the headset with the next status
+        elif key == "body_tracking":
+            self.bridge.o.body_tracking = on     # the same
         elif key == "amf":
             self.bridge.set_video(encoder_backend="auto" if on else "mf")
         elif key == "udp_video":
