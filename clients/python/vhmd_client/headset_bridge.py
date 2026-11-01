@@ -87,6 +87,8 @@ class BridgeOptions:
     bindings: Dict[str, str] = field(default_factory=dict)   # changes from bindings.DEFAULTS
     body_tracking: bool = True    # what the PICO Motion Trackers track, as SteamVR trackers
     wear_detect: bool = True      # SteamVR hears when the headset is taken off (and goes on standby)
+    mic: bool = False             # the headset's microphone, played into mic_device
+    mic_device: str = "CABLE Input"   # an audio output; programs record from its other end (VB-CABLE)
     offsets: Dict[str, dict] = field(default_factory=dict)   # by device id, see offsets.py
 
 
@@ -182,6 +184,8 @@ class Bridge:
         self.data_path = "python"
         self._hands = bindings.compiled(bindings.table(options.bindings))
         self._body_state = 0            # 0 none, 1 waiting for the Motion Trackers, 2 tracked
+        self.mic_driver: dict = {}      # how the driver plays the microphone ("mic" of its status)
+        self._mic_packets = (0, 0)      # packets the driver had, and it before that
         self.devices: list = []         # the driver's devices, from its status
 
     # -- setup ----------------------------------------------------------------
@@ -374,6 +378,20 @@ class Bridge:
             return r.get("error", "refused")
         self.devices = [{**d, "tracking": r["mode"]} if d["id"] == r["id"] else d for d in self.devices]
         return ""
+
+    def mic_state(self) -> str:
+        """"off", "permission" (the headset has to allow it), "no_device" (no such
+        audio output), "busy" (another program holds it alone), "on" (sound
+        reaches the driver) or "waiting"."""
+        if not self.o.mic:
+            return "off"
+        if self.mic_driver.get("state") == "no device":
+            return "no_device"
+        if self.mic_driver.get("state") == "device busy":
+            return "busy"
+        if self.stats.headset.get("mic") == 1:
+            return "permission"
+        return "on" if self._mic_packets[0] > self._mic_packets[1] else "waiting"
 
     def request(self, op: str, timeout: float = 0.3, **args) -> dict:
         """A config request to the driver, sent from the socket the poses use: the
@@ -636,10 +654,13 @@ class Bridge:
                     self.devices = self.request("status").get("devices", [])
                     for msg in offsets.pending(self.devices, self.o.offsets):
                         self.request("offset", **msg)
+                    self.mic_driver = self.request("mic", device=self.o.mic_device if self.o.mic else "").get("mic", {})
+                    self._mic_packets = (self.mic_driver.get("packets", 0), self._mic_packets[0])
                 except (OSError, TimeoutError, ValueError):
                     pass
             else:
                 self.devices = []
+                self.mic_driver = {}
 
             # Controllers as axes for the Dev edition, labelled shapes otherwise.
             edition = self.info.get("edition")
@@ -671,7 +692,7 @@ class Bridge:
 
             if self.connected():
                 status = {"type": "status", "pc": platform.node(), **self.pc_state, "predict": self.o.predict,
-                          "body": self.o.body_tracking, "wear": self.o.wear_detect}
+                          "body": self.o.body_tracking, "wear": self.o.wear_detect, "mic": self.o.mic}
                 if self.o.refresh > 0:
                     status["refresh"] = self.o.refresh
                 self.link.send(json.dumps(status, separators=(",", ":")).encode())
@@ -749,6 +770,9 @@ def main() -> None:
                          "(default: left.menu=system, the SteamVR dashboard)")
     ap.add_argument("--no-body-tracking", action="store_true",
                     help="do not send what the PICO Motion Trackers track as SteamVR trackers")
+    ap.add_argument("--mic", action="store_true", help="use the headset's microphone")
+    ap.add_argument("--mic-device", default="CABLE Input",
+                    help="audio output to play it into; programs record from its other end (default: VB-CABLE's)")
     ap.add_argument("--no-wear-detect", action="store_true",
                     help="SteamVR always takes the headset as worn: no standby, video goes on when it is put down")
     ap.add_argument("--no-sync", action="store_true", help="do not move VHMD's vsync to the headset's display")
@@ -768,7 +792,7 @@ def main() -> None:
         refresh=args.refresh, encoder_backend=args.driver_encoder, auto_latency=not args.fixed_latency,
         predict=not args.no_predict, eye_scale=args.eye_scale, native=args.native, udp_video=args.udp_video,
         fec=args.fec, foveation=args.foveation, bindings=bound, body_tracking=not args.no_body_tracking,
-        wear_detect=not args.no_wear_detect),
+        wear_detect=not args.no_wear_detect, mic=args.mic, mic_device=args.mic_device),
         log=lambda m: print(m, flush=True))
     bridge.start()
     try:

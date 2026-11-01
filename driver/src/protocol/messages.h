@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
@@ -64,6 +65,12 @@ struct GazeMessage {
     std::string src;
 };
 
+// The headset's microphone: 16-bit, 48 kHz, mono.
+struct MicMessage {
+    uint32_t seq = 0;
+    std::vector<int16_t> pcm;
+};
+
 struct ConfigMessage {
     std::string op;   // "list", "ping", "set_role", "reset", ...
     std::string id;   // optional device id argument
@@ -82,9 +89,11 @@ struct ConfigMessage {
     // which devices (none = all). Without "source" the op only reports.
     std::optional<std::string> source;
     std::vector<std::string> devices;
+    // "mic": the audio output to play the headset's microphone into ("" = off).
+    std::optional<std::string> device;
 };
 
-using Message = std::variant<PoseMessage, InputMessage, SkeletonMessage, GazeMessage, ConfigMessage>;
+using Message = std::variant<PoseMessage, InputMessage, SkeletonMessage, GazeMessage, MicMessage, ConfigMessage>;
 
 struct ParseLimits {
     double max_abs_position = 1000.0;  // meters

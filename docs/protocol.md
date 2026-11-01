@@ -66,6 +66,14 @@
 | `src` | | 送り手の名前(32 文字まで)。`pose` / `input` / `skeleton` / `gaze` 共通。操作権(`config` の `control`)を持つ送り手だけが反映されます |
 | `valid` | | `false` で「トラッキング喪失」を明示。`pos`/`rot` は省略可。次の有効 `pose` で復帰 |
 
+### `mic`
+
+```json
+{ "type": "mic", "seq": 12, "pcm": "AQD//wAB" }
+```
+
+ヘッドセットのマイクの音です(16 ビット・48 kHz・モノラルのリトルエンディアンを base64 にしたもの。1 つ 100 ms まで)。`config` の `mic` で出力先を決めると、ドライバがその出力へ再生します。`seq` は 1 ずつ増やします(`status` の `mic.lost` に使います)。Windows のみ。
+
 ### `input`(コントローラ / トラッカー / HMD)
 
 ```json

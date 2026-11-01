@@ -203,6 +203,14 @@ public:
         }
         cv_.notify_one();
     }
+    // A message that must not take the place of the next pose (sound): sent in turn.
+    void PostKept(std::string line) {
+        {
+            std::lock_guard<std::mutex> l(mu_);
+            if (kept_.size() < 8) kept_.push_back(std::move(line));
+        }
+        cv_.notify_one();
+    }
     bool Connected() const { return connected_.load(); }
 
     // Messages the PC sent back (e.g. {"type":"haptic",...}), oldest first.
@@ -246,13 +254,14 @@ private:
         int fd = -1;    // USB: TCP to 127.0.0.1 (adb reverse)
         int udp = -1;   // Wi-Fi: datagrams to the PC
         while (true) {
-            std::string line;
+            std::deque<std::string> lines;
             {
                 std::unique_lock<std::mutex> l(mu_);
-                cv_.wait_for(l, std::chrono::milliseconds(500), [this] { return stop_ || has_; });
+                cv_.wait_for(l, std::chrono::milliseconds(500), [this] { return stop_ || has_ || !kept_.empty(); });
                 if (stop_) break;
-                if (!has_) continue;
-                line.swap(pending_);
+                if (!has_ && kept_.empty()) continue;
+                lines.swap(kept_);
+                if (has_) lines.push_back(std::move(pending_));
                 has_ = false;
             }
             const int link = g_link.load();
@@ -267,8 +276,10 @@ private:
                 a.sin_port = htons(kPcPort);
                 a.sin_addr.s_addr = g_pc_addr.load();
                 // One array per datagram, without the line break.
-                const size_t n = line.size() - (line.empty() || line.back() != '\n' ? 0 : 1);
-                connected_ = sendto(udp, line.data(), n, 0, reinterpret_cast<sockaddr*>(&a), sizeof(a)) > 0;
+                for (const std::string& line : lines) {
+                    const size_t n = line.size() - (line.empty() || line.back() != '\n' ? 0 : 1);
+                    connected_ = sendto(udp, line.data(), n, 0, reinterpret_cast<sockaddr*>(&a), sizeof(a)) > 0;
+                }
                 Receive(-1, udp);
                 continue;
             }
@@ -281,8 +292,10 @@ private:
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
                 continue;
             }
-            const char* p = line.data();
-            size_t left = line.size();
+            std::string all;
+            for (const std::string& line : lines) all += line;
+            const char* p = all.data();
+            size_t left = all.size();
             while (left > 0) {
                 ssize_t n = send(fd, p, left, MSG_NOSIGNAL);
                 if (n <= 0) break;
@@ -324,6 +337,7 @@ private:
     std::mutex mu_;
     std::condition_variable cv_;
     std::string pending_;
+    std::deque<std::string> kept_;
     bool has_ = false;
     bool stop_ = false;
     std::atomic<bool> connected_{false};
@@ -552,6 +566,86 @@ private:
     std::atomic<size_t> head_{0}, tail_{0};
     bool primed_ = false;   // callback thread only
     std::atomic<int> packets_{0}, underruns_{0}, skipped_{0};
+};
+
+// -- microphone ---------------------------------------------------------------
+// While the PC app asks for it: 10 ms of 48 kHz mono at a time as {"type":"mic"}
+// messages. Android's path for voice calls takes out noise and goes quiet
+// between words.
+std::string Base64(const uint8_t* data, size_t size) {
+    static const char kDigits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((size + 2) / 3 * 4);
+    for (size_t i = 0; i < size; i += 3) {
+        const uint32_t left = static_cast<uint32_t>(size - i);
+        const uint32_t v = static_cast<uint32_t>(data[i]) << 16 | (left > 1 ? data[i + 1] << 8 : 0) | (left > 2 ? data[i + 2] : 0);
+        out += kDigits[v >> 18];
+        out += kDigits[(v >> 12) & 63];
+        out += left > 1 ? kDigits[(v >> 6) & 63] : '=';
+        out += left > 2 ? kDigits[v & 63] : '=';
+    }
+    return out;
+}
+
+class Mic {
+public:
+    explicit Mic(Sender& sender) : sender_(sender) {}
+    void Start() {
+        stop_ = false;
+        running_ = true;
+        thread_ = std::thread([this] { Run(); });
+    }
+    void Stop() {
+        stop_ = true;
+        if (thread_.joinable()) thread_.join();
+        running_ = false;
+    }
+    bool Running() const { return running_; }
+
+private:
+    static AAudioStream* Open() {
+        AAudioStreamBuilder* b = nullptr;
+        if (AAudio_createStreamBuilder(&b) != AAUDIO_OK) return nullptr;
+        AAudioStreamBuilder_setDirection(b, AAUDIO_DIRECTION_INPUT);
+        AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_I16);
+        AAudioStreamBuilder_setChannelCount(b, 1);
+        AAudioStreamBuilder_setSampleRate(b, 48000);
+        AAudioStreamBuilder_setInputPreset(b, AAUDIO_INPUT_PRESET_VOICE_COMMUNICATION);
+        AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+        AAudioStream* s = nullptr;
+        const aaudio_result_t r = AAudioStreamBuilder_openStream(b, &s);
+        AAudioStreamBuilder_delete(b);
+        LOGI("microphone: %s", AAudio_convertResultToText(r));
+        return r == AAUDIO_OK ? s : nullptr;
+    }
+
+    void Run() {
+        static constexpr int32_t kFrames = 480;   // 10 ms: a datagram that fits one Wi-Fi packet
+        int16_t pcm[kFrames];
+        uint32_t seq = 0;
+        while (!stop_) {
+            AAudioStream* s = Open();
+            if (!s) {
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+                continue;
+            }
+            AAudioStream_requestStart(s);
+            while (!stop_) {
+                const int32_t n = AAudioStream_read(s, pcm, kFrames, 50000000);
+                if (n < 0) break;   // the stream was lost
+                if (n == 0) continue;
+                sender_.PostKept(Fmt("[{\"type\":\"mic\",\"seq\":%u,\"pcm\":\"", seq++) +
+                                 Base64(reinterpret_cast<const uint8_t*>(pcm), static_cast<size_t>(n) * sizeof(int16_t)) +
+                                 "\"}]\n");
+            }
+            AAudioStream_requestStop(s);
+            AAudioStream_close(s);
+        }
+    }
+
+    Sender& sender_;
+    std::thread thread_;
+    std::atomic<bool> stop_{false}, running_{false};
 };
 
 // -- video ------------------------------------------------------------------
@@ -1243,6 +1337,8 @@ struct App {
     bool has_refresh_rate = false;
     bool has_presence = false;   // XR_EXT_user_presence
     int worn = -1;               // as the runtime last said; -1 = it has not
+    bool mic_asked = false;      // the permission was asked for
+    int mic_state = 0;           // 0 off, 1 waiting for the permission, 2 on
     float hmd_battery = -1;      // 0..1, -1 = not read
     bool hmd_charging = false;
     std::chrono::steady_clock::time_point next_battery{};
@@ -1264,6 +1360,7 @@ struct App {
         bool predict = false;   // performance setting: send poses predicted for when the PC's image shows
         bool body = false;      // send what the PICO Motion Trackers track as SteamVR trackers
         bool wear = true;       // tell SteamVR when the headset is taken off; off = always worn
+        bool mic = false;       // send the microphone
         std::chrono::steady_clock::time_point at{};
     } pc;
     std::string shown_control;  // last owner announced in a notice
@@ -1324,6 +1421,7 @@ struct App {
     GLint uv_rect_loc = -1, fov_loc = -1;
 
     Sender sender;
+    Mic mic{sender};
     Video video;
 };
 
@@ -1862,6 +1960,46 @@ void ReadBattery(App& app) {
     if (env->ExceptionCheck()) env->ExceptionClear();
 }
 
+// The microphone follows the PC app's setting. The permission is asked for on
+// the headset the first time it is turned on.
+bool HasMicPermission(App& app, JNIEnv* env) {
+    jobject activity = app.android->activity->clazz;
+    jclass cls = env->GetObjectClass(activity);
+    jmethodID check = env->GetMethodID(cls, "checkSelfPermission", "(Ljava/lang/String;)I");
+    jstring name = env->NewStringUTF("android.permission.RECORD_AUDIO");
+    const jint result = check ? env->CallIntMethod(activity, check, name) : -1;
+    if (!app.mic_asked && result != 0) {
+        app.mic_asked = true;
+        jmethodID ask = env->GetMethodID(cls, "requestPermissions", "([Ljava/lang/String;I)V");
+        jobjectArray names = env->NewObjectArray(1, env->FindClass("java/lang/String"), name);
+        if (ask) env->CallVoidMethod(activity, ask, names, 1);
+        env->DeleteLocalRef(names);
+        LOGI("microphone: permission asked for");
+    }
+    env->DeleteLocalRef(name);
+    env->DeleteLocalRef(cls);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    return result == 0;
+}
+
+void UpdateMic(App& app) {
+    const bool pc_there = std::chrono::steady_clock::now() - app.pc.at < std::chrono::seconds(5);
+    if (!app.pc.mic || !pc_there) {
+        if (app.mic.Running()) app.mic.Stop();
+        app.mic_state = 0;
+        return;
+    }
+    if (app.mic.Running()) return;
+    JNIEnv* env = nullptr;
+    if (app.android->activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return;
+    if (HasMicPermission(app, env)) {
+        app.mic.Start();
+        app.mic_state = 2;
+    } else {
+        app.mic_state = 1;
+    }
+}
+
 // Whether the headset is worn and the batteries, for SteamVR.
 void AppendPower(App& app, std::string& out) {
     const auto now = std::chrono::steady_clock::now();
@@ -2273,6 +2411,7 @@ void Frame(App& app) {
             app.pc.predict = JsonBool(m, "predict", false);
             app.pc.body = JsonBool(m, "body", false);
             app.pc.wear = JsonBool(m, "wear", true);
+            app.pc.mic = JsonBool(m, "mic", false);
             std::string name;
             if (JsonString(m, "pc", &name)) {
                 std::lock_guard<std::mutex> l(g_pc_mu);
@@ -2358,6 +2497,7 @@ void Frame(App& app) {
         app.next_info = now_info + std::chrono::seconds(2);
         AppendHeadsetInfo(app, msg, eye_local);
         AppendPower(app, msg);
+        UpdateMic(app);
         if (!app.link_stats.empty()) {
             msg += ',';
             msg += app.link_stats;
@@ -2463,17 +2603,17 @@ void Frame(App& app) {
         app.st_haptics = app.haptics;
         app.haptics = 0;
         // The same numbers for the PC: over Wi-Fi there is no logcat.
-        char st[416];
+        char st[440];
         snprintf(st, sizeof(st),
                  "{\"type\":\"link_stats\",\"display\":%.1f,\"received\":%.1f,\"decoded\":%.1f,\"shown\":%.1f,"
                  "\"repeats\":%.1f,\"dropped\":%.1f,\"buffer\":%d,\"wait_ms\":%.1f,\"wait_p95_ms\":%.1f,"
                  "\"reprojected\":%.0f,\"audio_packets\":%.1f,\"audio_underruns\":%d,\"decode_ms\":%.2f,"
                  "\"decode_max_ms\":%.2f,\"predict_ms\":%.1f,\"late_ms\":%.1f,\"udp_lost\":%.2f,\"udp_skipped\":%.1f,"
-                 "\"body\":%d}",
+                 "\"body\":%d,\"mic\":%d}",
                  xr_frames / s, v.received / s, v.decoded / s, v.shown / s, v.repeats / s, v.dropped / s, v.buffer,
                  v.wait_avg_ms, v.wait_p95_ms, rep, v.audio_packets / s, v.audio_underruns, v.decode_avg_ms,
                  v.decode_max_ms, app.pc.predict ? app.predict_ms : 0.0f, app.predict_late_ms, v.udp_lost / s,
-                 v.skipped / s, app.body_tracked ? 2 : app.body != XR_NULL_HANDLE ? 1 : 0);
+                 v.skipped / s, app.body_tracked ? 2 : app.body != XR_NULL_HANDLE ? 1 : 0, app.mic_state);
         app.link_stats = st;
         app.st_display = xr_frames / s;
         app.st_received = v.received / s;
@@ -2590,6 +2730,7 @@ void android_main(android_app* android) {
     }
 
     ReleaseWifiLock(app, wifi_lock);
+    app.mic.Stop();
     app.sender.Stop();
     app.video.Stop();
     if (app.session) xrDestroySession(app.session);

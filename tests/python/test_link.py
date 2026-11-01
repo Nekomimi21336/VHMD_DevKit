@@ -309,6 +309,26 @@ def test_wear_detect_is_on_unless_turned_off():
     assert headset_bridge.BridgeOptions().wear_detect is True
 
 
+def test_mic_state():
+    b = object.__new__(headset_bridge.Bridge)
+    b.o = headset_bridge.BridgeOptions()
+    b.stats = headset_bridge.Stats()
+    b.mic_driver = {"state": "off"}
+    b._mic_packets = (5, 5)
+    assert b.o.mic is False and b.mic_state() == "off"      # off until asked for
+    b.o.mic = True
+    assert b.mic_state() == "waiting"
+    b.stats.headset = {"mic": 1}
+    assert b.mic_state() == "permission"
+    b.stats.headset = {"mic": 2}
+    b._mic_packets = (9, 5)
+    assert b.mic_state() == "on"
+    b.mic_driver = {"state": "no device"}
+    assert b.mic_state() == "no_device"
+    b.mic_driver = {"state": "device busy"}
+    assert b.mic_state() == "busy"
+
+
 # -- position and angle corrections ------------------------------------------
 HAND = {"id": "left_hand", "kind": "controller", "index": 1}
 FOOT = {"id": "tracker_1", "kind": "tracker", "index": 4, "role": "left_foot"}

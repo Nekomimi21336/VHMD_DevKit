@@ -2,6 +2,7 @@
 
 #include <type_traits>
 #include <cmath>
+#include <cstring>
 
 #include <nlohmann/json.hpp>
 
@@ -235,6 +236,48 @@ std::string ParseGaze(const json& obj, const ParseLimits& lim, Message& out) {
     return {};
 }
 
+// Standard base64 with padding; false on anything else.
+bool DecodeBase64(const std::string& text, std::vector<uint8_t>& out) {
+    if (text.size() % 4) return false;
+    uint32_t bits = 0;
+    int have = 0;
+    out.reserve(text.size() / 4 * 3);
+    for (size_t i = 0; i < text.size(); ++i) {
+        const char c = text[i];
+        int v = -1;
+        if (c >= 'A' && c <= 'Z') v = c - 'A';
+        else if (c >= 'a' && c <= 'z') v = c - 'a' + 26;
+        else if (c >= '0' && c <= '9') v = c - '0' + 52;
+        else if (c == '+') v = 62;
+        else if (c == '/') v = 63;
+        else if (c == '=' && i + 2 >= text.size()) continue;
+        if (v < 0) return false;
+        bits = (bits << 6) | static_cast<uint32_t>(v);
+        have += 6;
+        if (have >= 8) {
+            have -= 8;
+            out.push_back(static_cast<uint8_t>(bits >> have));
+        }
+    }
+    return true;
+}
+
+std::string ParseMic(const json& obj, Message& out) {
+    constexpr size_t kMaxPcmText = 12800;   // 100 ms
+    MicMessage m;
+    auto pcm = obj.find("pcm");
+    if (pcm == obj.end() || !pcm->is_string()) return "missing string field 'pcm'";
+    const auto& text = pcm->get_ref<const std::string&>();
+    if (text.size() > kMaxPcmText) return "pcm: too long";
+    std::vector<uint8_t> bytes;
+    if (!DecodeBase64(text, bytes) || bytes.size() % 2) return "pcm: not base64 of 16-bit samples";
+    m.pcm.resize(bytes.size() / 2);
+    if (!bytes.empty()) std::memcpy(m.pcm.data(), bytes.data(), bytes.size());
+    if (auto seq = obj.find("seq"); seq != obj.end() && seq->is_number_unsigned()) m.seq = seq->get<uint32_t>();
+    out = std::move(m);
+    return {};
+}
+
 std::string ParseConfig(const json& obj, Message& out) {
     ConfigMessage m;
     auto op = obj.find("op");
@@ -243,6 +286,7 @@ std::string ParseConfig(const json& obj, Message& out) {
     if (auto id = obj.find("id"); id != obj.end() && id->is_string()) m.id = id->get<std::string>();
     if (auto role = obj.find("role"); role != obj.end() && role->is_string()) m.role = role->get<std::string>();
     if (auto mode = obj.find("mode"); mode != obj.end() && mode->is_string()) m.mode = mode->get<std::string>();
+    if (auto d = obj.find("device"); d != obj.end() && d->is_string()) m.device = d->get<std::string>().substr(0, 128);
     if (auto hz = obj.find("hz"); hz != obj.end() && hz->is_number()) m.hz = hz->get<double>();
     for (auto [key, field] : {std::pair{"slack_ms", &m.slack_ms}, std::pair{"period_ms", &m.period_ms},
                               std::pair{"target_ms", &m.target_ms}, std::pair{"weight", &m.weight}}) {
@@ -276,6 +320,7 @@ std::string ParseOne(const json& obj, const ParseLimits& lim, Message& out) {
     if (t == "input") return ParseInput(obj, lim, out);
     if (t == "skeleton") return ParseSkeleton(obj, lim, out);
     if (t == "gaze") return ParseGaze(obj, lim, out);
+    if (t == "mic") return ParseMic(obj, out);
     if (t == "config") return ParseConfig(obj, out);
     return "unknown type '" + t.substr(0, 32) + "'";
 }
@@ -288,7 +333,8 @@ std::string ParseOneWithSource(const json& obj, const ParseLimits& lim, Message&
     if (src != obj.end() && src->is_string()) {
         const std::string s = src->get<std::string>().substr(0, 32);
         std::visit([&](auto& m) {
-            if constexpr (!std::is_same_v<std::decay_t<decltype(m)>, ConfigMessage>) m.src = s;
+            using T = std::decay_t<decltype(m)>;
+            if constexpr (!std::is_same_v<T, ConfigMessage> && !std::is_same_v<T, MicMessage>) m.src = s;
         }, out);
     }
     return {};

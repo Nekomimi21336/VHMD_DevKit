@@ -47,7 +47,7 @@ DEFAULTS = {"quality": "standard", "codec": "hevc", "buffer": 0, "refresh": 72, 
             # performance settings (each trades some quality or safety for less latency)
             "auto_latency": True, "predict": True, "amf": True, "eye_scale": 1.0, "udp_video": False, "fec": 30, "foveation": 0,
             "bindings": {},                    # changes from bindings.DEFAULTS
-            "body_tracking": True, "wear_detect": True,
+            "body_tracking": True, "wear_detect": True, "mic": False, "mic_device": "CABLE Input",
             "offsets": offsets.DEFAULTS,       # by device id, see offsets.py
             "dev_view": False}
 
@@ -69,6 +69,13 @@ TEXT = {
         "match": "Match the headset's display",
         "match_hint": "VHMD renders with a different field of view or resolution than this headset.",
         "auto_vr": "Start SteamVR when the headset connects",
+        "mic": "Use the headset's microphone",
+        "mic_hint": "Needs VB-CABLE on this PC. In VRChat and other programs, choose \"CABLE Output (VB-Audio Virtual Cable)\" as the microphone.",
+        "mic_permission": "Allow the microphone on the headset.",
+        "mic_no_device": "\"{device}\" was not found. Install VB-CABLE.",
+        "mic_busy": "Another program is using \"{device}\" on its own. Close that program or change its output.",
+        "mic_waiting": "Waiting for sound from the headset.",
+        "mic_on": "Sound is reaching the PC.",
         "wear": "Put SteamVR on standby when the headset is taken off",
         "wear_hint": "Off: video goes on while the headset is put down.",
         "quality": "Quality", "codec": "Codec", "smooth": "Motion",
@@ -134,6 +141,13 @@ TEXT = {
         "match": "ヘッドセットの画面に合わせる",
         "match_hint": "VHMD の視野角・解像度がこのヘッドセットと違います。",
         "auto_vr": "ヘッドセットがつながったら SteamVR を起動する",
+        "mic": "ヘッドセットのマイクを使う",
+        "mic_hint": "この PC に VB-CABLE が必要です。VRChat などのアプリのマイクを「CABLE Output (VB-Audio Virtual Cable)」にしてください。",
+        "mic_permission": "ヘッドセットでマイクを許可してください。",
+        "mic_no_device": "「{device}」が見つかりません。VB-CABLE を入れてください。",
+        "mic_busy": "別のアプリが「{device}」を占有しています。そのアプリを閉じるか、出力先を変えてください。",
+        "mic_waiting": "ヘッドセットの音を待っています。",
+        "mic_on": "PC に音が届いています。",
         "wear": "ヘッドセットを外したら SteamVR を待機させる",
         "wear_hint": "切ると、ヘッドセットを置いているあいだも映像を送り続けます。",
         "quality": "画質", "codec": "圧縮方式", "smooth": "動き",
@@ -314,7 +328,8 @@ class LinkApp:
                                            udp_video=bool(self.s["udp_video"]), fec=int(self.s["fec"]),
                                            foveation=int(self.s["foveation"]), bindings=dict(self.s["bindings"]),
                                            body_tracking=bool(self.s["body_tracking"]),
-                                           wear_detect=bool(self.s["wear_detect"]),
+                                           wear_detect=bool(self.s["wear_detect"]), mic=bool(self.s["mic"]),
+                                           mic_device=str(self.s["mic_device"]),
                                            offsets=dict(self.s["offsets"])),
                              log=self.log)
         try:
@@ -444,6 +459,13 @@ class LinkApp:
         self.q_var = self.combo(grid, 0, t["quality"], [(k, t["q_" + k]) for k, _ in QUALITY], "quality")
         self.c_var = self.combo(grid, 1, t["codec"], [("hevc", t["c_hevc"]), ("av1", t["c_av1"]), ("h264", t["c_h264"])], "codec")
         self.r_var = self.combo(grid, 2, t["refresh"], [(72, t["r72"]), (90, t["r90"])], "refresh")
+        mic_var = tk.BooleanVar(value=bool(self.s["mic"]))
+        ttk.Checkbutton(c, text=t["mic"], style="Card.TCheckbutton", variable=mic_var,
+                        command=lambda: self.set_perf("mic", mic_var.get())).pack(anchor="w", pady=(8, 0))
+        ttk.Label(c, text=t["mic_hint"], style="CardMuted.TLabel", wraplength=470,
+                  justify="left").pack(anchor="w", padx=(22, 0))
+        self.mic_lbl = ttk.Label(c, text="", style="Card.TLabel")
+        self.mic_lbl.pack(anchor="w", padx=(22, 0))
 
         # Performance: what trades quality or safety for less delay, each on its own.
         c = self.card(self.body, t["perf"])
@@ -722,6 +744,8 @@ class LinkApp:
             self.bridge.o.body_tracking = on     # the same
         elif key == "wear_detect":
             self.bridge.o.wear_detect = on       # the same
+        elif key == "mic":
+            self.bridge.o.mic = on               # the same
         elif key == "amf":
             self.bridge.set_video(encoder_backend="auto" if on else "mf")
         elif key == "udp_video":
@@ -826,6 +850,8 @@ class LinkApp:
                 self.quit()
                 return
         st = self.bridge.status()
+        mic = self.bridge.mic_state()
+        self.mic_lbl.config(text="" if mic == "off" else t["mic_" + mic].format(device=self.bridge.o.mic_device))
 
         if st["headset"]:
             link = t["usb"] if st["link"] == "usb" else t["wifi"].format(addr=st["address"])

@@ -20,6 +20,20 @@ TEST(parser_pose_basic) {
     CHECK(p->ts.has_value());
 }
 
+TEST(parser_mic) {
+    // Samples 1, -1, 256 as little-endian 16 bit.
+    auto r = ParseJsonPacket(R"([{"type":"mic","seq":7,"pcm":"AQD//wAB"}])");
+    CHECK(r.errors.empty());
+    const auto* m = std::get_if<MicMessage>(&r.messages.at(0));
+    CHECK(m != nullptr);
+    if (!m) return;
+    CHECK(m->seq == 7);
+    CHECK(m->pcm == std::vector<int16_t>({1, -1, 256}));
+    for (const char* bad : {R"({"type":"mic"})", R"({"type":"mic","pcm":"A$=="})", R"({"type":"mic","pcm":"AQ=="})"}) {
+        CHECK(ParseJsonPacket(bad).messages.empty());
+    }
+}
+
 TEST(parser_pose_normalizes_quaternion) {
     auto r = ParseJsonPacket(R"({"type":"pose","id":"hmd","pos":[0,0,0],"rot":[2,0,0,0]})");
     const auto* p = std::get_if<PoseMessage>(&r.messages.at(0));

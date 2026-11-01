@@ -56,6 +56,11 @@ struct RouterHooks {
     std::function<std::string(bool on)> set_preview_window;
     // Starts / pauses the direct-mode preview. Returns an error string (empty = success).
     std::function<std::string(bool on)> set_preview;
+    // The headset's microphone: its sound, the output to play it into ("" = off)
+    // and how that goes, as a JSON object.
+    std::function<void(const MicMessage&)> mic;
+    std::function<void(const std::string& device)> set_mic;
+    std::function<std::string()> mic_status;
     // JSON object with the driver's own CPU use ("perf" in status).
     std::function<std::string()> perf_status;
 };

@@ -13,6 +13,7 @@
 #include "config/roles.h"
 #include "net/udp_socket.h"
 #include "state/device_state.h"
+#include "state/mic_buffer.h"
 #include "state/router.h"
 
 using namespace vhmd;
@@ -609,6 +610,56 @@ TEST(tracking_paused_holds_the_pose_and_disconnected_reports_off) {
     OutputPose back = s.ComputeOutput(now);
     CHECK(back.pose_valid && back.connected);
     CHECK_NEAR(back.pos.x, 0.7, 1e-9);
+}
+
+TEST(mic_buffer_waits_then_plays_and_catches_up) {
+    MicBuffer b(4, 8);
+    const int16_t two[2] = {1, 2}, ten[10] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    int16_t out[4];
+
+    b.Push(two, 2, 0);
+    CHECK(b.Pull(out, 4) == 0);                 // not enough yet: silence
+    CHECK(out[0] == 0 && out[3] == 0);
+    b.Push(two, 2, 1);
+    CHECK(b.Pull(out, 3) == 3);                 // plays from here
+    CHECK(out[0] == 1 && out[1] == 2 && out[2] == 1);
+    CHECK(b.Pull(out, 4) == 1);                 // ran empty: the rest is silence
+    CHECK(out[0] == 2 && out[1] == 0);
+    CHECK(b.GetStats().underruns == 1);
+
+    b.Push(ten, 10, 4);                         // packets 2 and 3 never came; over the limit
+    CHECK(b.GetStats().lost == 2);
+    CHECK(b.GetStats().skipped == 6);
+    CHECK(b.Pull(out, 4) == 4);
+    CHECK(out[0] == 7 && out[3] == 10);         // only the newest stays
+}
+
+TEST(router_mic) {
+    DriverConfig cfg = DefaultConfig();
+    std::vector<std::shared_ptr<DeviceState>> states;
+    for (const auto& d : cfg.devices) states.push_back(std::make_shared<DeviceState>(d, cfg));
+    size_t samples = 0;
+    std::string device = "unset";
+    RouterHooks hooks;
+    hooks.mic = [&](const MicMessage& m) { samples += m.pcm.size(); };
+    hooks.set_mic = [&](const std::string& d) { device = d; };
+    hooks.mic_status = [&]() { return nlohmann::json{{"device", device}}.dump(); };
+    MessageRouter router(cfg, states, hooks);
+    const auto now = Clock::now();
+    auto ask = [&](const char* text) { return nlohmann::json::parse(*router.HandleDatagram(text, now)); };
+
+    CHECK(!router.HandleDatagram(R"([{"type":"mic","seq":0,"pcm":"AQD//wAB"}])", now));
+    CHECK(samples == 3);
+    CHECK(ask(R"({"type":"config","op":"mic"})")["mic"]["device"] == "unset");   // a query changes nothing
+    auto set = ask(R"({"type":"config","op":"mic","device":"CABLE Input"})");
+    CHECK(set["ok"].get<bool>() && set["mic"]["device"] == "CABLE Input");
+    CHECK(device == "CABLE Input");
+    CHECK(ask(R"({"type":"config","op":"list"})")["mic"]["device"] == "CABLE Input");
+    ask(R"({"type":"config","op":"mic","device":""})");
+    CHECK(device.empty());
+
+    MessageRouter no_mic(cfg, states);
+    CHECK(!nlohmann::json::parse(*no_mic.HandleDatagram(R"({"type":"config","op":"mic"})", now))["ok"].get<bool>());
 }
 
 TEST(router_tracking_op) {

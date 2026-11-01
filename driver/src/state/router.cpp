@@ -98,14 +98,22 @@ std::optional<std::string> MessageRouter::HandleDatagram(std::string_view data, 
             reply = HandleConfig(*cfg, now);
             continue;
         }
-        const std::string id = std::visit([](const auto& m) { return m.id; }, msg);
+        if (const auto* mic = std::get_if<MicMessage>(&msg)) {
+            if (hooks_.mic) hooks_.mic(*mic);
+            continue;
+        }
+        const std::string id = std::visit([](const auto& m) -> std::string {
+            if constexpr (std::is_same_v<std::decay_t<decltype(m)>, MicMessage>) return {};
+            else return m.id;
+        }, msg);
         DeviceState* dev = Find(id);
         if (!dev || !dev->Config().enabled) {
             parsed.errors.push_back("unknown or disabled device '" + id.substr(0, 64) + "'");
             continue;
         }
         const std::string src = std::visit([](const auto& m) -> std::string {
-            if constexpr (std::is_same_v<std::decay_t<decltype(m)>, ConfigMessage>) return {};
+            using T = std::decay_t<decltype(m)>;
+            if constexpr (std::is_same_v<T, ConfigMessage> || std::is_same_v<T, MicMessage>) return {};
             else return m.src;
         }, msg);
         if (!Accept(id, src, now)) continue;   // another sender has control of this device
@@ -241,6 +249,10 @@ std::string MessageRouter::StatusJson(Clock::time_point now, std::optional<doubl
         devs.push_back(std::move(e));
     }
     j["devices"] = std::move(devs);
+    if (hooks_.mic_status) {
+        json mic = json::parse(hooks_.mic_status(), nullptr, false);
+        if (!mic.is_discarded()) j["mic"] = std::move(mic);
+    }
     if (hooks_.display_status) {
         json d = json::parse(hooks_.display_status(), nullptr, false);
         if (!d.is_discarded()) j["display"] = std::move(d);
@@ -379,6 +391,17 @@ std::optional<std::string> MessageRouter::HandleConfig(const ConfigMessage& m, C
             r["ok"] = true;
             r["id"] = dev->Config().id;
             r["mode"] = ToString(dev->Tracking());
+        }
+    } else if (m.op == "mic") {
+        // {"op":"mic","device":"CABLE Input"}: plays the headset's microphone into
+        // that output ("" = off); no device = query.
+        if (!hooks_.set_mic || !hooks_.mic_status) {
+            r["ok"] = false;
+            r["error"] = "mic not available";
+        } else {
+            if (m.device) hooks_.set_mic(*m.device);
+            r["ok"] = true;
+            r["mic"] = json::parse(hooks_.mic_status(), nullptr, false);
         }
     } else if (m.op == "refresh_rate") {
         if (m.hz && (!(*m.hz >= kMinRefreshHz) || *m.hz > kMaxRefreshHz)) {

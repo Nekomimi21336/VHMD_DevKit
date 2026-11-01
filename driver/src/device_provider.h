@@ -16,6 +16,9 @@
 #include "device_base.h"
 #include "net/udp_receiver.h"
 #include "state/router.h"
+#ifdef _WIN32
+#include "windows/mic_output.h"
+#endif
 
 namespace vhmd {
 
@@ -64,6 +67,9 @@ private:
     HmdDevice* hmd_ = nullptr;
     std::unique_ptr<MessageRouter> router_;
 
+#ifdef _WIN32
+    MicOutput mic_;
+#endif
     UdpReceiver receiver_;
     std::mutex client_mu_;
     Endpoint last_client_;
