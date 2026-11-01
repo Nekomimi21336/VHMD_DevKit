@@ -393,6 +393,22 @@ def test_app_field_values_become_a_correction(monkeypatch):
     link.LinkApp.offset_changed(app)
     assert len(calls) == 1                       # not a number
 
+    link.LinkApp.reset_offset(app)
+    assert calls[-1] == ("left_hand", offsets.DEFAULTS["left_hand"])
+    app.offset_id = lambda: "tracker_1"
+    link.LinkApp.reset_offset(app)
+    assert calls[-1] == ("tracker_1", offsets.ZERO)
+
+
+def test_offset_defaults(tmp_path, monkeypatch):
+    from vhmd_client import link
+
+    monkeypatch.setattr(link, "SETTINGS", tmp_path / "link_settings.json")
+    want = {"pos": [0.0, 0.0, -0.1], "ypr": [0.0, -10.0, 0.0]}
+    assert link.load_settings()["offsets"] == {"left_hand": want, "right_hand": want}
+    link.SETTINGS.write_text('{"offsets": {}}', encoding="utf-8")
+    assert link.load_settings()["offsets"] == {}   # cleared by the user: stays cleared
+
 
 # -- switching SteamVR between VHMD and the original ---------------------------
 @pytest.fixture

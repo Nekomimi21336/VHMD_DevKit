@@ -16,6 +16,11 @@ MAX_METERS = 2.0
 MAX_DEGREES = 180.0
 ZERO = {"pos": [0.0, 0.0, 0.0], "ypr": [0.0, 0.0, 0.0]}
 HANDS = ("left_hand", "right_hand")
+DEFAULTS = {hand: {"pos": [0.0, 0.0, -0.1], "ypr": [0.0, -10.0, 0.0]} for hand in HANDS}   # what the PC app starts with
+
+
+def default(device_id: str) -> Dict:
+    return DEFAULTS.get(device_id, ZERO)
 
 
 def space(device_id: str) -> str:

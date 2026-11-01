@@ -48,7 +48,7 @@ DEFAULTS = {"quality": "standard", "codec": "hevc", "buffer": 0, "refresh": 72, 
             "auto_latency": True, "predict": True, "amf": True, "eye_scale": 1.0, "udp_video": False, "fec": 30, "foveation": 0,
             "bindings": {},                    # changes from bindings.DEFAULTS
             "body_tracking": True,
-            "offsets": {},                     # by device id, see offsets.py
+            "offsets": offsets.DEFAULTS,       # by device id, see offsets.py
             "dev_view": False}
 
 TEXT = {
@@ -77,7 +77,7 @@ TEXT = {
         "off_hint": "Controllers move along their own axes, trackers along the room's. Changes apply at once.",
         "off_device": "Device", "off_x": "Left-right X (cm)", "off_y": "Up-down Y (cm)", "off_z": "Back-front Z (cm)",
         "off_yaw": "Yaw (degrees)", "off_pitch": "Pitch (degrees)", "off_roll": "Roll (degrees)",
-        "off_reset": "Clear this device's correction", "d_left_hand": "Left controller",
+        "off_reset": "Back to this device's default", "d_left_hand": "Left controller",
         "d_right_hand": "Right controller", "d_waist": "Waist", "d_left_foot": "Left foot", "d_right_foot": "Right foot",
         "body": "Body tracking", "perf_body_tracking": "Use PICO Motion Trackers (waist and feet in SteamVR)",
         "perf_body_tracking_hint": "Calibrate them on the headset first. The SteamVR trackers appear once they are tracked.",
@@ -133,7 +133,7 @@ TEXT = {
         "off_hint": "コントローラーは本体の向き、トラッカーは部屋の向きに沿って動きます。変えるとすぐ反映されます。",
         "off_device": "機器", "off_x": "左右 X(cm)", "off_y": "上下 Y(cm)", "off_z": "前後 Z(cm)",
         "off_yaw": "ヨー(度)", "off_pitch": "ピッチ(度)", "off_roll": "ロール(度)",
-        "off_reset": "この機器の補正をなくす", "d_left_hand": "左コントローラー", "d_right_hand": "右コントローラー",
+        "off_reset": "この機器を初期値に戻す", "d_left_hand": "左コントローラー", "d_right_hand": "右コントローラー",
         "d_waist": "腰", "d_left_foot": "左足", "d_right_foot": "右足",
         "body": "体のトラッキング", "perf_body_tracking": "PICO Motion Tracker を使う(SteamVR に腰と足のトラッカーを出す)",
         "perf_body_tracking_hint": "先にヘッドセットで較正してください。トラッキングが始まると SteamVR にトラッカーが現れます。",
@@ -610,10 +610,11 @@ class LinkApp:
         self.log(f"correction of {device}: {value['pos']} m, {value['ypr']} degrees")
 
     def reset_offset(self) -> None:
-        self.bridge.set_offset(self.offset_id(), offsets.ZERO)
+        value = offsets.default(self.offset_id())
+        self.bridge.set_offset(self.offset_id(), value)
         self.set("offsets", self.bridge.o.offsets)
         self.show_offset()
-        self.log(f"correction of {self.offset_id()}: none")
+        self.log(f"correction of {self.offset_id()}: {value['pos']} m, {value['ypr']} degrees")
 
     def set(self, key: str, value) -> None:
         self.s[key] = value
