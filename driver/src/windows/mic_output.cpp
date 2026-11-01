@@ -32,64 +32,79 @@ std::wstring Wide(const std::string& s) {
     return w;
 }
 
-// The active output whose name contains `name`.
+std::wstring NameOf(IMMDevice* dev) {
+    ComPtr<IPropertyStore> props;
+    std::wstring name;
+    if (FAILED(dev->OpenPropertyStore(STGM_READ, &props))) return name;
+    PROPVARIANT v;
+    PropVariantInit(&v);
+    if (SUCCEEDED(props->GetValue(PKEY_Device_FriendlyName, &v)) && v.vt == VT_LPWSTR) name = v.pwszVal;
+    PropVariantClear(&v);
+    return name;
+}
+
+// The active output whose name contains `name`, or the default output.
 ComPtr<IMMDevice> FindOutput(const std::string& name) {
     ComPtr<IMMDeviceEnumerator> en;
+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&en)))) return nullptr;
+    if (name == MicPlayer::kDefaultOutput) {
+        ComPtr<IMMDevice> dev;
+        en->GetDefaultAudioEndpoint(eRender, eConsole, &dev);
+        return dev;
+    }
     ComPtr<IMMDeviceCollection> list;
     UINT count = 0;
-    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&en))) ||
-        FAILED(en->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &list)) || FAILED(list->GetCount(&count)))
+    if (FAILED(en->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &list)) || FAILED(list->GetCount(&count)))
         return nullptr;
     const std::wstring wanted = Wide(name);
     for (UINT i = 0; i < count; ++i) {
         ComPtr<IMMDevice> dev;
-        ComPtr<IPropertyStore> props;
-        if (FAILED(list->Item(i, &dev)) || FAILED(dev->OpenPropertyStore(STGM_READ, &props))) continue;
-        PROPVARIANT v;
-        PropVariantInit(&v);
-        const bool found = SUCCEEDED(props->GetValue(PKEY_Device_FriendlyName, &v)) && v.vt == VT_LPWSTR &&
-                           std::wstring(v.pwszVal).find(wanted) != std::wstring::npos;
-        PropVariantClear(&v);
-        if (found) return dev;
+        if (SUCCEEDED(list->Item(i, &dev)) && NameOf(dev.Get()).find(wanted) != std::wstring::npos) return dev;
     }
     return nullptr;
 }
 
 } // namespace
 
-void MicOutput::SetDevice(const std::string& name) {
+void MicPlayer::SetTarget(const std::string& name) {
     {
         std::lock_guard<std::mutex> lock(mu_);
-        if (name == device_) return;
-        device_ = name;
+        if (name == target_) return;
+        target_ = name;
     }
-    if (!name.empty() && !running_.exchange(true)) thread_ = std::thread(&MicOutput::Loop, this);
+    if (!name.empty() && !running_.exchange(true)) thread_ = std::thread(&MicPlayer::Loop, this);
 }
 
-std::string MicOutput::Device() const {
+void MicPlayer::SetAvoid(const std::string& name) {
     std::lock_guard<std::mutex> lock(mu_);
-    return device_;
+    avoid_ = name;
 }
 
-void MicOutput::SetState(const char* state) {
+void MicPlayer::Push(const MicMessage& m) {
+    if (!Target().empty()) buffer_.Push(m.pcm.data(), m.pcm.size(), m.seq);
+}
+
+std::string MicPlayer::Target() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    return target_;
+}
+
+std::string MicPlayer::State() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    return state_;
+}
+
+void MicPlayer::SetState(const char* state) {
     std::lock_guard<std::mutex> lock(mu_);
     state_ = state;
 }
 
-std::string MicOutput::StatusJson() const {
-    const MicBuffer::Stats s = buffer_.GetStats();
-    std::lock_guard<std::mutex> lock(mu_);
-    return nlohmann::json{{"device", device_},       {"state", state_},           {"packets", s.packets},
-                          {"lost", s.lost},          {"underruns", s.underruns},  {"skipped", s.skipped}}
-        .dump();
-}
-
-void MicOutput::Stop() {
+void MicPlayer::Stop() {
     running_ = false;
     if (thread_.joinable()) thread_.join();
 }
 
-void MicOutput::Loop() {
+void MicPlayer::Loop() {
     const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     HANDLE ready = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     WAVEFORMATEX format{};
@@ -100,7 +115,7 @@ void MicOutput::Loop() {
     format.nBlockAlign = sizeof(int16_t);
     format.nAvgBytesPerSec = kRate * sizeof(int16_t);
     while (running_) {
-        const std::string name = Device();
+        const std::string name = Target();
         if (name.empty()) {
             SetState("off");
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -114,6 +129,16 @@ void MicOutput::Loop() {
                             AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
         if (!dev) {
             SetState("no device");
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            continue;
+        }
+        std::string avoid;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            avoid = avoid_;
+        }
+        if (!avoid.empty() && NameOf(dev.Get()).find(Wide(avoid)) != std::wstring::npos) {
+            SetState("same device");
             std::this_thread::sleep_for(std::chrono::seconds(2));
             continue;
         }
@@ -132,7 +157,7 @@ void MicOutput::Loop() {
         SetState("playing");
         Log(LogLevel::Info, "mic: playing into \"%s\"", name.c_str());
         const UINT32 period = kRate / 100;   // 10 ms at a time: silence must not queue up ahead of the sound
-        while (running_ && Device() == name) {
+        while (running_ && Target() == name) {
             if (WaitForSingleObject(ready, 200) != WAIT_OBJECT_0) continue;
             UINT32 padding = 0;
             if (FAILED(client->GetCurrentPadding(&padding))) break;
@@ -148,6 +173,29 @@ void MicOutput::Loop() {
     SetState("off");
     CloseHandle(ready);
     if (SUCCEEDED(co)) CoUninitialize();
+}
+
+void MicOutput::SetDevice(const std::string& name) {
+    output_.SetTarget(name);
+    monitor_.SetAvoid(name);
+}
+
+void MicOutput::Push(const MicMessage& m) {
+    output_.Push(m);
+    monitor_.Push(m);
+}
+
+std::string MicOutput::StatusJson() const {
+    const MicBuffer::Stats s = output_.Stats();
+    return nlohmann::json{{"device", output_.Target()}, {"state", output_.State()}, {"monitor", monitor_.State()},
+                          {"packets", s.packets},       {"lost", s.lost},          {"underruns", s.underruns},
+                          {"skipped", s.skipped}}
+        .dump();
+}
+
+void MicOutput::Stop() {
+    output_.Stop();
+    monitor_.Stop();
 }
 
 } // namespace vhmd

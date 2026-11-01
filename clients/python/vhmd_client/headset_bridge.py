@@ -89,6 +89,7 @@ class BridgeOptions:
     wear_detect: bool = True      # SteamVR hears when the headset is taken off (and goes on standby)
     mic: bool = False             # the headset's microphone, played into mic_device
     mic_device: str = "CABLE Input"   # an audio output; programs record from its other end (VB-CABLE)
+    mic_monitor: bool = False     # also into the default output, to hear oneself through the PC
     offsets: Dict[str, dict] = field(default_factory=dict)   # by device id, see offsets.py
 
 
@@ -654,7 +655,9 @@ class Bridge:
                     self.devices = self.request("status").get("devices", [])
                     for msg in offsets.pending(self.devices, self.o.offsets):
                         self.request("offset", **msg)
-                    self.mic_driver = self.request("mic", device=self.o.mic_device if self.o.mic else "").get("mic", {})
+                    self.mic_driver = self.request("mic", device=self.o.mic_device if self.o.mic else "",
+                                                   mode="monitor" if self.o.mic and self.o.mic_monitor else "quiet"
+                                                   ).get("mic", {})
                     self._mic_packets = (self.mic_driver.get("packets", 0), self._mic_packets[0])
                 except (OSError, TimeoutError, ValueError):
                     pass
@@ -773,6 +776,7 @@ def main() -> None:
     ap.add_argument("--mic", action="store_true", help="use the headset's microphone")
     ap.add_argument("--mic-device", default="CABLE Input",
                     help="audio output to play it into; programs record from its other end (default: VB-CABLE's)")
+    ap.add_argument("--mic-monitor", action="store_true", help="also play it into the default output, to hear yourself")
     ap.add_argument("--no-wear-detect", action="store_true",
                     help="SteamVR always takes the headset as worn: no standby, video goes on when it is put down")
     ap.add_argument("--no-sync", action="store_true", help="do not move VHMD's vsync to the headset's display")
@@ -792,7 +796,8 @@ def main() -> None:
         refresh=args.refresh, encoder_backend=args.driver_encoder, auto_latency=not args.fixed_latency,
         predict=not args.no_predict, eye_scale=args.eye_scale, native=args.native, udp_video=args.udp_video,
         fec=args.fec, foveation=args.foveation, bindings=bound, body_tracking=not args.no_body_tracking,
-        wear_detect=not args.no_wear_detect, mic=args.mic, mic_device=args.mic_device),
+        wear_detect=not args.no_wear_detect, mic=args.mic, mic_device=args.mic_device,
+        mic_monitor=args.mic_monitor),
         log=lambda m: print(m, flush=True))
     bridge.start()
     try:

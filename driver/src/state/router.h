@@ -60,6 +60,7 @@ struct RouterHooks {
     // and how that goes, as a JSON object.
     std::function<void(const MicMessage&)> mic;
     std::function<void(const std::string& device)> set_mic;
+    std::function<void(bool on)> set_mic_monitor;   // also into the default output, to hear it
     std::function<std::string()> mic_status;
     // JSON object with the driver's own CPU use ("perf" in status).
     std::function<std::string()> perf_status;

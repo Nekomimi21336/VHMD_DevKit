@@ -393,13 +393,15 @@ std::optional<std::string> MessageRouter::HandleConfig(const ConfigMessage& m, C
             r["mode"] = ToString(dev->Tracking());
         }
     } else if (m.op == "mic") {
-        // {"op":"mic","device":"CABLE Input"}: plays the headset's microphone into
-        // that output ("" = off); no device = query.
+        // {"op":"mic","device":"CABLE Input","mode":"monitor"|"quiet"}: plays the
+        // headset's microphone into that output ("" = off) and, with "monitor",
+        // into the default output too. Without them = query.
         if (!hooks_.set_mic || !hooks_.mic_status) {
             r["ok"] = false;
             r["error"] = "mic not available";
         } else {
             if (m.device) hooks_.set_mic(*m.device);
+            if (!m.mode.empty() && hooks_.set_mic_monitor) hooks_.set_mic_monitor(m.mode == "monitor");
             r["ok"] = true;
             r["mic"] = json::parse(hooks_.mic_status(), nullptr, false);
         }

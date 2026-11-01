@@ -71,6 +71,9 @@ TEXT = {
         "auto_vr": "Start SteamVR when the headset connects",
         "mic": "Use the headset's microphone",
         "mic_hint": "Needs VB-CABLE on this PC. In VRChat and other programs, choose \"CABLE Output (VB-Audio Virtual Cable)\" as the microphone.",
+        "mic_monitor": "Listen to yourself (loopback)",
+        "mic_monitor_hint": "Plays it on this PC's default output, which also reaches the headset a moment later. Speakers may howl. Off again when VHMD Link starts.",
+        "mic_monitor_same": "The default output is \"{device}\": it cannot be played there as well.",
         "mic_permission": "Allow the microphone on the headset.",
         "mic_no_device": "\"{device}\" was not found. Install VB-CABLE.",
         "mic_busy": "Another program is using \"{device}\" on its own. Close that program or change its output.",
@@ -143,6 +146,9 @@ TEXT = {
         "auto_vr": "ヘッドセットがつながったら SteamVR を起動する",
         "mic": "ヘッドセットのマイクを使う",
         "mic_hint": "この PC に VB-CABLE が必要です。VRChat などのアプリのマイクを「CABLE Output (VB-Audio Virtual Cable)」にしてください。",
+        "mic_monitor": "自分の声を試し聞きする(ループバック)",
+        "mic_monitor_hint": "既定の再生デバイスで鳴らします。ヘッドセットにも少し遅れて届きます。スピーカーではハウリングすることがあります。VHMD Link を起動し直すと切れます。",
+        "mic_monitor_same": "既定の出力が「{device}」なので、試し聞きはできません。",
         "mic_permission": "ヘッドセットでマイクを許可してください。",
         "mic_no_device": "「{device}」が見つかりません。VB-CABLE を入れてください。",
         "mic_busy": "別のアプリが「{device}」を占有しています。そのアプリを閉じるか、出力先を変えてください。",
@@ -464,6 +470,12 @@ class LinkApp:
                         command=lambda: self.set_perf("mic", mic_var.get())).pack(anchor="w", pady=(8, 0))
         ttk.Label(c, text=t["mic_hint"], style="CardMuted.TLabel", wraplength=470,
                   justify="left").pack(anchor="w", padx=(22, 0))
+        monitor_var = tk.BooleanVar(value=False)   # not saved: it can howl
+        self.monitor_btn = ttk.Checkbutton(c, text=t["mic_monitor"], style="Card.TCheckbutton", variable=monitor_var,
+                                           command=lambda: self.set_monitor(monitor_var.get()))
+        self.monitor_btn.pack(anchor="w", padx=(22, 0), pady=(6, 0))
+        ttk.Label(c, text=t["mic_monitor_hint"], style="CardMuted.TLabel", wraplength=450,
+                  justify="left").pack(anchor="w", padx=(44, 0))
         self.mic_lbl = ttk.Label(c, text="", style="Card.TLabel")
         self.mic_lbl.pack(anchor="w", padx=(22, 0))
 
@@ -733,6 +745,10 @@ class LinkApp:
         self.s[key] = value
         save_settings(self.s)
 
+    def set_monitor(self, on: bool) -> None:
+        self.bridge.o.mic_monitor = on           # with the next driver request
+        self.log(f"microphone monitor: {'on' if on else 'off'}")
+
     def set_perf(self, key: str, on: bool) -> None:
         """A performance switch: applied right away (the encoder after a short reconnect)."""
         self.set(key, on)
@@ -851,6 +867,9 @@ class LinkApp:
                 return
         st = self.bridge.status()
         mic = self.bridge.mic_state()
+        self.monitor_btn.state(["disabled" if mic == "off" else "!disabled"])
+        if self.bridge.o.mic_monitor and self.bridge.mic_driver.get("monitor") == "same device":
+            mic = "monitor_same"
         self.mic_lbl.config(text="" if mic == "off" else t["mic_" + mic].format(device=self.bridge.o.mic_device))
 
         if st["headset"]:

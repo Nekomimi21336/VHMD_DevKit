@@ -114,6 +114,7 @@ vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* driver_context) {
 #ifdef _WIN32
     hooks.mic = [this](const MicMessage& m) { mic_.Push(m); };
     hooks.set_mic = [this](const std::string& device) { mic_.SetDevice(device); };
+    hooks.set_mic_monitor = [this](bool on) { mic_.SetMonitor(on); };
     hooks.mic_status = [this]() { return mic_.StatusJson(); };
 #endif
     router_ = std::make_unique<MessageRouter>(config_, states_, hooks);

@@ -643,6 +643,8 @@ TEST(router_mic) {
     RouterHooks hooks;
     hooks.mic = [&](const MicMessage& m) { samples += m.pcm.size(); };
     hooks.set_mic = [&](const std::string& d) { device = d; };
+    bool monitor = false;
+    hooks.set_mic_monitor = [&](bool on) { monitor = on; };
     hooks.mic_status = [&]() { return nlohmann::json{{"device", device}}.dump(); };
     MessageRouter router(cfg, states, hooks);
     const auto now = Clock::now();
@@ -654,6 +656,11 @@ TEST(router_mic) {
     auto set = ask(R"({"type":"config","op":"mic","device":"CABLE Input"})");
     CHECK(set["ok"].get<bool>() && set["mic"]["device"] == "CABLE Input");
     CHECK(device == "CABLE Input");
+    CHECK(!monitor);
+    ask(R"({"type":"config","op":"mic","mode":"monitor"})");
+    CHECK(monitor && device == "CABLE Input");
+    ask(R"({"type":"config","op":"mic","mode":"quiet"})");
+    CHECK(!monitor);
     CHECK(ask(R"({"type":"config","op":"list"})")["mic"]["device"] == "CABLE Input");
     ask(R"({"type":"config","op":"mic","device":""})");
     CHECK(device.empty());
