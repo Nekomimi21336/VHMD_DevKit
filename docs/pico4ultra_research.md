@@ -1,6 +1,6 @@
 # Pico 4 Ultra 向けアプリの調査メモ(2026-10-20)
 
-ヘッドセット側に自作アプリを入れる構成(PICO Connect の代わり、または追加データの送信)を検討するための調査です。Web 上の一次資料(PICO 公式、Khronos、SDK のリリースノート、GitHub)を読んだ結果で、**実機ではまだ何も試していません**。[確認] は一次資料で確認、[二次] は報道・第三者、[未確認] は裏付けなし。
+ヘッドセット側に自作アプリを入れる構成(PICO Connect の代わり、または追加データの送信)を検討するための調査です。Web 上の一次資料(PICO 公式、Khronos、SDK のリリースノート、GitHub)を読んだ結果です。実機で確かめたことは「実機で確認したこと」の章にまとめました。それ以外の章は実機では試していません。[確認] は一次資料で確認、[二次] は報道・第三者、[未確認] は裏付けなし。
 
 ## 結論
 
@@ -59,6 +59,33 @@ VHMD に送れる、PICO Connect では渡らないデータ: Motion Tracker の
 1. `xrEnumerateInstanceExtensionProperties` の一覧(どの BD 拡張が使えるか)
 2. 自作アプリがフォーカスを失ったとき(PICO Connect の実行中)にトラッキングが止まるか
 3. `MediaCodecList` のデコーダーと上限
+
+## 実機で確認したこと(2026-11-01、Pico 4 Ultra A9210、Pico OS 5.15.7)
+
+### カメラ
+
+一時的な試験版で確認しました。VHMD には入れていません(`docs/decisions.md` の 5 章)。
+
+| 経路 | 結果 |
+|---|---|
+| Android の Camera2 / NDK(`CAMERA` 権限あり) | カメラ 0 個。`Cannot reach camera service` |
+| Khronos ローダー | 拡張 69 個。`XR_PICO_` は 0 個 |
+| Khronos ローダー + Unity SDK と同じマニフェスト値 | 同じ 69 個 |
+| PICO OpenXR SDK 3.0.0 のローダー | 78 個。`camera_image` なし |
+| Unity SDK のローダー(`LoaderForUnitySDK_1_1_0`)+ マニフェスト値 | 144 個。`XR_PICO_camera_image` あり |
+
+- 最後の構成で、ネイティブのアプリからカラーカメラ 2 台を列挙し、左のカメラのフレームを受け取れた: RGBA の CPU バッファ、2048 × 1536 〜 640 × 480 の 5 段階、30 fps で失敗なし(60 fps の設定もあるが未試験)。1 枚を画像にして、部屋が色付きで写っていることを確認した。右のカメラと 2 台同時は未試験。トラッキング用カメラと深度は一覧に出ない。
+- マニフェスト値: `pxr.sdk.version_code=5150`、`use.pxr.sdk=1`、`pvr.sdk.version`、`enable_vst=1`、`pvr.app.secure_mr=1`。`CAMERA` 権限も要る。Unity SDK のローダーだけでマニフェスト値なしの場合は未試験。
+- ヘッダーには定義がなく、型と数値は PICO の [OpenXR 仕様](https://lf3-static.bytednsdoc.com/obj/eden-cn/sliheh7phbozbps/NativeSDK/3.0.0/NativeSdkSpec.html)の 12.3 節にある。`XR_EXT_future` も有効にする。
+- PICO のローダーは、スレッドを Java VM に接続してから `xrInitializeLoaderKHR` を呼ばないと `-51` で失敗する(`BD_ForwardLoader: vm->GetEnv() failed`)。
+- Khronos ローダーも PICO のシステムブローカー経由で同じ `libopenxr_forwardloader.so` を読むが、拡張は増えない。差はランタイムの内部にあり、これ以上は調べていない(SDK の規約がリバースエンジニアリングを禁じている)。
+
+### その他
+
+- コントローラーの電池は `pico4s_controller` でだけ読める(1〜5 の 5 段階)。
+- 装着は `XR_EXT_user_presence` で届く。近接センサーの記録と一致。
+- `XR_EXT_hand_tracking` は Khronos ローダーでも公開されている。
+- アイカメラは無い(`pxreyetrackingservice` が `Nonexistent` と返す)。
 
 ## 出典
 

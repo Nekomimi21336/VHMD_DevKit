@@ -75,4 +75,5 @@
 
 - 他社コントローラタイプ名・レンダーモデル・シリアル形式の流用、`simulate_*`、アンチチート回避に繋がる機能。
 - SteamVR / Steam 本体ディレクトリへのファイルコピー(登録は `vrpathreg` のみ)。
+- PICO の SDK やローダーの同梱。Pico 4 Ultra のカメラの映像は Unity SDK のローダーでしか見えないが(`docs/pico4ultra_research.md`)、VHMD は汎用性を優先し、Khronos のローダーと標準の拡張で作る。調査は続けてよいが、製品には入れない。
 - `steamvr.vrsettings` の直接編集。例外はアンインストールのみ: 記録を取ったうえで vhmd 由来の項目(`driver_vhmd`、`vhmd_display`、`/devices/vhmd/` のトラッカーロール)を削除するか、`-Restore` でインストール時に記録したファイルに戻す。インストール後にユーザーが変えたそれ以外の設定は、`-Restore` を指定しない限り変更せず一覧表示だけ行う。
