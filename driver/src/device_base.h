@@ -71,6 +71,8 @@ protected:
     // "battery" (0..1) and "charging" for every device kind; true if handled.
     bool HandleCommonInput(const std::string& name, float value);
     virtual void OnSkeleton(const SkeletonMessage& /*m*/) {}
+    // Whether the device's correction applies (it is meant for what the device is held in).
+    virtual bool UsesOffset() const { return true; }
     virtual void OnGaze(const GazeMessage& /*m*/) {}
     // Called every tick after inputs were applied (e.g. skeleton refresh).
     virtual void OnTick(Clock::time_point /*now*/) {}
@@ -108,6 +110,7 @@ private:
         OutputPose out;
         std::vector<std::pair<std::string, float>> inputs;
         std::optional<SkeletonMessage> skeleton;
+        DeviceOffset offset;
         std::optional<GazeMessage> gaze;
     };
     void Publish(Clock::time_point now, const Frame& f);

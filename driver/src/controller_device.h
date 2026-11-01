@@ -42,6 +42,7 @@ protected:
     void OnDeactivate() override;
     void OnInput(const std::string& name, float value) override;
     void OnSkeleton(const SkeletonMessage& m) override;
+    bool UsesOffset() const override { return !hand_twin_; }   // a tracked hand holds nothing
     void OnTick(Clock::time_point now) override;
     void OnBecameActive() override { derived_pushed_at_.reset(); }
 

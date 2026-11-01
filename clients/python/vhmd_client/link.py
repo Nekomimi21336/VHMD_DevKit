@@ -47,7 +47,7 @@ DEFAULTS = {"quality": "standard", "codec": "hevc", "buffer": 0, "refresh": 72, 
             # performance settings (each trades some quality or safety for less latency)
             "auto_latency": True, "predict": True, "amf": True, "eye_scale": 1.0, "udp_video": False, "fec": 30, "foveation": 0,
             "bindings": {},                    # changes from bindings.DEFAULTS
-            "body_tracking": True, "wear_detect": True, "mic": False, "mic_device": "CABLE Input",
+            "body_tracking": True, "hand_tracking": False, "wear_detect": True, "mic": False, "mic_device": "CABLE Input",
             "offsets": offsets.DEFAULTS,       # by device id, see offsets.py
             "dev_view": False}
 
@@ -100,6 +100,8 @@ TEXT = {
         "d_right_hand": "Right controller", "d_waist": "Waist", "d_left_foot": "Left foot", "d_right_foot": "Right foot",
         "body": "Body tracking", "perf_body_tracking": "Use PICO Motion Trackers (waist and feet in SteamVR)",
         "perf_body_tracking_hint": "Calibrate them on the headset first. The SteamVR trackers appear once they are tracked.",
+        "perf_hand_tracking": "Use tracked hands when the controllers are put down",
+        "perf_hand_tracking_hint": "Turn on hand tracking in the headset's settings too. A pinch is the trigger.",
         "bind": "Controller buttons", "bind_hint": "What each button presses in SteamVR. Changes apply at once.",
         "bind_reset": "Back to defaults", "b_left_menu": "Left menu button (three lines)", "b_left_x": "Left X",
         "b_left_y": "Left Y", "b_left_joystick_click": "Left stick press", "b_right_a": "Right A", "b_right_b": "Right B",
@@ -174,6 +176,8 @@ TEXT = {
         "d_waist": "腰", "d_left_foot": "左足", "d_right_foot": "右足",
         "body": "体のトラッキング", "perf_body_tracking": "PICO Motion Tracker を使う(SteamVR に腰と足のトラッカーを出す)",
         "perf_body_tracking_hint": "先にヘッドセットで較正してください。トラッキングが始まると SteamVR にトラッカーが現れます。",
+        "perf_hand_tracking": "コントローラーを置いたら手のトラッキングに切り替える",
+        "perf_hand_tracking_hint": "ヘッドセットの設定でもハンドトラッキングをオンにしてください。親指と人差し指でつまむとトリガーになります。",
         "bind": "コントローラーのボタン", "bind_hint": "ボタンを押したときに SteamVR へ送る入力。変えるとすぐ反映されます。",
         "bind_reset": "既定に戻す", "b_left_menu": "左の三本線ボタン", "b_left_x": "左 X", "b_left_y": "左 Y",
         "b_left_joystick_click": "左スティックの押し込み", "b_right_a": "右 A", "b_right_b": "右 B",
@@ -334,6 +338,7 @@ class LinkApp:
                                            udp_video=bool(self.s["udp_video"]), fec=int(self.s["fec"]),
                                            foveation=int(self.s["foveation"]), bindings=dict(self.s["bindings"]),
                                            body_tracking=bool(self.s["body_tracking"]),
+                                           hand_tracking=bool(self.s["hand_tracking"]),
                                            wear_detect=bool(self.s["wear_detect"]), mic=bool(self.s["mic"]),
                                            mic_device=str(self.s["mic_device"]),
                                            offsets=dict(self.s["offsets"])),
@@ -553,6 +558,11 @@ class LinkApp:
         var = tk.BooleanVar(value=bool(self.s["body_tracking"]))
         ttk.Checkbutton(c, text=t["perf_body_tracking"], style="Card.TCheckbutton", variable=var,
                         command=lambda: self.set_perf("body_tracking", var.get())).pack(anchor="w", pady=(6, 0))
+        hand_var = tk.BooleanVar(value=bool(self.s["hand_tracking"]))
+        ttk.Checkbutton(c, text=t["perf_hand_tracking"], style="Card.TCheckbutton", variable=hand_var,
+                        command=lambda: self.set_perf("hand_tracking", hand_var.get())).pack(anchor="w", pady=(6, 0))
+        ttk.Label(c, text=t["perf_hand_tracking_hint"], style="CardMuted.TLabel", wraplength=470,
+                  justify="left").pack(anchor="w", padx=(22, 0))
         ttk.Label(c, text=t["perf_body_tracking_hint"], style="CardMuted.TLabel", wraplength=470,
                   justify="left").pack(anchor="w", padx=(22, 0))
 
@@ -758,6 +768,8 @@ class LinkApp:
             self.bridge.o.predict = on           # told to the headset with the next status
         elif key == "body_tracking":
             self.bridge.o.body_tracking = on     # the same
+        elif key == "hand_tracking":
+            self.bridge.o.hand_tracking = on     # the same
         elif key == "wear_detect":
             self.bridge.o.wear_detect = on       # the same
         elif key == "mic":

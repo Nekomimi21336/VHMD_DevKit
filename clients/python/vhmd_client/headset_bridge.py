@@ -87,6 +87,7 @@ class BridgeOptions:
     bindings: Dict[str, str] = field(default_factory=dict)   # changes from bindings.DEFAULTS
     body_tracking: bool = True    # what the PICO Motion Trackers track, as SteamVR trackers
     wear_detect: bool = True      # SteamVR hears when the headset is taken off (and goes on standby)
+    hand_tracking: bool = False   # tracked hands in SteamVR when the controllers are put down
     mic: bool = False             # the headset's microphone, played into mic_device
     mic_device: str = "CABLE Input"   # an audio output; programs record from its other end (VB-CABLE)
     mic_monitor: bool = False     # also into the default output, to hear oneself through the PC
@@ -695,7 +696,8 @@ class Bridge:
 
             if self.connected():
                 status = {"type": "status", "pc": platform.node(), **self.pc_state, "predict": self.o.predict,
-                          "body": self.o.body_tracking, "wear": self.o.wear_detect, "mic": self.o.mic}
+                          "body": self.o.body_tracking, "wear": self.o.wear_detect, "mic": self.o.mic,
+                          "hands": self.o.hand_tracking}
                 if self.o.refresh > 0:
                     status["refresh"] = self.o.refresh
                 self.link.send(json.dumps(status, separators=(",", ":")).encode())
@@ -773,6 +775,7 @@ def main() -> None:
                          "(default: left.menu=system, the SteamVR dashboard)")
     ap.add_argument("--no-body-tracking", action="store_true",
                     help="do not send what the PICO Motion Trackers track as SteamVR trackers")
+    ap.add_argument("--hand-tracking", action="store_true", help="tracked hands when the controllers are put down")
     ap.add_argument("--mic", action="store_true", help="use the headset's microphone")
     ap.add_argument("--mic-device", default="CABLE Input",
                     help="audio output to play it into; programs record from its other end (default: VB-CABLE's)")
@@ -796,7 +799,7 @@ def main() -> None:
         refresh=args.refresh, encoder_backend=args.driver_encoder, auto_latency=not args.fixed_latency,
         predict=not args.no_predict, eye_scale=args.eye_scale, native=args.native, udp_video=args.udp_video,
         fec=args.fec, foveation=args.foveation, bindings=bound, body_tracking=not args.no_body_tracking,
-        wear_detect=not args.no_wear_detect, mic=args.mic, mic_device=args.mic_device,
+        wear_detect=not args.no_wear_detect, mic=args.mic, mic_device=args.mic_device, hand_tracking=args.hand_tracking,
         mic_monitor=args.mic_monitor),
         log=lambda m: print(m, flush=True))
     bridge.start()

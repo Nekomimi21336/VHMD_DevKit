@@ -23,7 +23,7 @@ option(VHMD_DEV_EDITION "build VHMD Link Dev" OFF)
 set(VHMD_LINK_VERSION "0.6.0" CACHE STRING "version shown in the app")
 target_compile_definitions(vhmdlink PRIVATE VHMD_DEV_EDITION=$<BOOL:${VHMD_DEV_EDITION}>
                            VHMD_LINK_VERSION="${VHMD_LINK_VERSION}")
-target_include_directories(vhmdlink PRIVATE ${OPENXR_DIR}/include)
+target_include_directories(vhmdlink PRIVATE ${OPENXR_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/../../driver/src/math)
 target_compile_options(vhmdlink PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
 target_link_libraries(vhmdlink PRIVATE native_app_glue openxr_loader android log EGL GLESv3 mediandk nativewindow aaudio jnigraphics)
 # NativeActivity looks this symbol up by name; keep it although nothing calls it.

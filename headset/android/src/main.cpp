@@ -28,6 +28,7 @@
 #include <android/hardware_buffer.h>
 #include <jni.h>
 #include <aaudio/AAudio.h>
+#include <hand_curls.h>
 #include <android/configuration.h>
 #include <media/NdkImageReader.h>
 #include <media/NdkMediaCodec.h>
@@ -1336,6 +1337,16 @@ struct App {
     bool has_bd_controller = false;
     bool has_refresh_rate = false;
     bool has_presence = false;   // XR_EXT_user_presence
+    bool has_hands = false;      // XR_EXT_hand_tracking
+    XrHandTrackerEXT hand_tracker[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
+    PFN_xrLocateHandJointsEXT locate_hand = nullptr;
+    XrHandJointLocationEXT hand_joints[2][XR_HAND_JOINT_COUNT_EXT] = {};
+    bool hand_active[2] = {false, false};
+    XrVector3f held_at[2] = {};  // where each controller last moved from
+    std::chrono::steady_clock::time_point held_time[2]{};
+    bool hand_mode = false;      // SteamVR gets tracked hands, not controllers
+    bool hand_mode_told = false; // what the driver was last told
+    std::chrono::steady_clock::time_point hand_retry{}, hand_changed{}, next_hand_mode{}, next_hand_log[2]{};
     int worn = -1;               // as the runtime last said; -1 = it has not
     bool mic_asked = false;      // the permission was asked for
     int mic_state = 0;           // 0 off, 1 waiting for the permission, 2 on
@@ -1361,6 +1372,7 @@ struct App {
         bool body = false;      // send what the PICO Motion Trackers track as SteamVR trackers
         bool wear = true;       // tell SteamVR when the headset is taken off; off = always worn
         bool mic = false;       // send the microphone
+        bool hands = false;     // tracked hands take over when the controllers are put down
         std::chrono::steady_clock::time_point at{};
     } pc;
     std::string shown_control;  // last owner announced in a notice
@@ -1471,6 +1483,10 @@ bool CreateInstance(App& app) {
             exts.push_back(XR_EXT_USER_PRESENCE_EXTENSION_NAME);
             app.has_presence = true;
         }
+        if (strcmp(p.extensionName, XR_EXT_HAND_TRACKING_EXTENSION_NAME) == 0) {
+            exts.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
+            app.has_hands = true;
+        }
     }
     LOGI("%u runtime extensions; Pico controller profile: %s", n, app.has_bd_controller ? "yes" : "no");
 
@@ -1497,6 +1513,7 @@ bool CreateInstance(App& app) {
     if (!Check(xrGetSystem(app.instance, &si, &app.system), "xrGetSystem")) return false;
     XrSystemBodyTrackingPropertiesBD body_props{XR_TYPE_SYSTEM_BODY_TRACKING_PROPERTIES_BD};
     XrSystemUserPresencePropertiesEXT presence_props{XR_TYPE_SYSTEM_USER_PRESENCE_PROPERTIES_EXT};
+    XrSystemHandTrackingPropertiesEXT hand_props{XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT};
     XrSystemProperties sp{XR_TYPE_SYSTEM_PROPERTIES};
     if (app.has_body) {
         body_props.next = sp.next;
@@ -1506,12 +1523,17 @@ bool CreateInstance(App& app) {
         presence_props.next = sp.next;
         sp.next = &presence_props;
     }
+    if (app.has_hands) {
+        hand_props.next = sp.next;
+        sp.next = &hand_props;
+    }
     xrGetSystemProperties(app.instance, app.system, &sp);
     app.system_name = sp.systemName;
+    app.has_hands = app.has_hands && hand_props.supportsHandTracking;
     app.has_body = app.has_body && body_props.supportsBodyTracking;
     app.has_presence = app.has_presence && presence_props.supportsUserPresence;
-    LOGI("body tracking: %s, user presence: %s", app.has_body ? "supported" : "not supported",
-         app.has_presence ? "supported" : "not supported");
+    LOGI("body tracking: %s, user presence: %s, hand tracking: %s", app.has_body ? "supported" : "not supported",
+         app.has_presence ? "supported" : "not supported", app.has_hands ? "supported" : "not supported");
     return true;
 }
 
@@ -1866,6 +1888,125 @@ void AppendBody(App& app, std::string& out, XrTime time) {
         }
         AppendPose(out, t.id, l);   // no longer tracked: said once, as not valid
     }
+}
+
+// Where SteamVR's hand model puts the device, seen from the tracked wrist (+Y the
+// back of the hand, -Z the fingers). Left, right; from the model's open hand.
+const XrPosef kDeviceInWrist[2] = {
+    {{0.3072f, -0.2294f, -0.5951f, 0.7063f}, {0.0944f, -0.0106f, -0.1435f}},
+    {{0.3072f, 0.2294f, 0.5951f, 0.7063f}, {-0.0944f, -0.0106f, -0.1435f}},
+};
+
+void LocateHands(App& app, XrTime time) {
+    if (!app.has_hands) return;
+    if (app.hand_tracker[0] == XR_NULL_HANDLE) {
+        const auto now = std::chrono::steady_clock::now();
+        if (!app.pc.hands || now < app.hand_retry) return;
+        app.hand_retry = now + std::chrono::seconds(5);
+        PFN_xrCreateHandTrackerEXT create = nullptr;
+        xrGetInstanceProcAddr(app.instance, "xrCreateHandTrackerEXT", reinterpret_cast<PFN_xrVoidFunction*>(&create));
+        xrGetInstanceProcAddr(app.instance, "xrLocateHandJointsEXT", reinterpret_cast<PFN_xrVoidFunction*>(&app.locate_hand));
+        if (!create || !app.locate_hand) return;
+        for (int h = 0; h < 2; ++h) {
+            XrHandTrackerCreateInfoEXT ci{XR_TYPE_HAND_TRACKER_CREATE_INFO_EXT};
+            ci.hand = h == kLeft ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT;
+            ci.handJointSet = XR_HAND_JOINT_SET_DEFAULT_EXT;
+            const XrResult r = create(app.session, &ci, &app.hand_tracker[h]);
+            LOGI("hand tracker %d: %d", h, static_cast<int>(r));
+            if (XR_FAILED(r)) return;
+        }
+    }
+    for (int h = 0; h < 2; ++h) {
+        XrHandJointsLocateInfoEXT li{XR_TYPE_HAND_JOINTS_LOCATE_INFO_EXT};
+        li.baseSpace = app.base;
+        li.time = time;
+        XrHandJointLocationsEXT loc{XR_TYPE_HAND_JOINT_LOCATIONS_EXT};
+        loc.jointCount = XR_HAND_JOINT_COUNT_EXT;
+        loc.jointLocations = app.hand_joints[h];
+        const XrResult r = app.locate_hand(app.hand_tracker[h], &li, &loc);
+        const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+        app.hand_active[h] = app.pc.hands && XR_SUCCEEDED(r) && loc.isActive &&
+                             (app.hand_joints[h][XR_HAND_JOINT_WRIST_EXT].locationFlags & need) == need;
+    }
+}
+
+// The runtime keeps a controller put down active and its pose twitches where it
+// lies, and hands often rest next to it. So it counts as held when a finger is on
+// it, or when it moved a moment ago with the tracked wrist at it.
+bool ControllerHeld(App& app, int hand, const XrSpaceLocation& grip, std::chrono::steady_clock::time_point now) {
+    constexpr float kMovedM = 0.008f, kAtWristM = 0.2f;
+    const XrPath sub = app.hand_paths[hand];
+    const XrVector2f stick = GetVec2(app, app.stick, sub);
+    const bool touched = GetBool(app, app.trigger_touch, sub) || GetBool(app, app.stick_touch, sub) || GetBool(app, app.stick_click, sub) ||
+                         GetFloat(app, app.squeeze, sub) > 0.1f || GetFloat(app, app.trigger, sub) > 0.1f ||
+                         std::abs(stick.x) > 0.2f || std::abs(stick.y) > 0.2f ||
+                         (hand == kLeft ? GetBool(app, app.btn_x, XR_NULL_PATH) || GetBool(app, app.btn_y, XR_NULL_PATH) ||
+                                              GetBool(app, app.touch_x, XR_NULL_PATH) || GetBool(app, app.touch_y, XR_NULL_PATH) || GetBool(app, app.menu, XR_NULL_PATH)
+                                        : GetBool(app, app.btn_a, XR_NULL_PATH) || GetBool(app, app.btn_b, XR_NULL_PATH) ||
+                                              GetBool(app, app.touch_a, XR_NULL_PATH) || GetBool(app, app.touch_b, XR_NULL_PATH));
+    if (touched) return true;
+    if (!(grip.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT)) return false;
+    const auto distance = [](const XrVector3f& a, const XrVector3f& b) {
+        const float x = a.x - b.x, y = a.y - b.y, z = a.z - b.z;
+        return std::sqrt(x * x + y * y + z * z);
+    };
+    if (distance(grip.pose.position, app.held_at[hand]) > kMovedM) {
+        app.held_at[hand] = grip.pose.position;
+        app.held_time[hand] = now;
+    }
+    return app.hand_active[hand] && now - app.held_time[hand] < std::chrono::milliseconds(1500) &&
+           distance(grip.pose.position, app.hand_joints[hand][XR_HAND_JOINT_WRIST_EXT].pose.position) < kAtWristM;
+}
+
+// Hands when they are tracked and no controller is in use. Back to the controllers
+// at once, to the hands after a moment: each change swaps devices in SteamVR.
+void UpdateHandMode(App& app, std::string& out, const XrSpaceLocation* grips) {
+    const auto now = std::chrono::steady_clock::now();
+    const bool held = ControllerHeld(app, kLeft, grips[kLeft], now) || ControllerHeld(app, kRight, grips[kRight], now);
+    const bool want = (app.hand_active[kLeft] || app.hand_active[kRight]) && !held;
+    if (want == app.hand_mode) {
+        app.hand_changed = now;
+    } else if (now - app.hand_changed >= std::chrono::milliseconds(want ? 1000 : 200)) {
+        app.hand_mode = want;
+        app.next_hand_mode = {};
+        LOGI("SteamVR gets %s", want ? "hands" : "controllers");
+    }
+    if ((app.pc.hands || app.hand_mode_told) && now >= app.next_hand_mode) {   // again now and then: UDP may drop one
+        app.next_hand_mode = now + std::chrono::seconds(2);
+        app.hand_mode_told = app.hand_mode;
+        out += Fmt(",{\"type\":\"config\",\"op\":\"hand_mode\",\"mode\":\"%s\"}", app.hand_mode ? "hands" : "controllers");
+    }
+}
+
+XrSpaceLocation HandPose(App& app, int hand) {
+    XrSpaceLocation l{XR_TYPE_SPACE_LOCATION};
+    if (app.hand_active[hand]) {
+        l.locationFlags = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+        l.pose = Compose(app.hand_joints[hand][XR_HAND_JOINT_WRIST_EXT].pose, kDeviceInWrist[hand]);
+    }
+    return l;
+}
+
+// The fingers, and a pinch as the trigger.
+void AppendHand(App& app, std::string& out, int hand) {
+    if (!app.hand_active[hand]) return;
+    vhmd::HandJoints joints;
+    for (size_t i = 0; i < joints.size(); ++i) {
+        const XrVector3f& p = app.hand_joints[hand][i].pose.position;
+        joints[i] = {p.x, p.y, p.z};
+    }
+    const std::array<float, 5> curl = vhmd::JointCurls(joints);
+    const float pinch = vhmd::JointPinch(joints);
+    const char* id = hand == kLeft ? "left_hand" : "right_hand";
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= app.next_hand_log[hand]) {
+        app.next_hand_log[hand] = now + std::chrono::seconds(2);
+        LOGI("%s curl %.2f %.2f %.2f %.2f %.2f pinch %.2f", id, curl[0], curl[1], curl[2], curl[3], curl[4], pinch);
+    }
+    out += Fmt(",{\"type\":\"skeleton\",\"id\":\"%s\",\"src\":\"manual\",\"curl\":[%.2f,%.2f,%.2f,%.2f,%.2f]}", id, curl[0],
+               curl[1], curl[2], curl[3], curl[4]);
+    out += Fmt(",{\"type\":\"input\",\"id\":\"%s\",\"src\":\"manual\",\"values\":{\"trigger\":%.2f,\"trigger_click\":%s}}", id,
+               pinch, pinch >= 0.95f ? "true" : "false");
 }
 
 void AppendInputs(App& app, std::string& out, int hand) {
@@ -2389,13 +2530,23 @@ void Frame(App& app) {
         sp.ahead_ms = ahead;
         sp.pose = head_out.pose;
     }
+    LocateHands(app, pose_time);
+    if (app.hand_mode) {
+        for (int h = 0; h < 2; ++h) hands_out[h] = HandPose(app, h);
+    }
     std::string msg = "[";
     AppendPose(msg, "hmd", head_out);
     AppendPose(msg, "left_hand", hands_out[kLeft]);
     AppendPose(msg, "right_hand", hands_out[kRight]);
     AppendBody(app, msg, pose_time);
-    AppendInputs(app, msg, kLeft);
-    AppendInputs(app, msg, kRight);
+    UpdateHandMode(app, msg, hands);
+    for (int h = 0; h < 2; ++h) {
+        if (app.hand_mode) {
+            AppendHand(app, msg, h);
+        } else {
+            AppendInputs(app, msg, h);
+        }
+    }
 
     // Vibration the PC asked for: {"type":"haptic","id":"left_hand","duration":s,"frequency":Hz,"amplitude":0..1}.
     for (const std::string& m : app.sender.TakeIncoming()) {
@@ -2412,6 +2563,7 @@ void Frame(App& app) {
             app.pc.body = JsonBool(m, "body", false);
             app.pc.wear = JsonBool(m, "wear", true);
             app.pc.mic = JsonBool(m, "mic", false);
+            app.pc.hands = JsonBool(m, "hands", false);
             std::string name;
             if (JsonString(m, "pc", &name)) {
                 std::lock_guard<std::mutex> l(g_pc_mu);
@@ -2603,17 +2755,18 @@ void Frame(App& app) {
         app.st_haptics = app.haptics;
         app.haptics = 0;
         // The same numbers for the PC: over Wi-Fi there is no logcat.
-        char st[440];
+        char st[456];
         snprintf(st, sizeof(st),
                  "{\"type\":\"link_stats\",\"display\":%.1f,\"received\":%.1f,\"decoded\":%.1f,\"shown\":%.1f,"
                  "\"repeats\":%.1f,\"dropped\":%.1f,\"buffer\":%d,\"wait_ms\":%.1f,\"wait_p95_ms\":%.1f,"
                  "\"reprojected\":%.0f,\"audio_packets\":%.1f,\"audio_underruns\":%d,\"decode_ms\":%.2f,"
                  "\"decode_max_ms\":%.2f,\"predict_ms\":%.1f,\"late_ms\":%.1f,\"udp_lost\":%.2f,\"udp_skipped\":%.1f,"
-                 "\"body\":%d,\"mic\":%d}",
+                 "\"body\":%d,\"mic\":%d,\"hands\":%d}",
                  xr_frames / s, v.received / s, v.decoded / s, v.shown / s, v.repeats / s, v.dropped / s, v.buffer,
                  v.wait_avg_ms, v.wait_p95_ms, rep, v.audio_packets / s, v.audio_underruns, v.decode_avg_ms,
                  v.decode_max_ms, app.pc.predict ? app.predict_ms : 0.0f, app.predict_late_ms, v.udp_lost / s,
-                 v.skipped / s, app.body_tracked ? 2 : app.body != XR_NULL_HANDLE ? 1 : 0, app.mic_state);
+                 v.skipped / s, app.body_tracked ? 2 : app.body != XR_NULL_HANDLE ? 1 : 0, app.mic_state,
+                 app.hand_mode ? 2 : app.hand_tracker[0] != XR_NULL_HANDLE ? 1 : 0);
         app.link_stats = st;
         app.st_display = xr_frames / s;
         app.st_received = v.received / s;

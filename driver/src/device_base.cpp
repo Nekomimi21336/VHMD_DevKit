@@ -147,7 +147,7 @@ void VirtualDevice::Update(Clock::time_point now) {
     Frame f;
     f.out = state_->ComputeOutput(now);
     if (!f.out.parent.empty() && f.out.pose_valid) ApplyParent(f.out);
-    ApplyOffset(f.out, state_->Offset());
+    f.offset = state_->Offset();
     f.inputs = state_->TakeChangedInputs();
     f.skeleton = state_->TakeSkeleton();
     f.gaze = state_->TakeGaze();
@@ -166,6 +166,7 @@ void VirtualDevice::Publish(Clock::time_point now, const Frame& f) {
     const bool switched = active != published_active_;
     published_active_ = active;
     OutputPose out = f.out;
+    if (UsesOffset()) ApplyOffset(out, f.offset);
     if (!active) {
         out.connected = false;
         out.pose_valid = false;

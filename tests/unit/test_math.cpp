@@ -1,6 +1,7 @@
 #include "test_framework.h"
 
 #include "math/finger_curls.h"
+#include "math/hand_curls.h"
 #include "math/pose_math.h"
 #include "protocol/osc.h"
 
@@ -8,6 +9,40 @@ using namespace vhmd;
 
 namespace {
 constexpr double kPi = 3.14159265358979323846;
+}
+
+TEST(hand_joints_give_curls_and_a_pinch) {
+    // Fingers along +x, thumb apart along +y; `turn` bends each joint in the x-y plane.
+    auto hand = [](float turn, float thumb_turn) {
+        HandJoints j;
+        auto finger = [&](int first, int count, float y, float angle) {
+            JointPos p{0, y, 0};
+            float dir = 0;
+            for (int i = 0; i < count; ++i) {
+                j[size_t(first + i)] = p;
+                p.x += 0.03f * std::cos(dir);
+                p.y += 0.03f * std::sin(dir);
+                dir += angle;
+            }
+        };
+        finger(2, 4, 0.08f, thumb_turn);
+        for (int f = 0; f < 4; ++f) finger(6 + f * 5, 5, 0.02f * float(f), turn);
+        return j;
+    };
+    for (float c : JointCurls(hand(0, 0))) CHECK(c == 0.0f);
+    for (float c : JointCurls(hand(1.4f, 1.0f))) CHECK(c == 1.0f);
+
+    const std::array<float, 5> half = JointCurls(hand(0.7f, 0.5f));
+    CHECK(half[0] > 0.2f && half[0] < 0.8f);
+    CHECK(half[2] > 0.4f && half[2] < 0.6f);
+
+    HandJoints j;
+    j[10] = {0.1f, 0, 0};
+    CHECK(JointPinch(j) == 0.0f);          // tips apart
+    j[5] = {0.095f, 0, 0};
+    CHECK(JointPinch(j) == 1.0f);          // touching
+    j[5] = {0.0725f, 0, 0};
+    CHECK(JointPinch(j) > 0.0f && JointPinch(j) < 1.0f);
 }
 
 TEST(finger_curls_reach_every_vrchat_gesture) {
