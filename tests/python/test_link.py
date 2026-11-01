@@ -305,6 +305,10 @@ def test_body_tracking_state_logged_on_change():
     assert headset_bridge.BridgeOptions().body_tracking is True
 
 
+def test_wear_detect_is_on_unless_turned_off():
+    assert headset_bridge.BridgeOptions().wear_detect is True
+
+
 # -- position and angle corrections ------------------------------------------
 HAND = {"id": "left_hand", "kind": "controller", "index": 1}
 FOOT = {"id": "tracker_1", "kind": "tracker", "index": 4, "role": "left_foot"}

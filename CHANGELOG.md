@@ -3,6 +3,7 @@
 ## 未リリース
 
 ### 追加
+- **電池と装着を SteamVR に**: ヘッドセットとコントローラーの電池の残量、ヘッドセットの充電中、装着の状態を送る。ヘッドセットを外すと SteamVR が待機し、着けると戻る。PC のアプリの「ヘッドセットを外したら SteamVR を待機させる」で切れる(`headset_bridge --no-wear-detect`)。Pico 4 Ultra のコントローラーは定義 `pico4s_controller` で読むようにした。
 - **SteamVR に送っている機器の一覧と操作**: PC のアプリの「SteamVR に送っている機器」に、機器ごとの状態と受信数を 1 秒ごとに表示する。コントローラーとトラッカーは、その場で固定する停止 / 再開と、SteamVR から外す切断 / 再接続ができる(`config` の `tracking`、`VHMDClient.tracking`)。ドライバで行うので UDP や VMT で送るトラッカーにも効く。
 - **コントローラーとトラッカーの位置・角度の補正**: ドライバが機器ごとに補正する(`config` の `offset`、`VHMDClient.offset`)。PC のアプリの「位置と角度の補正」で変えるとすぐ反映され、SteamVR を起動し直しても送り直す。UDP や VMT で送るトラッカーにも効く。左右のコントローラーの初期値は 前後 Z -10 cm、ピッチ -10 度。
 - **PICO Motion Tracker を SteamVR の腰と足のトラッカーに**: ヘッドセットのアプリが `XR_BD_body_tracking` で体の関節を読み、`waist` / `left_foot` / `right_foot` として送る。PC のアプリの「体のトラッキング」で切れる(`headset_bridge --no-body-tracking`)。

@@ -47,7 +47,7 @@ DEFAULTS = {"quality": "standard", "codec": "hevc", "buffer": 0, "refresh": 72, 
             # performance settings (each trades some quality or safety for less latency)
             "auto_latency": True, "predict": True, "amf": True, "eye_scale": 1.0, "udp_video": False, "fec": 30, "foveation": 0,
             "bindings": {},                    # changes from bindings.DEFAULTS
-            "body_tracking": True,
+            "body_tracking": True, "wear_detect": True,
             "offsets": offsets.DEFAULTS,       # by device id, see offsets.py
             "dev_view": False}
 
@@ -69,6 +69,8 @@ TEXT = {
         "match": "Match the headset's display",
         "match_hint": "VHMD renders with a different field of view or resolution than this headset.",
         "auto_vr": "Start SteamVR when the headset connects",
+        "wear": "Put SteamVR on standby when the headset is taken off",
+        "wear_hint": "Off: video goes on while the headset is put down.",
         "quality": "Quality", "codec": "Codec", "smooth": "Motion",
         "q_low": "Low (20 Mbit/s)", "q_standard": "Standard (40 Mbit/s)", "q_high": "High (60 Mbit/s)", "q_max": "Highest (80 Mbit/s)",
         "c_hevc": "HEVC (recommended)", "c_h264": "H.264", "c_av1": "AV1 (newer GPUs)",
@@ -132,6 +134,8 @@ TEXT = {
         "match": "ヘッドセットの画面に合わせる",
         "match_hint": "VHMD の視野角・解像度がこのヘッドセットと違います。",
         "auto_vr": "ヘッドセットがつながったら SteamVR を起動する",
+        "wear": "ヘッドセットを外したら SteamVR を待機させる",
+        "wear_hint": "切ると、ヘッドセットを置いているあいだも映像を送り続けます。",
         "quality": "画質", "codec": "圧縮方式", "smooth": "動き",
         "q_low": "低(20 Mbit/s)", "q_standard": "標準(40 Mbit/s)", "q_high": "高(60 Mbit/s)", "q_max": "最高(80 Mbit/s)",
         "c_hevc": "HEVC(推奨)", "c_h264": "H.264", "c_av1": "AV1(新しい GPU)",
@@ -310,6 +314,7 @@ class LinkApp:
                                            udp_video=bool(self.s["udp_video"]), fec=int(self.s["fec"]),
                                            foveation=int(self.s["foveation"]), bindings=dict(self.s["bindings"]),
                                            body_tracking=bool(self.s["body_tracking"]),
+                                           wear_detect=bool(self.s["wear_detect"]),
                                            offsets=dict(self.s["offsets"])),
                              log=self.log)
         try:
@@ -426,6 +431,11 @@ class LinkApp:
         self.auto_var = tk.BooleanVar(value=bool(self.s["auto_steamvr"]))
         ttk.Checkbutton(c, text=t["auto_vr"], style="Card.TCheckbutton", variable=self.auto_var,
                         command=lambda: self.set("auto_steamvr", self.auto_var.get())).pack(anchor="w", pady=(4, 0))
+        wear_var = tk.BooleanVar(value=bool(self.s["wear_detect"]))
+        ttk.Checkbutton(c, text=t["wear"], style="Card.TCheckbutton", variable=wear_var,
+                        command=lambda: self.set_perf("wear_detect", wear_var.get())).pack(anchor="w", pady=(4, 0))
+        ttk.Label(c, text=t["wear_hint"], style="CardMuted.TLabel", wraplength=470,
+                  justify="left").pack(anchor="w", padx=(22, 0))
 
         # Picture and sound
         c = self.card(self.body, t["video"])
@@ -710,6 +720,8 @@ class LinkApp:
             self.bridge.o.predict = on           # told to the headset with the next status
         elif key == "body_tracking":
             self.bridge.o.body_tracking = on     # the same
+        elif key == "wear_detect":
+            self.bridge.o.wear_detect = on       # the same
         elif key == "amf":
             self.bridge.set_video(encoder_backend="auto" if on else "mf")
         elif key == "udp_video":

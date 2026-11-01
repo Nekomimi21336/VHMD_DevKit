@@ -1241,6 +1241,11 @@ struct App {
     std::vector<Swapchain> swapchains;
     bool has_bd_controller = false;
     bool has_refresh_rate = false;
+    bool has_presence = false;   // XR_EXT_user_presence
+    int worn = -1;               // as the runtime last said; -1 = it has not
+    float hmd_battery = -1;      // 0..1, -1 = not read
+    bool hmd_charging = false;
+    std::chrono::steady_clock::time_point next_battery{};
     std::string system_name;
     std::chrono::steady_clock::time_point next_info{};
     int reprojected = 0;   // frames shown at their render pose (stats)
@@ -1258,6 +1263,7 @@ struct App {
         double refresh = 0;     // display refresh rate the PC wants (0 = the headset's own)
         bool predict = false;   // performance setting: send poses predicted for when the PC's image shows
         bool body = false;      // send what the PICO Motion Trackers track as SteamVR trackers
+        bool wear = true;       // tell SteamVR when the headset is taken off; off = always worn
         std::chrono::steady_clock::time_point at{};
     } pc;
     std::string shown_control;  // last owner announced in a notice
@@ -1301,7 +1307,8 @@ struct App {
              squeeze = XR_NULL_HANDLE, stick = XR_NULL_HANDLE, stick_click = XR_NULL_HANDLE,
              stick_touch = XR_NULL_HANDLE, btn_a = XR_NULL_HANDLE, btn_b = XR_NULL_HANDLE, btn_x = XR_NULL_HANDLE,
              btn_y = XR_NULL_HANDLE, touch_a = XR_NULL_HANDLE, touch_b = XR_NULL_HANDLE, touch_x = XR_NULL_HANDLE,
-             touch_y = XR_NULL_HANDLE, menu = XR_NULL_HANDLE, haptic = XR_NULL_HANDLE;
+             touch_y = XR_NULL_HANDLE, menu = XR_NULL_HANDLE, haptic = XR_NULL_HANDLE,
+             battery = XR_NULL_HANDLE;
     XrSpace grip_spaces[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
 
     // PICO Motion Trackers (XR_BD_body_tracking).
@@ -1362,6 +1369,10 @@ bool CreateInstance(App& app) {
             exts.push_back(XR_BD_BODY_TRACKING_EXTENSION_NAME);
             app.has_body = true;
         }
+        if (strcmp(p.extensionName, XR_EXT_USER_PRESENCE_EXTENSION_NAME) == 0) {
+            exts.push_back(XR_EXT_USER_PRESENCE_EXTENSION_NAME);
+            app.has_presence = true;
+        }
     }
     LOGI("%u runtime extensions; Pico controller profile: %s", n, app.has_bd_controller ? "yes" : "no");
 
@@ -1387,12 +1398,22 @@ bool CreateInstance(App& app) {
     si.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
     if (!Check(xrGetSystem(app.instance, &si, &app.system), "xrGetSystem")) return false;
     XrSystemBodyTrackingPropertiesBD body_props{XR_TYPE_SYSTEM_BODY_TRACKING_PROPERTIES_BD};
+    XrSystemUserPresencePropertiesEXT presence_props{XR_TYPE_SYSTEM_USER_PRESENCE_PROPERTIES_EXT};
     XrSystemProperties sp{XR_TYPE_SYSTEM_PROPERTIES};
-    if (app.has_body) sp.next = &body_props;
+    if (app.has_body) {
+        body_props.next = sp.next;
+        sp.next = &body_props;
+    }
+    if (app.has_presence) {
+        presence_props.next = sp.next;
+        sp.next = &presence_props;
+    }
     xrGetSystemProperties(app.instance, app.system, &sp);
     app.system_name = sp.systemName;
     app.has_body = app.has_body && body_props.supportsBodyTracking;
-    LOGI("body tracking: %s", app.has_body ? "supported" : "not supported");
+    app.has_presence = app.has_presence && presence_props.supportsUserPresence;
+    LOGI("body tracking: %s, user presence: %s", app.has_body ? "supported" : "not supported",
+         app.has_presence ? "supported" : "not supported");
     return true;
 }
 
@@ -1533,7 +1554,7 @@ XrAction MakeAction(App& app, const char* name, XrActionType type, bool both_han
     return a;
 }
 
-void SuggestBindings(App& app, const char* profile, bool has_menu_left, bool has_ab_xy) {
+void SuggestBindings(App& app, const char* profile, bool has_menu_left, bool has_ab_xy, bool has_battery = false) {
     struct B {
         XrAction a;
         const char* path;
@@ -1561,6 +1582,10 @@ void SuggestBindings(App& app, const char* profile, bool has_menu_left, bool has
         b.push_back({app.touch_b, "/user/hand/right/input/b/touch"});
     }
     if (has_menu_left) b.push_back({app.menu, "/user/hand/left/input/menu/click"});
+    if (has_battery) {
+        b.push_back({app.battery, "/user/hand/left/input/battery/value"});
+        b.push_back({app.battery, "/user/hand/right/input/battery/value"});
+    }
     b.push_back({app.haptic, "/user/hand/left/output/haptic"});
     b.push_back({app.haptic, "/user/hand/right/output/haptic"});
     std::vector<XrActionSuggestedBinding> sb;
@@ -1598,8 +1623,13 @@ bool CreateActions(App& app) {
     app.touch_y = MakeAction(app, "y_touch", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
     app.menu = MakeAction(app, "menu", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
     app.haptic = MakeAction(app, "haptic", XR_ACTION_TYPE_VIBRATION_OUTPUT, true);
+    app.battery = MakeAction(app, "battery", XR_ACTION_TYPE_FLOAT_INPUT, true);
 
-    if (app.has_bd_controller) SuggestBindings(app, "/interaction_profiles/bytedance/pico4_controller", true, true);
+    if (app.has_bd_controller) {
+        SuggestBindings(app, "/interaction_profiles/bytedance/pico4_controller", true, true);
+        // PICO 4 Ultra's controllers: only this profile has the battery.
+        SuggestBindings(app, "/interaction_profiles/bytedance/pico4s_controller", true, true, true);
+    }
     SuggestBindings(app, "/interaction_profiles/oculus/touch_controller", true, true);
 
     for (int h = 0; h < 2; ++h) {
@@ -1801,6 +1831,57 @@ void AppendHeadsetInfo(App& app, std::string& out, const std::vector<XrView>& ey
              kDev ? "dev" : "link", VHMD_LINK_VERSION, app.video.UdpPort());
     if (out.size() > 1) out += ',';
     out += buf;
+}
+
+// This headset's battery, from Android's BatteryManager.
+void ReadBattery(App& app) {
+    JNIEnv* env = nullptr;
+    if (app.android->activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return;
+    jobject activity = app.android->activity->clazz;
+    jclass ctx_cls = env->GetObjectClass(activity);
+    jmethodID get_service = env->GetMethodID(ctx_cls, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;");
+    jstring name = env->NewStringUTF("batterymanager");
+    jobject manager = get_service ? env->CallObjectMethod(activity, get_service, name) : nullptr;
+    env->DeleteLocalRef(name);
+    env->DeleteLocalRef(ctx_cls);
+    if (manager && !env->ExceptionCheck()) {
+        jclass cls = env->GetObjectClass(manager);
+        jmethodID property = env->GetMethodID(cls, "getIntProperty", "(I)I");
+        jmethodID charging = env->GetMethodID(cls, "isCharging", "()Z");
+        if (property && charging) {
+            const jint level = env->CallIntMethod(manager, property, 4 /* BATTERY_PROPERTY_CAPACITY */);
+            const jboolean now = env->CallBooleanMethod(manager, charging);
+            if (!env->ExceptionCheck() && level >= 0 && level <= 100) {
+                app.hmd_battery = static_cast<float>(level) / 100.0f;
+                app.hmd_charging = now == JNI_TRUE;
+            }
+        }
+        env->DeleteLocalRef(cls);
+    }
+    if (manager) env->DeleteLocalRef(manager);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
+
+// Whether the headset is worn and the batteries, for SteamVR.
+void AppendPower(App& app, std::string& out) {
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= app.next_battery) {
+        app.next_battery = now + std::chrono::seconds(15);
+        ReadBattery(app);
+    }
+    std::string hmd;
+    if (app.worn >= 0) hmd = Fmt("\"proximity\":%s", app.worn || !app.pc.wear ? "true" : "false");
+    if (app.hmd_battery >= 0) {
+        if (!hmd.empty()) hmd += ',';
+        hmd += Fmt("\"battery\":%.2f,\"charging\":%s", app.hmd_battery, app.hmd_charging ? "true" : "false");
+    }
+    if (!hmd.empty()) out += ",{\"type\":\"input\",\"id\":\"hmd\",\"src\":\"manual\",\"values\":{" + hmd + "}}";
+    for (int h = 0; h < 2; ++h) {
+        const float level = GetFloat(app, app.battery, app.hand_paths[h]);   // 1..5; 0: no such input, or off
+        if (level <= 0) continue;
+        out += Fmt(",{\"type\":\"input\",\"id\":\"%s\",\"src\":\"manual\",\"values\":{\"battery\":%.2f}}",
+                   h == kLeft ? "left_hand" : "right_hand", level / 5.0f);
+    }
 }
 
 // -- Wi-Fi --------------------------------------------------------------------
@@ -2191,6 +2272,7 @@ void Frame(App& app) {
             app.pc.refresh = JsonNumber(m, "refresh", &refresh) ? refresh : 0;
             app.pc.predict = JsonBool(m, "predict", false);
             app.pc.body = JsonBool(m, "body", false);
+            app.pc.wear = JsonBool(m, "wear", true);
             std::string name;
             if (JsonString(m, "pc", &name)) {
                 std::lock_guard<std::mutex> l(g_pc_mu);
@@ -2275,6 +2357,7 @@ void Frame(App& app) {
     if (now_info >= app.next_info) {   // now and then: UDP may drop one
         app.next_info = now_info + std::chrono::seconds(2);
         AppendHeadsetInfo(app, msg, eye_local);
+        AppendPower(app, msg);
         if (!app.link_stats.empty()) {
             msg += ',';
             msg += app.link_stats;
@@ -2431,6 +2514,11 @@ void PollEvents(App& app) {
             }
         } else if (ev.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) {
             app.exit = true;
+        } else if (ev.type == XR_TYPE_EVENT_DATA_USER_PRESENCE_CHANGED_EXT) {
+            auto* e = reinterpret_cast<XrEventDataUserPresenceChangedEXT*>(&ev);
+            app.worn = e->isUserPresent ? 1 : 0;
+            app.next_info = {};   // tell the PC now
+            LOGI("worn: %s", app.worn ? "yes" : "no");
         }
         ev = {XR_TYPE_EVENT_DATA_BUFFER};
     }
