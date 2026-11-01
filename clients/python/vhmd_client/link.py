@@ -32,7 +32,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Dict, Optional
 
-from . import headset_info, mode
+from . import bindings, headset_info, mode
 from .fps import PALETTES, setup_style, ui_language, windows_theme
 from .headset_bridge import Bridge, BridgeOptions
 from .tray import TrayIcon
@@ -46,6 +46,7 @@ QUALITY = (("low", 20.0), ("standard", 40.0), ("high", 60.0), ("max", 80.0))
 DEFAULTS = {"quality": "standard", "codec": "hevc", "buffer": 0, "refresh": 72, "auto_steamvr": True,
             # performance settings (each trades some quality or safety for less latency)
             "auto_latency": True, "predict": True, "amf": True, "eye_scale": 1.0, "udp_video": False, "fec": 30, "foveation": 0,
+            "bindings": {},                    # changes from bindings.DEFAULTS
             "dev_view": False}
 
 TEXT = {
@@ -70,6 +71,12 @@ TEXT = {
         "q_low": "Low (20 Mbit/s)", "q_standard": "Standard (40 Mbit/s)", "q_high": "High (60 Mbit/s)", "q_max": "Highest (80 Mbit/s)",
         "c_hevc": "HEVC (recommended)", "c_h264": "H.264", "c_av1": "AV1 (newer GPUs)",
         "b0": "Lowest latency", "b1": "Smoother (+1 frame)",
+        "bind": "Controller buttons", "bind_hint": "What each button presses in SteamVR. Changes apply at once.",
+        "bind_reset": "Back to defaults", "b_left_menu": "Left menu button (three lines)", "b_left_x": "Left X",
+        "b_left_y": "Left Y", "b_left_joystick_click": "Left stick press", "b_right_a": "Right A", "b_right_b": "Right B",
+        "b_right_joystick_click": "Right stick press", "t_system": "SteamVR menu", "t_menu": "App menu", "t_x": "X",
+        "t_y": "Y", "t_a": "A", "t_b": "B", "t_joystick_click": "Stick press", "t_trigger_click": "Trigger",
+        "t_grip_click": "Grip", "t_none": "Nothing",
         "perf": "Performance",
         "perf_auto_latency": "Trim the wait before display to what the timing needs",
         "perf_auto_latency_hint": "Up to about 3 ms less delay. Off: a fixed margin, safest against stutter on poor Wi-Fi.",
@@ -112,6 +119,12 @@ TEXT = {
         "q_low": "低(20 Mbit/s)", "q_standard": "標準(40 Mbit/s)", "q_high": "高(60 Mbit/s)", "q_max": "最高(80 Mbit/s)",
         "c_hevc": "HEVC(推奨)", "c_h264": "H.264", "c_av1": "AV1(新しい GPU)",
         "b0": "遅れを最小に", "b1": "なめらか(+1 フレーム)",
+        "bind": "コントローラーのボタン", "bind_hint": "ボタンを押したときに SteamVR へ送る入力。変えるとすぐ反映されます。",
+        "bind_reset": "既定に戻す", "b_left_menu": "左の三本線ボタン", "b_left_x": "左 X", "b_left_y": "左 Y",
+        "b_left_joystick_click": "左スティックの押し込み", "b_right_a": "右 A", "b_right_b": "右 B",
+        "b_right_joystick_click": "右スティックの押し込み", "t_system": "SteamVR のメニュー", "t_menu": "アプリのメニュー",
+        "t_x": "X", "t_y": "Y", "t_a": "A", "t_b": "B", "t_joystick_click": "スティックの押し込み", "t_trigger_click": "トリガー",
+        "t_grip_click": "グリップ", "t_none": "何もしない",
         "perf": "パフォーマンス",
         "perf_auto_latency": "表示までの余裕をタイミングに合わせて詰める",
         "perf_auto_latency_hint": "遅れが最大 3 ms ほど減る。切ると余裕を固定(電波が悪いときのカクつきに一番強い)。",
@@ -218,6 +231,15 @@ def set_startup(on: bool) -> None:
                 pass
 
 
+def wheel_scrolls_page(box: ttk.Combobox, scroll) -> None:
+    """The wheel over a drop-down scrolls the page: it must not change the setting."""
+    def wheel(e):
+        scroll(e)
+        return "break"
+
+    box.bind("<MouseWheel>", wheel)
+
+
 class LinkApp:
     def __init__(self, root: tk.Tk, lang: str, dev: bool, minimized: bool) -> None:
         self.root, self.t, self.lang = root, TEXT[lang], lang
@@ -255,7 +277,7 @@ class LinkApp:
                                            encoder_backend="auto" if self.s["amf"] else "mf",
                                            eye_scale=float(self.s["eye_scale"]),
                                            udp_video=bool(self.s["udp_video"]), fec=int(self.s["fec"]),
-                                           foveation=int(self.s["foveation"])),
+                                           foveation=int(self.s["foveation"]), bindings=dict(self.s["bindings"])),
                              log=self.log)
         try:
             self.bridge.start()
@@ -327,7 +349,8 @@ class LinkApp:
         canvas.configure(yscrollcommand=bar.set)
         canvas.pack(side="left", fill="both", expand=True)
         bar.pack(side="right", fill="y")
-        self.root.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"))
+        self.scroll = lambda e: canvas.yview_scroll(int(-e.delta / 120), "units")
+        self.root.bind_all("<MouseWheel>", self.scroll)
 
         # Headset
         c = self.card(self.body, t["headset"])
@@ -397,6 +420,17 @@ class LinkApp:
                       justify="left").pack(anchor="w", padx=(22, 0))
             self.perf_vars[key] = var
 
+        # Controller buttons
+        c = self.card(self.body, t["bind"])
+        ttk.Label(c, text=t["bind_hint"], style="CardMuted.TLabel", wraplength=470, justify="left").pack(anchor="w")
+        grid = ttk.Frame(c, style="Card.TFrame")
+        grid.pack(fill="x", pady=(4, 0))
+        self.bind_vars = {}
+        for hand, buttons in bindings.BUTTONS.items():
+            for button in buttons:
+                self.bind_combo(grid, len(self.bind_vars), hand, button)
+        ttk.Button(c, text=t["bind_reset"], command=self.reset_bindings).pack(anchor="w", pady=(6, 0))
+
         # Developer
         self.dev_card_outer = tk.Frame(self.body, bg=pal["border"], padx=1, pady=1)
         dc = ttk.Frame(self.dev_card_outer, style="Card.TFrame", padding=(14, 10))
@@ -419,6 +453,7 @@ class LinkApp:
         var = tk.StringVar(value=dict(choices).get(self.s[key], labels[0]))
         box = ttk.Combobox(parent, values=labels, textvariable=var, state="readonly", width=26)
         box.grid(row=row, column=1, sticky="w", pady=3)
+        wheel_scrolls_page(box, self.scroll)
 
         def changed(_e=None) -> None:
             value = next(v for v, lab in choices if lab == var.get())
@@ -449,6 +484,36 @@ class LinkApp:
 
         box.bind("<<ComboboxSelected>>", changed)
         return var
+
+    def bind_label(self, name: str) -> str:
+        return self.t["t_" + bindings.table(self.s["bindings"]).get(name, name.partition(".")[2])]
+
+    def bind_combo(self, parent, row: int, hand: str, button: str) -> None:
+        name = f"{hand}.{button}"
+        ttk.Label(parent, text=self.t[f"b_{hand}_{button}"], style="Card.TLabel").grid(row=row, column=0, sticky="w",
+                                                                                      pady=3, padx=(0, 12))
+        choices = [(d, self.t["t_" + d]) for d in bindings.TARGETS[hand]]
+        var = tk.StringVar(value=self.bind_label(name))
+        box = ttk.Combobox(parent, values=[lab for _, lab in choices], textvariable=var, state="readonly", width=26)
+        box.grid(row=row, column=1, sticky="w", pady=3)
+        wheel_scrolls_page(box, self.scroll)
+
+        def changed(_e=None) -> None:
+            self.set_bindings({**self.s["bindings"], name: next(v for v, lab in choices if lab == var.get())})
+            self.log(f"button binding: {name} presses {self.s['bindings'][name]}")
+
+        box.bind("<<ComboboxSelected>>", changed)
+        self.bind_vars[name] = var
+
+    def set_bindings(self, overrides: Dict[str, str]) -> None:
+        self.set("bindings", overrides)
+        self.bridge.set_bindings(overrides)
+
+    def reset_bindings(self) -> None:
+        self.set_bindings({})
+        for name, var in self.bind_vars.items():
+            var.set(self.bind_label(name))
+        self.log("button bindings: defaults")
 
     def set(self, key: str, value) -> None:
         self.s[key] = value

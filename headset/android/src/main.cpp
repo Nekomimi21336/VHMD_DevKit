@@ -1682,7 +1682,9 @@ void AppendInputs(App& app, std::string& out, int hand) {
                      grip >= 0.9f ? "true" : "false", st.x, st.y, GetBool(app, app.stick_click, sub) ? "true" : "false",
                      GetBool(app, app.stick_touch, sub) ? "true" : "false");
     if (hand == kLeft)
-        snprintf(buf + n, sizeof(buf) - n, ",\"x\":%s,\"y\":%s,\"menu\":%s}}",
+        // The menu button goes as SteamVR's system input, which opens its dashboard
+        // (the PC app can bind it to something else).
+        snprintf(buf + n, sizeof(buf) - n, ",\"x\":%s,\"y\":%s,\"system\":%s}}",
                  GetBool(app, app.btn_x, XR_NULL_PATH) ? "true" : "false",
                  GetBool(app, app.btn_y, XR_NULL_PATH) ? "true" : "false",
                  GetBool(app, app.menu, XR_NULL_PATH) ? "true" : "false");

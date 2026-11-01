@@ -4,14 +4,17 @@
 """
 
 import json
+import socket
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "clients" / "python"))
 
-from vhmd_client import headset_bridge, native_relay  # noqa: E402
+from vhmd_client import bindings, headset_bridge, native_relay  # noqa: E402
 
 
 class FakeRelay:
@@ -123,6 +126,167 @@ def test_udp_adapt_only_for_udp():
     n = len(r.sent)
     b._udp_adapt({"udp_lost": 10})
     assert len(r.sent) == n
+
+
+# -- button bindings ---------------------------------------------------------
+def hand_input(hand, **values):
+    return {"type": "input", "id": f"{hand}_hand", "src": "manual", "values": {"trigger": 0.25, **values}}
+
+
+def press(overrides, hand, **values):
+    msg = hand_input(hand, **values)
+    head = {"type": "pose", "id": "hmd"}
+    msgs = [head, msg]
+    bindings.apply(msgs, bindings.compiled(bindings.table(overrides)))
+    assert msgs[0] == {"type": "pose", "id": "hmd"} and msg["values"]["trigger"] == 0.25
+    return msg["values"]
+
+
+@pytest.mark.parametrize("key", ["menu", "system"])
+def test_left_menu_presses_system_by_default(key):
+    """An older headset app sends "menu", a newer one "system": the same button."""
+    v = press({}, "left", x=False, **{key: True})
+    assert v["system"] is True and v["menu"] is False and v["x"] is False
+
+
+def test_bind_menu_back_to_app_menu():
+    v = press({"left.menu": "menu"}, "left", system=True)
+    assert v["menu"] is True and v["system"] is False
+
+
+def test_bind_swap_merge_none():
+    v = press({"right.a": "b", "right.b": "a"}, "right", a=True, b=False)
+    assert v["b"] is True and v["a"] is False
+    v = press({"right.a": "b"}, "right", a=False, b=True)   # b keeps its own input
+    assert v["b"] is True
+    v = press({"left.x": "none"}, "left", x=True)
+    assert v["x"] is False
+
+
+def test_bind_table_and_wire():
+    assert bindings.table() == bindings.DEFAULTS
+    t = bindings.table({"right.a": "a", "left.y": "system", "left.nope": "x", "right.b": "x"})
+    assert t == {"left.menu": "system", "left.y": "system"}   # identity and unknown ones dropped
+    assert bindings.wire(t) == "left.menu=system\nleft.y=system"
+    assert bindings.parse(["left.menu=menu"]) == {"left.menu": "menu"}
+    with pytest.raises(ValueError):
+        bindings.parse(["left.menu"])
+    with pytest.raises(ValueError):
+        bindings.parse(["right.x=a"])
+
+
+def test_every_button_named_in_the_app():
+    from vhmd_client import link
+    for texts in link.TEXT.values():
+        for hand, buttons in bindings.BUTTONS.items():
+            assert all(f"b_{hand}_{b}" in texts for b in buttons)
+            assert all("t_" + d in texts for d in bindings.TARGETS[hand])
+
+
+def test_bridge_sends_and_changes_bindings():
+    class Relay(FakeRelay):
+        text = None
+
+        def bindings(self, text):
+            self.text = text
+
+    b = object.__new__(headset_bridge.Bridge)
+    b.o = headset_bridge.BridgeOptions()
+    b._native = Relay()
+    b.set_bindings({"left.x": "y"})
+    assert b._native.text == "left.menu=system\nleft.x=y"
+    assert set(b._hands) == {"left_hand"}
+
+
+def test_python_data_path_moves_buttons(monkeypatch):
+    b = object.__new__(headset_bridge.Bridge)
+    b.link = headset_bridge.HeadsetLink()
+    b.stats = headset_bridge.Stats()
+    b._fwd_samples = []
+    b._hands = bindings.compiled(bindings.table())
+    sent = []
+
+    class Udp:
+        def sendto(self, data, addr):
+            sent.append(json.loads(data))
+
+    b._udp, b._driver = Udp(), ("127.0.0.1", 1)
+    b._forward(json.dumps([hand_input("left", menu=True)], separators=(",", ":")).encode())
+    assert sent[-1][0]["values"]["system"] is True
+
+
+RELAY_EXE = Path(__file__).resolve().parents[2] / "link" / "target" / "release" / (
+    "vhmd-link-relay.exe" if sys.platform == "win32" else "vhmd-link-relay")
+
+
+def test_relay_moves_buttons_like_python():
+    """The real relay on loopback, with a stand-in for the driver: the same
+    result as bindings.apply."""
+    if not RELAY_EXE.exists():
+        pytest.skip("relay not built")
+    probe = socket.socket()
+    try:
+        probe.bind(("127.0.0.1", 39580))
+    except OSError:
+        pytest.skip("VHMD Link is running")
+    finally:
+        probe.close()
+    driver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    driver.bind(("127.0.0.1", 0))
+    driver.settimeout(2.0)
+    proc = subprocess.Popen([str(RELAY_EXE), "--listen", "127.0.0.1", "--no-discovery",
+                             "--driver", f"127.0.0.1:{driver.getsockname()[1]}"],
+                            stdout=subprocess.PIPE, stdin=subprocess.DEVNULL)
+    try:
+        port = int(proc.stdout.readline().decode().split(":")[-1])
+        control = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        control.sendto(b"HELLO\n", ("127.0.0.1", port))
+        pose = socket.create_connection(("127.0.0.1", 39580), timeout=2.0)
+        cases = [({}, "left", dict(menu=True, x=False)), ({}, "left", dict(system=True, x=True)),
+                 ({"left.menu": "menu"}, "left", dict(system=True)),
+                 ({"right.a": "b", "right.b": "a"}, "right", dict(a=True, b=False)),
+                 ({"left.y": "system"}, "left", dict(y=True, menu=False))]
+        for overrides, hand, values in cases:
+            t = bindings.table(overrides)
+            control.sendto(b"BINDINGS\n" + bindings.wire(t).encode(), ("127.0.0.1", port))
+            time.sleep(0.05)
+            msgs = [hand_input(hand, **values)]
+            pose.sendall(json.dumps(msgs, separators=(",", ":")).encode() + b"\n")
+            got = json.loads(driver.recv(65536))
+            bindings.apply(msgs, bindings.compiled(t))
+            assert got == msgs
+        pose.close()
+    finally:
+        proc.kill()
+        proc.wait()
+        driver.close()
+
+
+def test_wheel_over_dropdown_scrolls_the_page():
+    import tkinter as tk
+    from tkinter import ttk
+    from vhmd_client import link
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display")
+    try:
+        plain = ttk.Combobox(root, values=["a", "b"], state="readonly")
+        fixed = ttk.Combobox(root, values=["a", "b"], state="readonly")
+        plain.current(0)
+        fixed.current(0)
+        plain.pack()
+        fixed.pack()
+        scrolled = []
+        link.wheel_scrolls_page(fixed, scrolled.append)
+        root.update()
+        plain.event_generate("<MouseWheel>", delta=-120)
+        fixed.event_generate("<MouseWheel>", delta=-120)
+        root.update()
+        assert plain.get() == "b"   # what ttk does by itself
+        assert fixed.get() == "a" and len(scrolled) == 1
+    finally:
+        root.destroy()
 
 
 # -- switching SteamVR between VHMD and the original ---------------------------

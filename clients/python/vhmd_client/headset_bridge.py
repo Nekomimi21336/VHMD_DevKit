@@ -33,10 +33,10 @@ import socket
 import subprocess
 import threading
 import time
-from dataclasses import dataclass
-from typing import Callable, Optional
+from dataclasses import dataclass, field
+from typing import Callable, Dict, Optional
 
-from . import headset_info, native_relay
+from . import bindings, headset_info, native_relay
 from .client import DEFAULT_HOST, DEFAULT_PORT
 from .headset_stream import VIDEO_PORT, VideoServer
 
@@ -73,6 +73,7 @@ class BridgeOptions:
     udp_video: bool = False       # frames and sound over UDP with parity (native data path; experimental)
     fec: int = 30                 # parity packets per 100 (UDP video)
     foveation: int = 0            # foveated encoding: 0 off, 1 light, 2 strong (FOVEATION)
+    bindings: Dict[str, str] = field(default_factory=dict)   # changes from bindings.DEFAULTS
 
 
 class Stats:
@@ -165,6 +166,7 @@ class Bridge:
         self._seq = 0
         self._native: Optional[native_relay.NativeRelay] = None
         self.data_path = "python"
+        self._hands = bindings.compiled(bindings.table(options.bindings))
 
     # -- setup ----------------------------------------------------------------
     def start(self) -> None:
@@ -225,6 +227,7 @@ class Bridge:
             return False
         o = self.o
         self.link = native_relay.NativeLink(self._native)
+        self._native.bindings(bindings.wire(bindings.table(o.bindings)))
         if o.video:
             self.video = native_relay.NativeVideo(self._native, o.bitrate, o.codec, o.buffer, o.encoder_backend,
                                                   o.eye_width, o.eye_scale, o.adaptive, o.udp_video, o.fec,
@@ -323,6 +326,14 @@ class Bridge:
             self.video.encoder_backend, self.video.eye_scale = self.o.encoder_backend, self.o.eye_scale
             self.video.restart()
 
+    def set_bindings(self, overrides: Dict[str, str]) -> None:
+        """Which SteamVR input each button presses; in effect at once."""
+        self.o.bindings = overrides
+        t = bindings.table(overrides)
+        self._hands = bindings.compiled(t)
+        if self._native:
+            self._native.bindings(bindings.wire(t))
+
     def request(self, op: str, timeout: float = 0.3, **args) -> dict:
         """A config request to the driver, sent from the socket the poses use: the
         driver sends haptic events to whoever sent last, so asking from another
@@ -371,14 +382,17 @@ class Bridge:
         and statistics stay here."""
         t0 = time.perf_counter()
         self.link.last_seen = time.monotonic()
-        if b'"type":"headset"' in data or b'"type":"link_stats"' in data or b'"type":"link_timing"' in data:
+        own = b'"type":"headset"' in data or b'"type":"link_stats"' in data or b'"type":"link_timing"' in data
+        if own or (self._hands and b'"type":"input"' in data):
             try:
                 msgs = json.loads(data)
             except ValueError:
                 msgs = []
             rest = [m for m in msgs if m.get("type") not in ("headset", "link_stats", "link_timing")]
             for m in msgs:
-                self._own_message(m)
+                if own:
+                    self._own_message(m)
+            bindings.apply(rest, self._hands)
             data = json.dumps(rest, separators=(",", ":")).encode()
         self._udp.sendto(data, self._driver)
         self.stats.add(data)
@@ -672,10 +686,17 @@ def main() -> None:
                     help="driver encoder: auto = AMD AMF (ultra low latency) when available, else Media Foundation")
     ap.add_argument("--refresh", type=float, default=0.0,
                     help="display refresh rate for the headset, e.g. 72 or 90 (VHMD follows it)")
+    ap.add_argument("--bind", action="append", default=[], metavar="HAND.BUTTON=INPUT",
+                    help="what a button presses in SteamVR, e.g. left.menu=menu; repeat for more "
+                         "(default: left.menu=system, the SteamVR dashboard)")
     ap.add_argument("--no-sync", action="store_true", help="do not move VHMD's vsync to the headset's display")
     ap.add_argument("--sync-target-ms", type=float, default=0.0,
                     help="how long frames should wait on the headset before shown (default: 0.4 frame)")
     args = ap.parse_args()
+    try:
+        bound = bindings.parse(args.bind)
+    except ValueError as e:
+        ap.error(str(e))
 
     bridge = Bridge(BridgeOptions(
         driver_host=args.driver_host, driver_port=args.driver_port, port=args.port, adb=not args.no_adb,
@@ -684,7 +705,7 @@ def main() -> None:
         adaptive=not args.fixed_bitrate, sync=not args.no_sync, sync_target_ms=args.sync_target_ms,
         refresh=args.refresh, encoder_backend=args.driver_encoder, auto_latency=not args.fixed_latency,
         predict=not args.no_predict, eye_scale=args.eye_scale, native=args.native, udp_video=args.udp_video,
-        fec=args.fec, foveation=args.foveation),
+        fec=args.fec, foveation=args.foveation, bindings=bound),
         log=lambda m: print(m, flush=True))
     bridge.start()
     try:

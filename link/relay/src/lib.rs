@@ -31,6 +31,7 @@
 //!                 TO_HEADSET <json>, DRIVER <json> (sent from the pose socket,
 //!                 so the driver keeps sending haptics there), VIDEO <json settings>
 //!                 ({"bitrate_mbps","codec","buffer","encoder","eye_width","adaptive","restart"}),
+//!                 BINDINGS <lines "left.menu=system": which SteamVR input each button presses>,
 //!                 QUIT (the program exits; the DLL stays until its process ends)
 //!   relay -> app: MSG <headset message object>, REPLY <driver reply with "seq">,
 //!                 STATS <json, every second>, LOG <text>
@@ -47,6 +48,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use vhmd_link_proto::*;
+
+mod bindings;
+use bindings::Bindings;
 
 // -- settings and state ---------------------------------------------------------
 #[derive(Clone)]
@@ -102,6 +106,7 @@ enum Peer {
 
 struct State {
     video: Mutex<VideoSettings>,
+    bindings: Mutex<Bindings>,
     bitrate_now: Mutex<f64>,
     stats: Mutex<Stats>,
     peer: Mutex<Peer>,
@@ -205,6 +210,8 @@ impl Ctx {
         } else {
             text.into()
         };
+        let bindings = self.st.bindings.lock().unwrap();
+        let out = bindings.apply(&out);
         let _ = self.driver_udp.send_to(out.as_bytes(), self.driver);
         let us = t0.elapsed().as_secs_f64() * 1e6;
         let mut s = self.st.stats.lock().unwrap();
@@ -272,6 +279,7 @@ pub fn start(cfg: Config) -> Result<u16, String> {
 
     let st = Arc::new(State {
         video: Mutex::new(VideoSettings::default()),
+        bindings: Mutex::new(Bindings::default()),
         bitrate_now: Mutex::new(40.0),
         stats: Mutex::new(Stats::default()),
         peer: Mutex::new(Peer::None),
@@ -472,6 +480,9 @@ pub fn start(cfg: Config) -> Result<u16, String> {
             b"VIDEO" => {
                 let p = String::from_utf8_lossy(payload).into_owned();
                 apply_video_settings(&ctx, &p);
+            }
+            b"BINDINGS" => {
+                *ctx.st.bindings.lock().unwrap() = Bindings::parse(&String::from_utf8_lossy(payload));
             }
             _ => {}
         }

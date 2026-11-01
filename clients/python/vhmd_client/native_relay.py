@@ -128,6 +128,9 @@ class NativeRelay:
     def video(self, settings: dict) -> None:
         self._send(b"VIDEO", json.dumps(settings, separators=(",", ":")).encode())
 
+    def bindings(self, text: str) -> None:
+        self._send(b"BINDINGS", text.encode())
+
     def close(self) -> None:
         """The program ends; the DLL stays until this process does."""
         if self.proc is None:

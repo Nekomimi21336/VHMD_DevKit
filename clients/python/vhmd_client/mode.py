@@ -33,6 +33,7 @@ config on every switch, so edits to that config carry over.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import os
 import re
@@ -249,8 +250,17 @@ def stop_steamvr(progress: Progress, timeout: float = 30.0) -> None:
 
 def start_steamvr() -> None:
     exe = steamvr_dir() / "bin" / "win64" / "vrstartup.exe"
-    subprocess.Popen([str(exe)], cwd=str(exe.parent), close_fds=True,
-                     creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+    # The frozen PC app's DLL folder is inherited by what it starts: SteamVR would
+    # load the app's runtime DLLs and keep them locked.
+    frozen_dir = getattr(sys, "_MEIPASS", None)
+    if frozen_dir:
+        ctypes.windll.kernel32.SetDllDirectoryW(None)
+    try:
+        subprocess.Popen([str(exe)], cwd=str(exe.parent), close_fds=True,
+                         creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+    finally:
+        if frozen_dir:
+            ctypes.windll.kernel32.SetDllDirectoryW(frozen_dir)
 
 
 # -- settings -----------------------------------------------------------------
