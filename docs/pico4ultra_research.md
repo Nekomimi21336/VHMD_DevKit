@@ -72,13 +72,16 @@ VHMD に送れる、PICO Connect では渡らないデータ: Motion Tracker の
 | Khronos ローダー | 拡張 69 個。`XR_PICO_` は 0 個 |
 | Khronos ローダー + Unity SDK と同じマニフェスト値 | 同じ 69 個 |
 | PICO OpenXR SDK 3.0.0 のローダー | 78 個。`camera_image` なし |
-| Unity SDK のローダー(`LoaderForUnitySDK_1_1_0`)+ マニフェスト値 | 144 個。`XR_PICO_camera_image` あり |
+| PICO OpenXR SDK 3.0.0 のローダー + マニフェスト値 | 79 個。`camera_image` なし |
+| Unity SDK のローダー(`LoaderForUnitySDK_1_1_0`) | 143 個。`XR_PICO_camera_image` あり |
+| Unity SDK のローダー + マニフェスト値 | 144 個。`XR_PICO_camera_image` あり |
+| ローダーを使わず、ランタイムのネゴシエーションを直接呼ぶ | 69 個。API の版を 1.0.34 〜 1.2.0 で変えても同じ。どのローダーを入れた試験版でも同じ |
 
 - 最後の構成で、ネイティブのアプリからカラーカメラ 2 台を列挙し、左のカメラのフレームを受け取れた: RGBA の CPU バッファ、2048 × 1536 〜 640 × 480 の 5 段階、30 fps で失敗なし(60 fps の設定もあるが未試験)。1 枚を画像にして、部屋が色付きで写っていることを確認した。右のカメラと 2 台同時は未試験。トラッキング用カメラと深度は一覧に出ない。
-- マニフェスト値: `pxr.sdk.version_code=5150`、`use.pxr.sdk=1`、`pvr.sdk.version`、`enable_vst=1`、`pvr.app.secure_mr=1`。`CAMERA` 権限も要る。Unity SDK のローダーだけでマニフェスト値なしの場合は未試験。
+- マニフェスト値: `pxr.sdk.version_code=5150`、`use.pxr.sdk=1`、`pvr.sdk.version`、`enable_vst=1`、`pvr.app.secure_mr=1`。`CAMERA` 権限も要る。カメラの取得をマニフェスト値なしで試してはいない(一覧には出る)。
 - ヘッダーには定義がなく、型と数値は PICO の [OpenXR 仕様](https://lf3-static.bytednsdoc.com/obj/eden-cn/sliheh7phbozbps/NativeSDK/3.0.0/NativeSdkSpec.html)の 12.3 節にある。`XR_EXT_future` も有効にする。
 - PICO のローダーは、スレッドを Java VM に接続してから `xrInitializeLoaderKHR` を呼ばないと `-51` で失敗する(`BD_ForwardLoader: vm->GetEnv() failed`)。
-- Khronos ローダーも PICO のシステムブローカー経由で同じ `libopenxr_forwardloader.so` を読むが、拡張は増えない。差はランタイムの内部にあり、これ以上は調べていない(SDK の規約がリバースエンジニアリングを禁じている)。
+- 原因の切り分け: Khronos のローダーも PICO のローダーも、読むのは同じ `/system/lib64/libopenxr_forwardloader.so`。公開の手順(`xrNegotiateLoaderRuntimeInterface` と `xrCreateInstance`)でランタイムに `XR_PICO_camera_image` を直接求めると `-9`(`XR_ERROR_EXTENSION_NOT_PRESENT`)で断られ、Khronos のローダーも同じ名前を自分で拒否する。つまり PICO のローダーは、公開の手順とは別の方法で独自拡張を使っている。その方法は調べていない(SDK の規約がリバースエンジニアリングを禁じている)。`xrGetInstanceProperties` の版も、Khronos 経由は 0.0.0、PICO のローダーでは 0.49.x と違う。
 
 ### その他
 
