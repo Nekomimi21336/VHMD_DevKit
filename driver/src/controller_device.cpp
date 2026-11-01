@@ -6,6 +6,7 @@
 // Hand pose generator from the OpenVR samples (BSD-3-Clause, see
 // THIRD_PARTY_NOTICES.md), compiled from third_party/openvr directly.
 #include "hand_simulation.h"
+#include "math/finger_curls.h"
 #include "util/log.h"
 
 namespace vhmd {
@@ -319,9 +320,7 @@ void ControllerDevice::OnTick(Clock::time_point now) {
     const bool thumb_down = v("a") + v("b") + v("x") + v("y") + v("a_touch") + v("b_touch") + v("x_touch") +
                                 v("y_touch") + v("joystick_touch") + v("joystick_click") >
                             0.0f;
-    const float index = std::max(v("trigger"), v("trigger_touch") * 0.25f);
-    const float grip = v("grip");
-    const std::array<float, 5> curl{thumb_down ? 0.7f : 0.0f, index, grip, grip, grip};
+    const std::array<float, 5> curl = FingerCurls({thumb_down, v("trigger_touch") >= 0.5f, v("trigger"), v("grip")});
     // Unchanged: SteamVR keeps the last skeleton; re-send only once a second.
     if (derived_pushed_at_ && curl == derived_curl_ && now - *derived_pushed_at_ < std::chrono::seconds(1)) return;
     derived_curl_ = curl;

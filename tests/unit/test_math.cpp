@@ -1,5 +1,6 @@
 #include "test_framework.h"
 
+#include "math/finger_curls.h"
 #include "math/pose_math.h"
 #include "protocol/osc.h"
 
@@ -7,6 +8,26 @@ using namespace vhmd;
 
 namespace {
 constexpr double kPi = 3.14159265358979323846;
+}
+
+TEST(finger_curls_reach_every_vrchat_gesture) {
+    const struct {
+        HandSense in;
+        std::array<float, 5> curl;
+    } cases[] = {
+        {{false, false, 0, 0}, {0, 0, 0, 0, 0}},      // open
+        {{false, false, 0, 1}, {0, 0, 1, 1, 1}},      // finger gun
+        {{false, true, 1, 1}, {0, 1, 1, 1, 1}},       // thumbs up
+        {{true, false, 0, 1}, {0.7f, 0, 1, 1, 1}},    // point
+        {{true, true, 1, 1}, {0.7f, 1, 1, 1, 1}},     // fist
+        {{true, false, 0, 0}, {0.7f, 0, 0, 1, 1}},    // peace
+        {{true, true, 1, 0}, {0.7f, 0, 1, 1, 0}},     // horns
+        {{true, true, 0, 0}, {0.7f, 0.25f, 0, 0, 0}}, // resting on the trigger: neutral
+    };
+    for (const auto& c : cases) {
+        const auto curl = FingerCurls(c.in);
+        for (size_t i = 0; i < 5; ++i) CHECK_NEAR(curl[i], c.curl[i], 1e-6);
+    }
 }
 
 TEST(math_normalize_rejects_degenerate) {
