@@ -46,6 +46,17 @@ LISTEN_PORT = 39580
 DISCOVERY_PORT = 39582
 
 
+def usb_serials(devices: str) -> list:
+    """The devices on a cable in `adb devices` output. Over adb on Wi-Fi a
+    reverse port would carry poses and video through adb's own TCP tunnel."""
+    out = []
+    for line in devices.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "device" and ":" not in parts[0] and "._adb" not in parts[0]:
+            out.append(parts[0])
+    return out
+
+
 @dataclass
 class BridgeOptions:
     driver_host: str = DEFAULT_HOST
@@ -260,19 +271,25 @@ class Bridge:
 
     def _adb_reverse(self, quiet: bool = False) -> bool:
         """USB: lets the headset reach this PC's ports as its own 127.0.0.1."""
-        ok = True
-        for port in (self.o.port, VIDEO_PORT):
-            try:
-                r = subprocess.run(["adb", "reverse", f"tcp:{port}", f"tcp:{port}"], capture_output=True, text=True,
-                                   timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-                ok = ok and r.returncode == 0
-                if not quiet:
-                    self.log(f"adb reverse {port}: " + ("ok" if r.returncode == 0 else (r.stderr.strip() or r.stdout.strip())))
-            except (OSError, subprocess.TimeoutExpired):
-                ok = False
-                if not quiet:
-                    self.log(f"adb reverse {port}: adb not available (USB not used)")
-        return ok
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            r = subprocess.run(["adb", "devices"], capture_output=True, text=True, timeout=5, creationflags=flags)
+            serials = usb_serials(r.stdout)
+            if not serials and not quiet:
+                self.log("adb reverse: no headset on a USB cable")
+            ok = bool(serials)
+            for serial in serials:
+                for port in (self.o.port, VIDEO_PORT):
+                    r = subprocess.run(["adb", "-s", serial, "reverse", f"tcp:{port}", f"tcp:{port}"], capture_output=True,
+                                       text=True, timeout=5, creationflags=flags)
+                    ok = ok and r.returncode == 0
+                    if not quiet:
+                        self.log(f"adb reverse {port}: " + ("ok" if r.returncode == 0 else (r.stderr.strip() or r.stdout.strip())))
+            return ok
+        except (OSError, subprocess.TimeoutExpired):
+            if not quiet:
+                self.log("adb reverse: adb not available (USB not used)")
+            return False
 
     def _adb_watch(self) -> None:
         """A headset plugged in later: set up adb reverse again while none is connected."""

@@ -289,6 +289,13 @@ def test_wheel_over_dropdown_scrolls_the_page():
         root.destroy()
 
 
+def test_adb_reverse_only_over_usb():
+    listing = ("List of devices attached\nPA92U0MGJ9041110G\tdevice\n192.168.0.15:5555\tdevice\n"
+               "adb-PA92-x._adb-tls-connect._tcp\tdevice\nOTHER123\tunauthorized\n\n")
+    assert headset_bridge.usb_serials(listing) == ["PA92U0MGJ9041110G"]
+    assert headset_bridge.usb_serials("List of devices attached\n\n") == []
+
+
 # -- switching SteamVR between VHMD and the original ---------------------------
 @pytest.fixture
 def steamvr(tmp_path, monkeypatch):
