@@ -163,6 +163,7 @@ HMD:
 | `ping` | | `{"type":"result","op":"ping","ok":true,"version":"0.1.0"}` |
 | `roles` | | 利用可能なロール一覧 |
 | `set_role` | `id`, `role` | SteamVR 設定の `trackers` セクションにロールを書き込み(ユーザー設定を上書き) |
+| `offset` | `id`, `pos`(m)、`ypr`(度: ヨー、ピッチ、ロール)、`space`(`device` / `room`) | コントローラーとトラッカーの位置・角度の補正。`pos` は `space` の軸に沿い、`ypr` は機器の軸のまわり。値なしなら現在の補正を返す。HMD は不可。SteamVR の終了まで有効で、`status` の機器に `offset` が出る |
 | `reset` | `id`(省略時全台) | 設定ファイルの既定ポーズに戻す |
 | `add` | `id`(省略時はオンデマンド全台) | オンデマンドのデバイスを今すぐ SteamVR に追加(次のフレームで反映)。`{"ok":true,"ids":[...]}` |
 | `hand_mode` | `mode`(`controllers` / `hands`、省略時は現在のモードを返すだけ) | 左右の手をコントローラー / ハンドトラッキングで切り替え(SteamVR は止まりません)。`{"ok":true,"mode":"hands"}`。`status` にも `hand_mode` が入ります |

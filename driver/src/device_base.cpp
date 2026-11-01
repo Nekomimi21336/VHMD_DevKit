@@ -147,6 +147,7 @@ void VirtualDevice::Update(Clock::time_point now) {
     Frame f;
     f.out = state_->ComputeOutput(now);
     if (!f.out.parent.empty() && f.out.pose_valid) ApplyParent(f.out);
+    ApplyOffset(f.out, state_->Offset());
     f.inputs = state_->TakeChangedInputs();
     f.skeleton = state_->TakeSkeleton();
     f.gaze = state_->TakeGaze();

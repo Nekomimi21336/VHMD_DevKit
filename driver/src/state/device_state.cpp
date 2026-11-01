@@ -66,6 +66,36 @@ void DeviceState::SubmitGaze(const GazeMessage& m) {
     gaze_ = m;
 }
 
+bool DeviceOffset::IsZero() const {
+    return pos.x == 0 && pos.y == 0 && pos.z == 0 && ypr.x == 0 && ypr.y == 0 && ypr.z == 0;
+}
+
+void ApplyOffset(OutputPose& out, const DeviceOffset& offset) {
+    if (offset.IsZero()) return;
+    if (offset.room) {
+        out.pos = out.pos + offset.pos;
+    } else {
+        const Vec3 arm = Rotate(out.rot, offset.pos);
+        out.pos = out.pos + arm;
+        out.vel = out.vel + Cross(out.angvel, arm);   // the corrected point swings with the device
+    }
+    out.rot = Multiply(out.rot, offset.rot);
+}
+
+void DeviceState::SetOffset(const Vec3& pos, const Vec3& ypr, bool room) {
+    constexpr double kRadians = 3.14159265358979323846 / 180.0;
+    std::lock_guard<std::mutex> lock(mu_);
+    offset_.pos = pos;
+    offset_.ypr = ypr;
+    offset_.room = room;
+    offset_.rot = FromYawPitchRoll(ypr.x * kRadians, ypr.y * kRadians, ypr.z * kRadians);
+}
+
+DeviceOffset DeviceState::Offset() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    return offset_;
+}
+
 OutputPose DeviceState::ComputeOutput(Clock::time_point now) {
     std::lock_guard<std::mutex> lock(mu_);
     OutputPose out;

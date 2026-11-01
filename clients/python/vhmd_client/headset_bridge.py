@@ -36,7 +36,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Optional
 
-from . import bindings, headset_info, native_relay
+from . import bindings, headset_info, native_relay, offsets
 from .client import DEFAULT_HOST, DEFAULT_PORT
 from .headset_stream import VIDEO_PORT, VideoServer
 
@@ -86,6 +86,7 @@ class BridgeOptions:
     foveation: int = 0            # foveated encoding: 0 off, 1 light, 2 strong (FOVEATION)
     bindings: Dict[str, str] = field(default_factory=dict)   # changes from bindings.DEFAULTS
     body_tracking: bool = True    # what the PICO Motion Trackers track, as SteamVR trackers
+    offsets: Dict[str, dict] = field(default_factory=dict)   # by device id, see offsets.py
 
 
 class Stats:
@@ -180,6 +181,7 @@ class Bridge:
         self.data_path = "python"
         self._hands = bindings.compiled(bindings.table(options.bindings))
         self._body_state = 0            # 0 none, 1 waiting for the Motion Trackers, 2 tracked
+        self.devices: list = []         # the driver's devices, from its status
 
     # -- setup ----------------------------------------------------------------
     def start(self) -> None:
@@ -352,6 +354,14 @@ class Bridge:
         self._hands = bindings.compiled(t)
         if self._native:
             self._native.bindings(bindings.wire(t))
+
+    def set_offset(self, device_id: str, value: dict) -> None:
+        """Position and angle correction of a device; in effect at once."""
+        value = offsets.clean(value)
+        kept = {k: v for k, v in self.o.offsets.items() if k != device_id}
+        self.o.offsets = kept if offsets.is_zero(value) else {**kept, device_id: value}
+        req = {"type": "config", "op": "offset", **offsets.message(device_id, value)}
+        self._send_driver(json.dumps(req, separators=(",", ":")).encode())
 
     def request(self, op: str, timeout: float = 0.3, **args) -> dict:
         """A config request to the driver, sent from the socket the poses use: the
@@ -567,6 +577,7 @@ class Bridge:
     def _monitor(self) -> None:
         from . import mode
         last_steamvr_check = 0.0
+        last_devices_check = 0.0
         window = time.monotonic()
         while True:
             time.sleep(max(0.0, 1.0 - (time.monotonic() - window)))
@@ -607,6 +618,16 @@ class Bridge:
                 self._models_applied = None
             if self.pc_state["driver"]:
                 self.pc_state["steamvr"] = True
+
+            # The driver's devices; its corrections end with SteamVR, so they go again.
+            if self.pc_state["driver"] and now - last_devices_check > 3.0:
+                last_devices_check = now
+                try:
+                    self.devices = self.request("status").get("devices", [])
+                    for msg in offsets.pending(self.devices, self.o.offsets):
+                        self.request("offset", **msg)
+                except (OSError, TimeoutError, ValueError):
+                    pass
 
             # Controllers as axes for the Dev edition, labelled shapes otherwise.
             edition = self.info.get("edition")

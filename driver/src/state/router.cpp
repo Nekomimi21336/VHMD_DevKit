@@ -2,6 +2,7 @@
 
 #include <type_traits>
 #include <algorithm>
+#include <cmath>
 
 #include <set>
 #include <utility>
@@ -50,6 +51,14 @@ MessageRouter::MessageRouter(const DriverConfig& config, std::vector<std::shared
         }
     }
 }
+
+namespace {
+json OffsetJson(const DeviceOffset& o) {
+    return {{"pos", {o.pos.x, o.pos.y, o.pos.z}},
+            {"ypr", {o.ypr.x, o.ypr.y, o.ypr.z}},
+            {"space", o.room ? "room" : "device"}};
+}
+} // namespace
 
 DeviceState* MessageRouter::Find(std::string_view id) const {
     auto it = by_id_.find(id);
@@ -223,6 +232,7 @@ std::string MessageRouter::StatusJson(Clock::time_point now, std::optional<doubl
             {"rate_hz", s.rate_hz},
         };
         if (!c.role.empty()) e["role"] = c.role;
+        if (const DeviceOffset o = d->Offset(); !o.IsZero()) e["offset"] = OffsetJson(o);
         e["on_demand"] = c.on_demand;
         e["timeout_policy"] = ToString(config_.EffectivePolicy(c));
         e["age_s"] = s.seconds_since_update < 0 ? json(nullptr) : json(s.seconds_since_update);
@@ -326,6 +336,31 @@ std::optional<std::string> MessageRouter::HandleConfig(const ConfigMessage& m, C
             r["ok"] = err.empty();
             if (!err.empty()) r["error"] = err;
             r["role"] = role->steamvr_role;
+        }
+    } else if (m.op == "offset") {
+        // Without values it only reports. The HMD has none: the picture is drawn for its pose.
+        constexpr double kMaxMeters = 2.0, kMaxDegrees = 360.0;
+        DeviceState* dev = Find(m.id);
+        const auto within = [](const Vec3& v, double max) {
+            return std::abs(v.x) <= max && std::abs(v.y) <= max && std::abs(v.z) <= max;
+        };
+        if (!dev || dev->Config().kind == DeviceKind::Hmd) {
+            r["ok"] = false;
+            r["error"] = "unknown controller or tracker id";
+        } else if ((m.pos && !within(*m.pos, kMaxMeters)) || (m.ypr && !within(*m.ypr, kMaxDegrees))) {
+            r["ok"] = false;
+            r["error"] = "offset out of range";
+        } else if (m.space && *m.space != "device" && *m.space != "room") {
+            r["ok"] = false;
+            r["error"] = "space must be device or room";
+        } else {
+            const DeviceOffset old = dev->Offset();
+            if (m.pos || m.ypr || m.space) {
+                dev->SetOffset(m.pos.value_or(old.pos), m.ypr.value_or(old.ypr), m.space ? *m.space == "room" : old.room);
+            }
+            r["ok"] = true;
+            r["id"] = dev->Config().id;
+            r["offset"] = OffsetJson(dev->Offset());
         }
     } else if (m.op == "refresh_rate") {
         if (m.hz && (!(*m.hz >= kMinRefreshHz) || *m.hz > kMaxRefreshHz)) {

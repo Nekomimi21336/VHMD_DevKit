@@ -3,6 +3,7 @@
 ## 未リリース
 
 ### 追加
+- **コントローラーとトラッカーの位置・角度の補正**: ドライバが機器ごとに補正する(`config` の `offset`、`VHMDClient.offset`)。PC のアプリの「位置と角度の補正」で変えるとすぐ反映され、SteamVR を起動し直しても送り直す。UDP や VMT で送るトラッカーにも効く。
 - **PICO Motion Tracker を SteamVR の腰と足のトラッカーに**: ヘッドセットのアプリが `XR_BD_body_tracking` で体の関節を読み、`waist` / `left_foot` / `right_foot` として送る。PC のアプリの「体のトラッキング」で切れる(`headset_bridge --no-body-tracking`)。
 - **コントローラーのボタンの割り当て**: ボタンを押したときに SteamVR へ送る入力を、同じ手の中で変えられる。PC のアプリの「コントローラーのボタン」(すぐ反映)と `headset_bridge --bind left.menu=menu`。
 - **中心をくっきり・周辺を粗く(フォービエイテッド圧縮)**: 圧縮の前に GPU で目ごとの外側を縮め、ヘッドセットが表示のときに引き伸ばす。強(中央 40%・外側 1/4)で送る画素が 30% になり、圧縮 7.15 → 4.7 ms、姿勢から映像まで 22.6 → 20.0 ms。PC のアプリの「パフォーマンス」と `headset_bridge --foveation 1|2`。

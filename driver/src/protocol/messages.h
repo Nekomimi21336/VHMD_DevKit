@@ -73,6 +73,10 @@ struct ConfigMessage {
     // "display_sync": the headset's frame wait (circular mean), its display
     // period, the wanted wait (ms) and how consistent the measurement was (0..1).
     std::optional<double> slack_ms, period_ms, target_ms, weight;
+    // "offset": correction of a controller or tracker: meters, degrees
+    // (yaw, pitch, roll) and how the position is meant ("device" or "room").
+    std::optional<Vec3> pos, ypr;
+    std::optional<std::string> space;
     std::optional<double> seq; // echoed back in replies
     // "control": the sender that drives the devices ("" = anyone) and, optionally,
     // which devices (none = all). Without "source" the op only reports.

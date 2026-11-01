@@ -32,7 +32,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Dict, Optional
 
-from . import bindings, headset_info, mode
+from . import bindings, headset_info, mode, offsets
 from .fps import PALETTES, setup_style, ui_language, windows_theme
 from .headset_bridge import Bridge, BridgeOptions
 from .tray import TrayIcon
@@ -48,6 +48,7 @@ DEFAULTS = {"quality": "standard", "codec": "hevc", "buffer": 0, "refresh": 72, 
             "auto_latency": True, "predict": True, "amf": True, "eye_scale": 1.0, "udp_video": False, "fec": 30, "foveation": 0,
             "bindings": {},                    # changes from bindings.DEFAULTS
             "body_tracking": True,
+            "offsets": {},                     # by device id, see offsets.py
             "dev_view": False}
 
 TEXT = {
@@ -72,6 +73,12 @@ TEXT = {
         "q_low": "Low (20 Mbit/s)", "q_standard": "Standard (40 Mbit/s)", "q_high": "High (60 Mbit/s)", "q_max": "Highest (80 Mbit/s)",
         "c_hevc": "HEVC (recommended)", "c_h264": "H.264", "c_av1": "AV1 (newer GPUs)",
         "b0": "Lowest latency", "b1": "Smoother (+1 frame)",
+        "off": "Position and angle correction",
+        "off_hint": "Controllers move along their own axes, trackers along the room's. Changes apply at once.",
+        "off_device": "Device", "off_x": "Left-right X (cm)", "off_y": "Up-down Y (cm)", "off_z": "Back-front Z (cm)",
+        "off_yaw": "Yaw (degrees)", "off_pitch": "Pitch (degrees)", "off_roll": "Roll (degrees)",
+        "off_reset": "Clear this device's correction", "d_left_hand": "Left controller",
+        "d_right_hand": "Right controller", "d_waist": "Waist", "d_left_foot": "Left foot", "d_right_foot": "Right foot",
         "body": "Body tracking", "perf_body_tracking": "Use PICO Motion Trackers (waist and feet in SteamVR)",
         "perf_body_tracking_hint": "Calibrate them on the headset first. The SteamVR trackers appear once they are tracked.",
         "bind": "Controller buttons", "bind_hint": "What each button presses in SteamVR. Changes apply at once.",
@@ -122,6 +129,12 @@ TEXT = {
         "q_low": "低(20 Mbit/s)", "q_standard": "標準(40 Mbit/s)", "q_high": "高(60 Mbit/s)", "q_max": "最高(80 Mbit/s)",
         "c_hevc": "HEVC(推奨)", "c_h264": "H.264", "c_av1": "AV1(新しい GPU)",
         "b0": "遅れを最小に", "b1": "なめらか(+1 フレーム)",
+        "off": "位置と角度の補正",
+        "off_hint": "コントローラーは本体の向き、トラッカーは部屋の向きに沿って動きます。変えるとすぐ反映されます。",
+        "off_device": "機器", "off_x": "左右 X(cm)", "off_y": "上下 Y(cm)", "off_z": "前後 Z(cm)",
+        "off_yaw": "ヨー(度)", "off_pitch": "ピッチ(度)", "off_roll": "ロール(度)",
+        "off_reset": "この機器の補正をなくす", "d_left_hand": "左コントローラー", "d_right_hand": "右コントローラー",
+        "d_waist": "腰", "d_left_foot": "左足", "d_right_foot": "右足",
         "body": "体のトラッキング", "perf_body_tracking": "PICO Motion Tracker を使う(SteamVR に腰と足のトラッカーを出す)",
         "perf_body_tracking_hint": "先にヘッドセットで較正してください。トラッキングが始まると SteamVR にトラッカーが現れます。",
         "bind": "コントローラーのボタン", "bind_hint": "ボタンを押したときに SteamVR へ送る入力。変えるとすぐ反映されます。",
@@ -283,7 +296,8 @@ class LinkApp:
                                            eye_scale=float(self.s["eye_scale"]),
                                            udp_video=bool(self.s["udp_video"]), fec=int(self.s["fec"]),
                                            foveation=int(self.s["foveation"]), bindings=dict(self.s["bindings"]),
-                                           body_tracking=bool(self.s["body_tracking"])),
+                                           body_tracking=bool(self.s["body_tracking"]),
+                                           offsets=dict(self.s["offsets"])),
                              log=self.log)
         try:
             self.bridge.start()
@@ -437,6 +451,35 @@ class LinkApp:
                 self.bind_combo(grid, len(self.bind_vars), hand, button)
         ttk.Button(c, text=t["bind_reset"], command=self.reset_bindings).pack(anchor="w", pady=(6, 0))
 
+        # Position and angle corrections
+        c = self.card(self.body, t["off"])
+        ttk.Label(c, text=t["off_hint"], style="CardMuted.TLabel", wraplength=470, justify="left").pack(anchor="w")
+        grid = ttk.Frame(c, style="Card.TFrame")
+        grid.pack(fill="x", pady=(4, 0))
+        ttk.Label(grid, text=t["off_device"], style="Card.TLabel").grid(row=0, column=0, sticky="w", pady=3, padx=(0, 12))
+        self.off_device = tk.StringVar()
+        self.off_box = ttk.Combobox(grid, textvariable=self.off_device, state="readonly", width=26)
+        self.off_box.grid(row=0, column=1, sticky="w", pady=3)
+        wheel_scrolls_page(self.off_box, self.scroll)
+        self.off_box.bind("<<ComboboxSelected>>", lambda _e: self.show_offset())
+        self.off_choices: list = []
+        self.off_vars = []
+        cm, degrees = offsets.MAX_METERS * 100, offsets.MAX_DEGREES
+        fields = [("off_x", cm, 0.5), ("off_y", cm, 0.5), ("off_z", cm, 0.5),
+                  ("off_yaw", degrees, 1), ("off_pitch", degrees, 1), ("off_roll", degrees, 1)]
+        for row, (key, limit, step) in enumerate(fields, start=1):
+            ttk.Label(grid, text=t[key], style="Card.TLabel").grid(row=row, column=0, sticky="w", pady=3, padx=(0, 12))
+            var = tk.StringVar(value="0")
+            box = ttk.Spinbox(grid, from_=-limit, to=limit, increment=step, width=9, textvariable=var,
+                              command=self.offset_changed)
+            box.grid(row=row, column=1, sticky="w", pady=3)
+            box.bind("<Return>", lambda _e: self.offset_changed())
+            box.bind("<FocusOut>", lambda _e: self.offset_changed())
+            wheel_scrolls_page(box, self.scroll)
+            self.off_vars.append(var)
+        ttk.Button(c, text=t["off_reset"], command=self.reset_offset).pack(anchor="w", pady=(6, 0))
+        self.update_offset_devices()
+
         # Body tracking
         c = self.card(self.body, t["body"])
         var = tk.BooleanVar(value=bool(self.s["body_tracking"]))
@@ -528,6 +571,49 @@ class LinkApp:
         for name, var in self.bind_vars.items():
             var.set(self.bind_label(name))
         self.log("button bindings: defaults")
+
+    def offset_id(self) -> str:
+        name = self.off_device.get()
+        return next((i for i, label in self.off_choices if label == name), offsets.HANDS[0])
+
+    def update_offset_devices(self) -> None:
+        """The devices to correct, as SteamVR gets them."""
+        found = [(i, self.t.get("d_" + name, name)) for i, name in offsets.choices(self.bridge.devices)]
+        if found == self.off_choices:
+            return
+        self.off_choices = found
+        self.off_box.configure(values=[label for _, label in found])
+        if self.off_device.get() not in [label for _, label in found]:
+            self.off_device.set(found[0][1])
+            self.show_offset()
+
+    def show_offset(self) -> None:
+        value = self.s["offsets"].get(self.offset_id(), offsets.ZERO)
+        shown = [v * 100 for v in value["pos"]] + list(value["ypr"])
+        for var, v in zip(self.off_vars, shown):
+            var.set(f"{v:g}")
+
+    def offset_changed(self) -> None:
+        try:
+            v = [float(var.get() or 0) for var in self.off_vars]
+        except ValueError:
+            self.show_offset()   # not a number: back to what is in effect
+            return
+        device = self.offset_id()
+        value = offsets.clean({"pos": [x / 100 for x in v[:3]], "ypr": v[3:]})
+        old = self.s["offsets"].get(device, offsets.ZERO)
+        if all(abs(a - b) < 1e-6 for a, b in zip(value["pos"] + value["ypr"], old["pos"] + old["ypr"])):
+            return
+        self.bridge.set_offset(device, value)
+        self.set("offsets", self.bridge.o.offsets)
+        self.show_offset()
+        self.log(f"correction of {device}: {value['pos']} m, {value['ypr']} degrees")
+
+    def reset_offset(self) -> None:
+        self.bridge.set_offset(self.offset_id(), offsets.ZERO)
+        self.set("offsets", self.bridge.o.offsets)
+        self.show_offset()
+        self.log(f"correction of {self.offset_id()}: none")
 
     def set(self, key: str, value) -> None:
         self.s[key] = value
@@ -633,6 +719,7 @@ class LinkApp:
 
     def refresh(self) -> None:
         t, pal = self.t, self.pal
+        self.update_offset_devices()
         while True:
             try:
                 ev = self.tray.events.get_nowait()

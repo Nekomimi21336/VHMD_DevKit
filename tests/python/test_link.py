@@ -14,7 +14,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "clients" / "python"))
 
-from vhmd_client import bindings, headset_bridge, native_relay  # noqa: E402
+from vhmd_client import bindings, headset_bridge, native_relay, offsets  # noqa: E402
 
 
 class FakeRelay:
@@ -303,6 +303,95 @@ def test_body_tracking_state_logged_on_change():
         b._own_message({"type": "link_stats", "body": state})
     assert len(logs) == 3 and "tracked" in logs[1] and "waiting" in logs[2]
     assert headset_bridge.BridgeOptions().body_tracking is True
+
+
+# -- position and angle corrections ------------------------------------------
+HAND = {"id": "left_hand", "kind": "controller", "index": 1}
+FOOT = {"id": "tracker_1", "kind": "tracker", "index": 4, "role": "left_foot"}
+HEAD = {"id": "hmd", "kind": "hmd", "index": 0}
+UNUSED = {"id": "tracker_5", "kind": "tracker", "index": -1, "role": "left_elbow"}
+
+
+def test_offset_space_and_limits():
+    assert offsets.space("left_hand") == "device" and offsets.space("tracker_1") == "room"
+    assert offsets.clean({"pos": [3, -3, 0.1], "ypr": [200, -200, 5]}) == {"pos": [2, -2, 0.1], "ypr": [180, -180, 5]}
+    assert offsets.message("tracker_1", {"pos": [0, -0.03, 0], "ypr": [0, 0, 0]})["space"] == "room"
+
+
+def test_offset_sent_again_after_steamvr_restarts():
+    wanted = {"left_hand": {"pos": [0, 0, -0.02], "ypr": [0, -30, 0]}}
+    fresh = [HEAD, HAND, FOOT]                         # the driver has none
+    assert offsets.pending(fresh, wanted) == [{"id": "left_hand", "pos": [0, 0, -0.02], "ypr": [0, -30, 0],
+                                               "space": "device"}]
+    applied = [HEAD, {**HAND, "offset": {**wanted["left_hand"], "space": "device"}}, FOOT]
+    assert offsets.pending(applied, wanted) == []
+    assert [m["id"] for m in offsets.pending(applied, {})] == ["left_hand"]   # cleared here: cleared there
+
+
+def test_offset_choices():
+    assert offsets.choices([]) == [("left_hand", "left_hand"), ("right_hand", "right_hand")]
+    assert offsets.choices([HEAD, HAND, FOOT, UNUSED])[2:] == [("tracker_1", "left_foot")]
+
+
+def test_bridge_set_offset():
+    sent = []
+    b = object.__new__(headset_bridge.Bridge)
+    b.o = headset_bridge.BridgeOptions()
+    b._send_driver = lambda data: sent.append(json.loads(data))
+    b.set_offset("tracker_1", {"pos": [0, -0.03, 0], "ypr": [0, 0, 10]})
+    assert sent[-1] == {"type": "config", "op": "offset", "id": "tracker_1", "pos": [0, -0.03, 0], "ypr": [0, 0, 10],
+                        "space": "room"}
+    assert "tracker_1" in b.o.offsets
+    b.set_offset("tracker_1", offsets.ZERO)
+    assert sent[-1]["pos"] == [0, 0, 0] and b.o.offsets == {}
+
+
+def test_every_device_and_field_named_in_the_app():
+    from vhmd_client import link
+    for texts in link.TEXT.values():
+        for key in ("off", "off_hint", "off_device", "off_x", "off_y", "off_z", "off_yaw", "off_pitch", "off_roll",
+                    "off_reset", "d_left_hand", "d_right_hand", "d_waist", "d_left_foot", "d_right_foot"):
+            assert key in texts
+
+
+def test_app_field_values_become_a_correction(monkeypatch):
+    """What the PC app's fields do: centimeters and degrees to the driver's units,
+    kept in the settings, nothing sent when nothing changed or on bad input."""
+    from types import SimpleNamespace
+    from vhmd_client import link
+
+    class Var:
+        def __init__(self, v):
+            self.v = v
+
+        def get(self):
+            return self.v
+
+        def set(self, v):
+            self.v = v
+
+    calls = []
+    saved = {}
+    bridge = SimpleNamespace(o=SimpleNamespace(offsets={}))
+
+    def set_offset(device, value):
+        calls.append((device, value))
+        bridge.o.offsets = {device: value}
+
+    bridge.set_offset = set_offset
+    app = SimpleNamespace(off_vars=[Var(x) for x in ("1.5", "0", "-2", "0", "-30", "")], s={"offsets": {}},
+                          bridge=bridge, log=lambda _m: None, offset_id=lambda: "left_hand")
+    app.show_offset = lambda: None
+    app.set = lambda k, v: (saved.update({k: v}), app.s.update({k: v}))
+
+    link.LinkApp.offset_changed(app)
+    assert calls == [("left_hand", {"pos": [0.015, 0.0, -0.02], "ypr": [0.0, -30.0, 0.0]})]
+    assert saved["offsets"]["left_hand"]["ypr"][1] == -30.0
+    link.LinkApp.offset_changed(app)
+    assert len(calls) == 1                       # nothing changed
+    app.off_vars[0].v = "abc"
+    link.LinkApp.offset_changed(app)
+    assert len(calls) == 1                       # not a number
 
 
 # -- switching SteamVR between VHMD and the original ---------------------------

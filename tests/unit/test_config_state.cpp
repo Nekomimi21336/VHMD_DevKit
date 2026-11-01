@@ -1,6 +1,7 @@
 #include "test_framework.h"
 
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <memory>
 #include <sstream>
@@ -494,6 +495,71 @@ TEST(router_control_ownership) {
     router.HandleDatagram(R"({"type":"config","op":"control","source":""})", now);
     router.HandleDatagram(R"({"type":"pose","id":"left_hand","pos":[8,1,0],"rot":[1,0,0,0]})", now);
     CHECK_NEAR(router.Find("left_hand")->ComputeOutput(now).pos.x, 8.0, 1e-9);
+}
+
+TEST(offset_moves_along_the_device_or_the_room) {
+    const double half = std::sqrt(0.5);
+    OutputPose out;
+    out.pos = {1, 2, 3};
+    out.rot = {half, 0, half, 0};   // 90 degrees around +Y: the device's -Z points to -X
+    out.angvel = {0, 2, 0};
+    DriverConfig cfg = DefaultConfig();
+    DeviceState state(cfg.devices[1], cfg);
+
+    state.SetOffset({0, 0, -0.5}, {}, false);
+    OutputPose a = out;
+    ApplyOffset(a, state.Offset());
+    CHECK(std::abs(a.pos.x - 0.5) < 1e-9 && std::abs(a.pos.y - 2) < 1e-9 && std::abs(a.pos.z - 3) < 1e-9);
+    CHECK(std::abs(a.vel.z - 1.0) < 1e-9);   // swings around +Y: omega x arm
+    CHECK(std::abs(a.rot.w - out.rot.w) < 1e-9 && std::abs(a.rot.y - out.rot.y) < 1e-9);
+
+    state.SetOffset({0, 0, -0.5}, {}, true);
+    OutputPose b = out;
+    ApplyOffset(b, state.Offset());
+    CHECK(std::abs(b.pos.x - 1) < 1e-9 && std::abs(b.pos.z - 2.5) < 1e-9);
+    CHECK(b.vel.x == 0 && b.vel.y == 0 && b.vel.z == 0);
+
+    state.SetOffset({}, {90, 0, 0}, false);   // yaw on top of the device's rotation: 180 degrees in all
+    OutputPose c = out;
+    ApplyOffset(c, state.Offset());
+    CHECK(std::abs(c.rot.w) < 1e-9 && std::abs(std::abs(c.rot.y) - 1) < 1e-9);
+    CHECK(std::abs(c.pos.x - 1) < 1e-9);
+
+    state.SetOffset({}, {}, false);
+    CHECK(state.Offset().IsZero());
+    OutputPose d = out;
+    ApplyOffset(d, state.Offset());
+    CHECK(d.rot.w == out.rot.w && d.pos.x == out.pos.x);
+}
+
+TEST(router_offset_op) {
+    DriverConfig cfg = DefaultConfig();
+    std::vector<std::shared_ptr<DeviceState>> states;
+    for (const auto& d : cfg.devices) states.push_back(std::make_shared<DeviceState>(d, cfg));
+    MessageRouter router(cfg, states);
+    const auto now = Clock::now();
+    auto ask = [&](const char* text) { return nlohmann::json::parse(*router.HandleDatagram(text, now)); };
+
+    auto set = ask(R"({"type":"config","op":"offset","id":"left_hand","pos":[0.01,0,-0.02],"ypr":[0,-30,0],"space":"device"})");
+    CHECK(set["ok"].get<bool>());
+    CHECK(set["offset"]["ypr"][1].get<double>() == -30.0);
+    auto only_angle = ask(R"({"type":"config","op":"offset","id":"left_hand","ypr":[5,0,0]})");
+    CHECK(only_angle["offset"]["pos"][2].get<double>() == -0.02);   // the rest stays
+    CHECK(only_angle["offset"]["space"] == "device");
+    CHECK(ask(R"({"type":"config","op":"offset","id":"left_hand"})")["offset"]["ypr"][0].get<double>() == 5.0);
+
+    auto foot = ask(R"({"type":"config","op":"offset","id":"left_foot","pos":[0,-0.03,0],"space":"room"})");
+    CHECK(foot["ok"].get<bool>() && foot["offset"]["space"] == "room");
+
+    CHECK(!ask(R"({"type":"config","op":"offset","id":"hmd","pos":[0,1,0]})")["ok"].get<bool>());
+    CHECK(!ask(R"({"type":"config","op":"offset","id":"nope","pos":[0,1,0]})")["ok"].get<bool>());
+    CHECK(!ask(R"({"type":"config","op":"offset","id":"left_hand","pos":[0,3,0]})")["ok"].get<bool>());
+    CHECK(!ask(R"({"type":"config","op":"offset","id":"left_hand","space":"moon"})")["ok"].get<bool>());
+
+    auto list = ask(R"({"type":"config","op":"list"})");
+    int with_offset = 0;
+    for (const auto& d : list["devices"]) with_offset += d.contains("offset") ? 1 : 0;
+    CHECK(with_offset == 2);
 }
 
 TEST(router_render_models_op) {

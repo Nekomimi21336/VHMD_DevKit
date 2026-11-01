@@ -36,6 +36,20 @@ struct OutputPose {
     bool timed_out = false;
 };
 
+// Correction applied to a device's pose (config op "offset"), for example the
+// angle a controller is held at or where a tracker sits.
+struct DeviceOffset {
+    Vec3 pos{};          // meters
+    Vec3 ypr{};          // degrees: yaw, pitch, roll, in the device's own axes
+    bool room = false;   // pos: along the room's axes instead of the device's
+    Quat rot{};          // ypr as a rotation
+
+    bool IsZero() const;
+};
+
+// The pose after the device's correction.
+void ApplyOffset(OutputPose& out, const DeviceOffset& offset);
+
 struct DeviceStats {
     uint64_t pose_packets = 0;
     uint64_t input_packets = 0;
@@ -76,6 +90,10 @@ public:
     // Latest received pose (false if nothing was received yet).
     bool LatestPose(Vec3& pos, Quat& rot) const;
 
+    // Pose correction: stays until changed (also over "reset"), not saved.
+    void SetOffset(const Vec3& pos, const Vec3& ypr, bool room);
+    DeviceOffset Offset() const;
+
     const DeviceConfig& Config() const { return cfg_; }
 
 private:
@@ -91,6 +109,7 @@ private:
     Clock::time_point created_;
     std::optional<Clock::time_point> last_output_;
     PoseSmoother smoother_;
+    DeviceOffset offset_;
 
     std::map<std::string, float> pending_inputs_;
     std::set<std::string> seen_inputs_;   // every input name received, for Handover

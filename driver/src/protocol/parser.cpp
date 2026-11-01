@@ -248,6 +248,14 @@ std::string ParseConfig(const json& obj, Message& out) {
                               std::pair{"target_ms", &m.target_ms}, std::pair{"weight", &m.weight}}) {
         if (auto v = obj.find(key); v != obj.end() && v->is_number()) *field = v->get<double>();
     }
+    for (auto [key, field] : {std::pair{"pos", &m.pos}, std::pair{"ypr", &m.ypr}}) {
+        if (auto it = obj.find(key); it != obj.end()) {
+            Vec3 v;
+            if (auto e = ReadVec3(*it, v); !e.empty()) return std::string(key) + ": " + e;
+            *field = v;
+        }
+    }
+    if (auto space = obj.find("space"); space != obj.end() && space->is_string()) m.space = space->get<std::string>();
     if (auto seq = obj.find("seq"); seq != obj.end() && seq->is_number()) m.seq = seq->get<double>();
     if (auto src = obj.find("source"); src != obj.end() && src->is_string())
         m.source = src->get<std::string>().substr(0, 32);

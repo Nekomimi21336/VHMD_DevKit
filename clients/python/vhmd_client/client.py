@@ -234,6 +234,24 @@ class VHMDClient:
     def set_role(self, tracker_id: str, role: str) -> Dict[str, Any]:
         return self.request("set_role", id=tracker_id, role=role)
 
+    def offset(self, device_id: str, pos: Optional[Sequence[float]] = None, ypr: Optional[Sequence[float]] = None,
+               space: Optional[str] = None) -> Dict[str, Any]:
+        """Correct where a controller or tracker is: pos in meters, ypr (yaw,
+        pitch, roll) in degrees around the device's own axes. space: pos along
+        the "device"'s axes or the "room"'s. Without values, returns the current
+        correction. It lasts until SteamVR ends."""
+        args: Dict[str, Any] = {"id": device_id}
+        if pos is not None:
+            args["pos"] = list(pos)
+        if ypr is not None:
+            args["ypr"] = list(ypr)
+        if space is not None:
+            args["space"] = space
+        r = self.request("offset", **args)
+        if not r.get("ok"):
+            raise ValueError(r.get("error", "offset failed"))
+        return r["offset"]
+
     def preview(self, on: bool = True) -> None:
         """Start (or pause) the Linux direct-mode preview in shared memory. The
         driver only captures frames while a tool has asked for them."""
