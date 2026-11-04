@@ -102,6 +102,30 @@ python3 clients/python/examples/preview_viewer.py --snapshot eyes.png
 
 ログ: `~/.steam/steam/logs/vrserver.txt`(場所は `openvrpaths.vrpath` の `log`)。`vhmd:` で始まる行がこのドライバのものです。`config list` の応答の `display` に、モード、present 数、vsync 数、プレビューの状態が入ります。
 
+## VHMD Link(PC のアプリ)を Linux で使う
+
+Pico 4 Ultra などのヘッドセットのアプリ VHMD Link は、Linux の PC にもつながります。PC のアプリは Windows と同じもの(tkinter)です。
+
+```bash
+sudo apt install python3-tk pulseaudio-utils ffmpeg adb   # adb は USB でつなぐときだけ
+cd clients/python && python3 -m vhmd_client.link          # --dev で開発者向けの表示
+```
+
+| | Windows | Linux |
+|---|---|---|
+| 映像 | ドライバの中で GPU のエンコーダーが圧縮(HEVC / H.264 / AV1) | ダイレクトモードのプレビューを ffmpeg が H.264 に(NVENC があれば `h264_nvenc`、なければ `libx264`。`headset_bridge --encoder` で指定) |
+| PC の音 | ドライバが WASAPI ループバックで取り込む | `parec` で既定の出力のモニターを取り込み、映像と同じ接続で送る |
+| マイク | VB-CABLE の `CABLE Input` に再生 | PC のアプリが作る `vhmd_mic` に再生、アプリは `VHMD-Microphone` を録音 |
+| データの通り道 | ネイティブ(`vhmdlinkrelay.dll`) | Python(`--native on` で `libvhmdlinkrelay.so`。映像はドライバのエンコーダーが要るので今は使わない) |
+| 通知領域 | あり | `pip install pystray pillow` があれば。なければウィンドウを閉じると終了 |
+| Windows の起動時に開く | レジストリの Run | `~/.config/autostart/vhmd-link.desktop` |
+| SteamVR の使い方 | VHMD Link / PICO Connect / 元の環境 | VHMD Link / 元の環境(PICO Connect は Linux に無い) |
+| キーボード・マウス操作 | あり | なし(Windows のみ) |
+| 設定の場所 | `%LOCALAPPDATA%\VHMD` | `~/.local/state/vhmd` |
+
+- Rust の部分は Linux でもビルドできます(`cd link && cargo build --release`。Ubuntu 24.04 の `cargo` 1.75 でも読めるよう `Cargo.lock` は版 3)。単体テスト 16 件も Linux で通ります。
+- 確認(WSL の Ubuntu 24.04、2026-11-04): PC のアプリがヘッドセットの代役 `vhmd-link-sim` とつながり、ヘッドセットの表示、マイクの一覧と選択(設定に保存され、ヘッドセットへ送られる)、自動起動のファイルの作成・削除、通知領域が無いときの表示、SteamVR の状態の検出、`vhmd_mic` / `VHMD-Microphone` の作成を確かめた。SteamVR を動かした Linux での映像・音・マイクは未確認(WSL では SteamVR を動かせない。WSLg の PulseAudio は再生の速さが実際と違う)。
+
 ## 実機での確認(自動)
 
 ```bash

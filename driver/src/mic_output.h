@@ -1,9 +1,13 @@
-// Plays the headset's microphone into an audio output, by default VB-CABLE's
-// "CABLE Input": Windows programs then take "CABLE Output" as their microphone.
-// A driver cannot add a recording device by itself (that takes a signed audio
-// driver), so the output has to exist already. The monitor plays it into the
-// default output too, which also goes back to the headset: the person hears
-// what went through the PC.
+// Plays the headset's microphone into an audio output.
+// Windows (windows/mic_output.cpp, WASAPI): by default VB-CABLE's "CABLE Input":
+// programs then take "CABLE Output" as their microphone. A driver cannot add a
+// recording device by itself (that takes a signed audio driver), so the output
+// has to exist already.
+// Linux (linux/mic_output.cpp, PulseAudio or PipeWire through libpulse-simple,
+// loaded at run time): the sink with that name, by default "vhmd_mic", a null
+// sink the PC app makes; programs record from its monitor ("VHMD Microphone").
+// The monitor plays it into the default output too, which also goes back to the
+// headset: the person hears what went through the PC.
 #pragma once
 
 #include <atomic>
@@ -21,7 +25,8 @@ class MicPlayer {
 public:
     ~MicPlayer() { Stop(); }
 
-    // The output whose name contains `name`; "" = off, kDefaultOutput = the default output.
+    // The output whose name contains `name` (Linux: the sink of that name); "" = off,
+    // kDefaultOutput = the default output.
     void SetTarget(const std::string& name);
     // Never plays into an output with this name: the sound would come back into itself.
     void SetAvoid(const std::string& name);

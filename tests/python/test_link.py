@@ -329,6 +329,71 @@ def test_mic_state():
     assert b.mic_state() == "busy"
 
 
+def test_headset_mics():
+    b = object.__new__(headset_bridge.Bridge)
+    b.info = {}
+    assert b.mics() == [] and b.mic_using() == ""            # an older headset app lists none
+    b.info = {"mics": [{"key": "15:bottom", "type": 15, "name": "PICO 4 Ultra"}, {"type": 7}, "x"],
+              "mic_using": "15:bottom"}
+    assert [m["key"] for m in b.mics()] == ["15:bottom"]       # entries without a key are left out
+    assert b.mic_using() == "15:bottom"
+
+
+# -- Linux ---------------------------------------------------------------------
+def test_data_dir_per_os(monkeypatch, tmp_path):
+    from vhmd_client import paths
+    monkeypatch.setattr(paths, "IS_WINDOWS", False)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    assert paths.data_dir() == tmp_path / "vhmd"
+    monkeypatch.delenv("XDG_STATE_HOME")
+    assert paths.data_dir() == paths.Path.home() / ".local" / "state" / "vhmd"
+    monkeypatch.setattr(paths, "IS_WINDOWS", True)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    assert paths.data_dir() == tmp_path / "VHMD"
+
+
+def test_linux_mic_sink_made_once(monkeypatch):
+    from vhmd_client import linux_audio
+    loaded = []
+    sinks, sources = ["1\tRDPSink"], ["1\tRDPSink.monitor"]
+
+    def pactl(*args):
+        if args[:3] == ("list", "short", "sinks"):
+            return "\n".join(sinks)
+        if args[:3] == ("list", "short", "sources"):
+            return "\n".join(sources)
+        loaded.append(args)
+        name = next(a.partition("=")[2] for a in args if a.startswith(("sink_name=", "source_name=")))
+        (sinks if args[1] == "module-null-sink" else sources).append(f"9\t{name}")
+        return "27"
+
+    monkeypatch.setattr(linux_audio.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(linux_audio, "_pactl", pactl)
+    assert linux_audio.ensure_mic_sink() == ""
+    assert [a[1] for a in loaded] == ["module-null-sink", "module-remap-source"]
+    assert "master=vhmd_mic.monitor" in loaded[1]
+    assert all(" " not in arg for a in loaded for arg in a)   # PulseAudio 16 refuses quoted descriptions
+    assert linux_audio.ensure_mic_sink() == "" and len(loaded) == 2      # there already: nothing loaded again
+    monkeypatch.setattr(linux_audio.shutil, "which", lambda name: None)
+    assert "pactl" in linux_audio.ensure_mic_sink()
+
+
+def test_pick_encoder(monkeypatch):
+    from vhmd_client import headset_stream
+    assert headset_stream.pick_encoder("h264_nvenc") == "h264_nvenc"
+    monkeypatch.setattr(headset_stream.sys, "platform", "win32")
+    assert headset_stream.pick_encoder("auto") == "h264_amf"
+    monkeypatch.setattr(headset_stream.sys, "platform", "linux")
+
+    class Done:
+        def __init__(self, out):
+            self.stdout = out
+    monkeypatch.setattr(headset_stream.subprocess, "run", lambda *a, **k: Done(" V....D h264_nvenc  NVIDIA\n"))
+    assert headset_stream.pick_encoder("auto") == "h264_nvenc"
+    monkeypatch.setattr(headset_stream.subprocess, "run", lambda *a, **k: Done(" V....D libx264  x264\n"))
+    assert headset_stream.pick_encoder("auto") == "libx264"
+
+
 # -- position and angle corrections ------------------------------------------
 HAND = {"id": "left_hand", "kind": "controller", "index": 1}
 FOOT = {"id": "tracker_1", "kind": "tracker", "index": 4, "role": "left_foot"}

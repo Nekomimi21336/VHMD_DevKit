@@ -72,7 +72,7 @@
 { "type": "mic", "seq": 12, "pcm": "AQD//wAB" }
 ```
 
-헤드셋 마이크의 소리입니다(16비트·48 kHz·모노 리틀 엔디언을 base64로 만든 것. 1개당 100 ms까지). `config`의 `mic`로 출력 대상을 정하면 드라이버가 그 출력으로 재생합니다. `seq`는 1씩 늘립니다(`status`의 `mic.lost`에 사용됩니다). Windows 전용.
+헤드셋 마이크의 소리입니다(16비트·48 kHz·모노 리틀 엔디언을 base64로 만든 것. 1개당 100 ms까지). `config`의 `mic`로 출력 대상을 정하면 드라이버가 그 출력으로 재생합니다. `seq`는 1씩 늘립니다(`status`의 `mic.lost`에 사용됩니다). Windows와 Linux.
 
 ### `input`(컨트롤러 / 트래커 / HMD)
 
@@ -174,7 +174,7 @@ HMD:
 | `set_role` | `id`, `role` | SteamVR 설정의 `trackers` 섹션에 롤을 기록(사용자 설정을 덮어씀) |
 | `offset` | `id`, `pos`(m), `ypr`(도: 요, 피치, 롤), `space`(`device` / `room`) | 컨트롤러와 트래커의 위치·각도 보정. `pos`는 `space`의 축을 따르고, `ypr`은 디바이스 축을 중심으로 함. 값이 없으면 현재 보정을 반환. HMD는 불가. SteamVR 종료까지 유효하며, `status`의 디바이스에 `offset`이 표시됨 |
 | `tracking` | `id`, `mode`(`active` / `paused` / `disconnected`, 생략 시 현재 상태만 반환) | SteamVR에 전달하는 내용을 디바이스별로 바꿈(SteamVR은 멈추지 않음). `paused`는 그 자리에 고정(연결·추적 중 상태 유지, 버튼은 동작). `disconnected`는 미연결로 보고하고, 누르고 있던 입력을 뗌. 새 데이터가 도착해도 `active`로 되돌릴 때까지 바뀌지 않음. 두 상태 모두 수신은 계속 집계함. HMD는 불가. SteamVR 종료까지 유효하며, `status`의 디바이스에 `tracking`이 표시됨. `{"ok":true,"id":"tracker_1","mode":"paused"}` |
-| `mic` | `device`(재생할 오디오 출력 이름의 일부, `""`로 정지), `mode`(`monitor`로 기본 출력에서도 재생, `quiet`로 정지). 둘 다 생략 가능 | 헤드셋 마이크 소리(메시지 `mic`)의 재생 대상. 응답과 `status`의 `mic`에 `device`, `state`, `monitor`, 수신 수가 포함됨. Windows 전용 |
+| `mic` | `device`(재생할 오디오 출력 이름의 일부. Linux는 PulseAudio / PipeWire의 싱크 이름, 기본값 `vhmd_mic`. `""`로 정지), `mode`(`monitor`로 기본 출력에서도 재생, `quiet`로 정지). 둘 다 생략 가능 | 헤드셋 마이크 소리(메시지 `mic`)의 재생 대상. 응답과 `status`의 `mic`에 `device`, `state`, `monitor`, 수신 수가 포함됨. Windows와 Linux |
 | `reset` | `id`(생략 시 전체) | 설정 파일의 기본 포즈로 되돌림 |
 | `add` | `id`(생략 시 온디맨드 전체) | 온디맨드 디바이스를 즉시 SteamVR에 추가(다음 프레임에 반영). `{"ok":true,"ids":[...]}` |
 | `hand_mode` | `mode`(`controllers` / `hands`, 생략 시 현재 모드만 반환) | 좌우 손을 컨트롤러 / 핸드 트래킹으로 전환(SteamVR은 멈추지 않음). `{"ok":true,"mode":"hands"}`. `status`에도 `hand_mode`가 포함됨 |

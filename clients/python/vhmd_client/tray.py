@@ -1,4 +1,6 @@
-"""A Windows notification-area (tray) icon without extra packages (ctypes).
+"""A notification-area (tray) icon. Windows: without extra packages (ctypes).
+Linux: through pystray (`pip install pystray pillow`; AppIndicator or the X
+tray), and without it there is no icon (`ok` stays False: the window is the app).
 
 The icon lives on its own thread with a hidden window that receives the shell's
 callbacks; clicks are handed over through a queue (Tk is not thread-safe):
@@ -13,12 +15,16 @@ callbacks; clicks are handed over through a queue (Tk is not thread-safe):
 from __future__ import annotations
 
 import ctypes
-import ctypes.wintypes as wt
 import queue
+import sys
 import threading
 from typing import List, Optional, Tuple
 
-WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t)
+IS_WINDOWS = sys.platform == "win32"
+if IS_WINDOWS:
+    import ctypes.wintypes as wt
+
+WNDPROC = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)(ctypes.c_ssize_t, ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t)
 WM_APP_TRAY = 0x8000 + 1
 WM_CLOSE, WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WM_LBUTTONDBLCLK = 0x0010, 0x0002, 0x0202, 0x0205, 0x0203
 NIM_ADD, NIM_MODIFY, NIM_DELETE = 0, 1, 2
@@ -53,17 +59,42 @@ class TrayIcon:
         self.ok = False
 
     def start(self) -> None:
+        if not IS_WINDOWS:
+            self._start_pystray()
+            return
         threading.Thread(target=self._run, name="vhmd-tray", daemon=True).start()
         self._ready.wait(3.0)
 
     def set_tooltip(self, text: str) -> None:
         self.tooltip = text[:127]
+        if getattr(self, "_pystray", None) is not None:
+            self._pystray.title = self.tooltip
+            return
         if self._hwnd:
             self._u32.PostMessageW(self._hwnd, WM_APP_TRAY + 1, 0, 0)   # updated on the tray thread
 
     def stop(self) -> None:
+        if getattr(self, "_pystray", None) is not None:
+            self._pystray.stop()
+            return
         if self._hwnd:
             self._u32.PostMessageW(self._hwnd, WM_CLOSE, 0, 0)
+
+    def _start_pystray(self) -> None:
+        try:
+            import pystray
+            from PIL import Image
+            image = Image.open(self.icon_path.replace(".ico", ".png")) if self.icon_path else Image.new("RGB", (64, 64), (47, 111, 237))
+        except Exception:   # not installed, or no tray on this desktop
+            return
+        items = [pystray.MenuItem(label, lambda _i, _m, name=name: self.events.put(name), default=(i == 0))
+                 for i, (name, label) in enumerate(self.menu)]
+        self._pystray = pystray.Icon("vhmd_link", image, self.tooltip, pystray.Menu(*items))
+        try:
+            self._pystray.run_detached()
+            self.ok = True
+        except Exception:
+            self._pystray = None
 
     def _run(self) -> None:
         u32 = ctypes.WinDLL("user32")

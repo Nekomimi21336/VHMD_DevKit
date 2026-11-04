@@ -1,5 +1,20 @@
 # 変更履歴
 
+## 未リリース
+
+### 追加
+- **使うマイクを選ぶ**: ヘッドセットにマイクが複数あるとき(USB-C や Bluetooth のマイク)、PC のアプリの「使うマイク」で選べる。ヘッドセットのアプリがマイクの一覧(`headset` メッセージの `mics`、録音中は `mic_using`)を送り、PC が選んだもの(`status` の `mic_input`)で録音し直す。Bluetooth のヘッドセットは選んでいるあいだだけ通話用の機器にする。`headset_bridge --mic-input`。ヘッドセットの代役 `vhmd-link-sim` も一覧を送る。
+- **VHMD Link の PC のアプリを Linux で**(`python3 -m vhmd_client.link`): 画面、ヘッドセットとの接続、SteamVR の状態・起動・停止・モードの切り替え(`mode.py` が Linux の SteamVR の場所と `/proc` を使う)、自動起動(`~/.config/autostart`)、通知領域(`pystray` があれば)。設定は `~/.local/state/vhmd`。映像はダイレクトモードのプレビューを ffmpeg で(`--encoder auto`: Linux は NVENC か x264)、PC の音は `parec` で送る。キーボード・マウス操作と PICO Connect の切り替えは Windows のみ。
+- **マイクを Linux でも**: ドライバが `libpulse-simple` を実行時に読み込み、PulseAudio / PipeWire のシンクへ再生する(`driver/src/linux/mic_output.cpp`)。PC のアプリが `pactl` でシンク `vhmd_mic` と入力 `VHMD-Microphone` を作る(`linux_audio.py`)。
+
+### 変更
+- 画面の見た目(色、スタイル、フォント、テーマと言語の検出)を `ui_style.py` に分け、Linux のフォント・GNOME のダークモード・`LANG` に対応。
+- `link/Cargo.lock` を版 3 に(Ubuntu 24.04 の `cargo` 1.75 でビルドできるように)。
+- `driver/src/windows/mic_output.h` を `driver/src/mic_output.h` に移した(Windows と Linux の共通)。
+
+### テスト
+- Python: マイクの一覧、Linux の保存場所、`vhmd_mic` の作成、エンコーダーの選択(56 件)。WSL の Ubuntu 24.04 で、PC のアプリと `vhmd-link-sim`、Rust の単体テスト 16 件、Linux のマイク再生を確認。
+
 ## v0.6.0(2026-11-04)
 
 ### 追加

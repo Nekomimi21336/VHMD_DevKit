@@ -157,7 +157,7 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 | `input` | 按键、扳机、摇杆 |
 | `skeleton` | 手指(弯曲值或 31 根骨骼) |
 | `gaze` | 视线 |
-| `mic` | 麦克风的声音(由 VHMD Link 发送。仅限 Windows) |
+| `mic` | 麦克风的声音(由 VHMD Link 发送。Windows 和 Linux) |
 | `config` | `list` / `ping` / `status` / `add` / `set_role` / `reset` / `offset` / `tracking` / `hand_mode` / `control` / `mic` 等 |
 
 - 坐标系遵循 SteamVR(右手系、+Y 向上、-Z 向前、单位米)，旋转为 `[w, x, y, z]`。

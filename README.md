@@ -157,7 +157,7 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 | `input` | ボタン・トリガー・スティック |
 | `skeleton` | 指(曲げ値 or 31 ボーン) |
 | `gaze` | 視線 |
-| `mic` | マイクの音(VHMD Link が送る。Windows のみ) |
+| `mic` | マイクの音(VHMD Link が送る。Windows と Linux) |
 | `config` | `list` / `ping` / `status` / `add` / `set_role` / `reset` / `offset` / `tracking` / `hand_mode` / `control` / `mic` など |
 
 - 座標系は SteamVR 準拠(右手系、+Y 上、-Z 前方、メートル)、回転は `[w, x, y, z]`。

@@ -111,7 +111,7 @@ vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* driver_context) {
     };
     hooks.render_models = []() { return std::string(VirtualDevice::AxesModelsOn() ? "axes" : "labeled"); };
     hooks.display_status = [this]() { return hmd_ ? hmd_->DisplayStatusJson() : std::string("{}"); };
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)
     hooks.mic = [this](const MicMessage& m) { mic_.Push(m); };
     hooks.set_mic = [this](const std::string& device) { mic_.SetDevice(device); };
     hooks.set_mic_monitor = [this](bool on) { mic_.SetMonitor(on); };
@@ -430,7 +430,7 @@ void DeviceProvider::Cleanup() {
     receiver_.Stop();
     running_ = false;
     if (update_thread_.joinable()) update_thread_.join();
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)
     mic_.Stop();
 #endif
     router_.reset();

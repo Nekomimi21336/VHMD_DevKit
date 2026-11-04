@@ -51,6 +51,7 @@
 #include <deque>
 #include <chrono>
 #include <cmath>
+#include <cctype>
 #include <cstdarg>
 #include <condition_variable>
 #include <cstdio>
@@ -600,14 +601,20 @@ public:
         stop_ = true;
         if (thread_.joinable()) thread_.join();
         running_ = false;
+        used_ = 0;
     }
     bool Running() const { return running_; }
+    // Which input to record from (an AudioDeviceInfo id, 0 = Android's choice).
+    // A different one reopens the stream.
+    void Want(int device) { want_ = device; }
+    int Used() const { return used_; }   // the device the open stream records from, 0 = none
 
 private:
-    static AAudioStream* Open() {
+    static AAudioStream* Open(int device) {
         AAudioStreamBuilder* b = nullptr;
         if (AAudio_createStreamBuilder(&b) != AAUDIO_OK) return nullptr;
         AAudioStreamBuilder_setDirection(b, AAUDIO_DIRECTION_INPUT);
+        if (device > 0) AAudioStreamBuilder_setDeviceId(b, device);
         AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_I16);
         AAudioStreamBuilder_setChannelCount(b, 1);
         AAudioStreamBuilder_setSampleRate(b, 48000);
@@ -616,7 +623,8 @@ private:
         AAudioStream* s = nullptr;
         const aaudio_result_t r = AAudioStreamBuilder_openStream(b, &s);
         AAudioStreamBuilder_delete(b);
-        LOGI("microphone: %s", AAudio_convertResultToText(r));
+        LOGI("microphone %d: %s (device %d)", device, AAudio_convertResultToText(r),
+             r == AAUDIO_OK ? AAudioStream_getDeviceId(s) : 0);
         return r == AAUDIO_OK ? s : nullptr;
     }
 
@@ -625,13 +633,15 @@ private:
         int16_t pcm[kFrames];
         uint32_t seq = 0;
         while (!stop_) {
-            AAudioStream* s = Open();
+            const int device = want_;
+            AAudioStream* s = Open(device);
             if (!s) {
                 std::this_thread::sleep_for(std::chrono::seconds(1));
                 continue;
             }
+            used_ = AAudioStream_getDeviceId(s);
             AAudioStream_requestStart(s);
-            while (!stop_) {
+            while (!stop_ && want_ == device) {
                 const int32_t n = AAudioStream_read(s, pcm, kFrames, 50000000);
                 if (n < 0) break;   // the stream was lost
                 if (n == 0) continue;
@@ -641,13 +651,40 @@ private:
             }
             AAudioStream_requestStop(s);
             AAudioStream_close(s);
+            used_ = 0;
         }
     }
 
     Sender& sender_;
     std::thread thread_;
     std::atomic<bool> stop_{false}, running_{false};
+    std::atomic<int> want_{0}, used_{0};
 };
+
+// A microphone Android offers (AudioManager.getDevices(GET_DEVICES_INPUTS)).
+// `key` names it for the PC app's setting: the id changes when it is plugged in again.
+struct MicInput {
+    int id = 0, type = 0;
+    std::string name, key;
+};
+
+// Inputs that are microphones (AudioDeviceInfo.TYPE_*): not the FM tuner, the
+// echo reference or the remote submix.
+bool IsMicType(int type) {
+    switch (type) {
+    case 3:  // WIRED_HEADSET
+    case 7:  // BLUETOOTH_SCO
+    case 11: // USB_DEVICE
+    case 12: // USB_ACCESSORY
+    case 15: // BUILTIN_MIC
+    case 22: // USB_HEADSET
+    case 26: // BLE_HEADSET
+        return true;
+    default:
+        return false;
+    }
+}
+bool IsBluetoothMic(int type) { return type == 7 || type == 26; }
 
 // -- video ------------------------------------------------------------------
 // VHMD's eye images arrive as H.264 access units on TCP 39581 (adb reverse;
@@ -1350,6 +1387,8 @@ struct App {
     int worn = -1;               // as the runtime last said; -1 = it has not
     bool mic_asked = false;      // the permission was asked for
     int mic_state = 0;           // 0 off, 1 waiting for the permission, 2 on
+    std::vector<MicInput> mics;  // the microphones Android offers, for the PC app's list
+    bool mic_bluetooth = false;  // a Bluetooth headset was made the communication device for the microphone
     float hmd_battery = -1;      // 0..1, -1 = not read
     bool hmd_charging = false;
     std::chrono::steady_clock::time_point next_battery{};
@@ -1372,6 +1411,7 @@ struct App {
         bool body = false;      // send what the PICO Motion Trackers track as SteamVR trackers
         bool wear = true;       // tell SteamVR when the headset is taken off; off = always worn
         bool mic = false;       // send the microphone
+        std::string mic_input;  // which one (MicInput::key), "" = Android's choice
         bool hands = false;     // tracked hands take over when the controllers are put down
         std::chrono::steady_clock::time_point at{};
     } pc;
@@ -2062,10 +2102,24 @@ void AppendHeadsetInfo(App& app, std::string& out, const std::vector<XrView>& ey
         n += snprintf(buf + n, sizeof(buf) - n, "%s[%.5f,%.5f,%.5f,%.6f,%.6f,%.6f,%.6f]", i ? "," : "", p.position.x,
                       p.position.y, p.position.z, p.orientation.w, p.orientation.x, p.orientation.y, p.orientation.z);
     }
-    snprintf(buf + n, sizeof(buf) - n, "],\"edition\":\"%s\",\"version\":\"%s\",\"video_udp_port\":%d}",
+    snprintf(buf + n, sizeof(buf) - n, "],\"edition\":\"%s\",\"version\":\"%s\",\"video_udp_port\":%d",
              kDev ? "dev" : "link", VHMD_LINK_VERSION, app.video.UdpPort());
     if (out.size() > 1) out += ',';
     out += buf;
+    // The microphones to choose from, and the one recording now ("" = none).
+    out += ",\"mics\":[";
+    std::string using_key;
+    for (size_t i = 0; i < app.mics.size(); ++i) {
+        const MicInput& m = app.mics[i];
+        std::string name;
+        for (char c : m.name) {
+            if (c == '"' || c == '\\') name += '\\';
+            if (static_cast<unsigned char>(c) >= 0x20) name += c;
+        }
+        out += Fmt("%s{\"key\":\"%s\",\"type\":%d,\"name\":\"%s\"}", i ? "," : "", m.key.c_str(), m.type, name.c_str());
+        if (m.id == app.mic.Used()) using_key = m.key;
+    }
+    out += "],\"mic_using\":\"" + using_key + "\"}";
 }
 
 // This headset's battery, from Android's BatteryManager.
@@ -2119,16 +2173,150 @@ bool HasMicPermission(App& app, JNIEnv* env) {
     return result == 0;
 }
 
+jobject AudioManager(App& app, JNIEnv* env) {
+    jobject activity = app.android->activity->clazz;
+    jclass cls = env->GetObjectClass(activity);
+    jmethodID get_service = env->GetMethodID(cls, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;");
+    jstring name = env->NewStringUTF("audio");
+    jobject manager = get_service ? env->CallObjectMethod(activity, get_service, name) : nullptr;
+    env->DeleteLocalRef(name);
+    env->DeleteLocalRef(cls);
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        return nullptr;
+    }
+    return manager;
+}
+
+// obj.toString() (a CharSequence or a String) as UTF-8.
+std::string JavaText(JNIEnv* env, jobject obj) {
+    if (!obj) return {};
+    jclass cls = env->GetObjectClass(obj);
+    jmethodID to_string = env->GetMethodID(cls, "toString", "()Ljava/lang/String;");
+    auto s = static_cast<jstring>(to_string ? env->CallObjectMethod(obj, to_string) : nullptr);
+    std::string out;
+    if (s && !env->ExceptionCheck()) {
+        const char* c = env->GetStringUTFChars(s, nullptr);
+        if (c) out = c;
+        env->ReleaseStringUTFChars(s, c);
+    }
+    if (s) env->DeleteLocalRef(s);
+    env->DeleteLocalRef(cls);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    return out;
+}
+
+// The microphones now offered, plugged in or paired ones included.
+void ListMics(App& app, JNIEnv* env) {
+    jobject manager = AudioManager(app, env);
+    if (!manager) return;
+    std::vector<MicInput> found;
+    jclass am = env->GetObjectClass(manager);
+    jmethodID get_devices = env->GetMethodID(am, "getDevices", "(I)[Landroid/media/AudioDeviceInfo;");
+    auto devices = static_cast<jobjectArray>(get_devices ? env->CallObjectMethod(manager, get_devices, 1 /* GET_DEVICES_INPUTS */) : nullptr);
+    if (devices && !env->ExceptionCheck()) {
+        jclass info = env->FindClass("android/media/AudioDeviceInfo");
+        jmethodID get_id = env->GetMethodID(info, "getId", "()I");
+        jmethodID get_type = env->GetMethodID(info, "getType", "()I");
+        jmethodID get_name = env->GetMethodID(info, "getProductName", "()Ljava/lang/CharSequence;");
+        jmethodID get_address = env->GetMethodID(info, "getAddress", "()Ljava/lang/String;");
+        const jsize n = env->GetArrayLength(devices);
+        for (jsize i = 0; i < n; ++i) {
+            jobject d = env->GetObjectArrayElement(devices, i);
+            MicInput m;
+            m.id = env->CallIntMethod(d, get_id);
+            m.type = env->CallIntMethod(d, get_type);
+            if (IsMicType(m.type)) {
+                jobject name = env->CallObjectMethod(d, get_name);
+                jobject address = env->CallObjectMethod(d, get_address);
+                m.name = JavaText(env, name);
+                std::string where = JavaText(env, address);
+                if (name) env->DeleteLocalRef(name);
+                if (address) env->DeleteLocalRef(address);
+                // The key stays simple text: the PC sends it back inside a JSON string.
+                std::string tail = where.empty() ? m.name : where;
+                for (char& c : tail) {
+                    if (!isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '-' && c != '_') c = '_';
+                }
+                m.key = Fmt("%d:%s", m.type, tail.c_str());
+                found.push_back(std::move(m));
+            }
+            env->DeleteLocalRef(d);
+        }
+        env->DeleteLocalRef(info);
+    }
+    if (devices) env->DeleteLocalRef(devices);
+    env->DeleteLocalRef(am);
+    env->DeleteLocalRef(manager);
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        return;
+    }
+    app.mics = std::move(found);
+}
+
+// A Bluetooth headset's microphone records only while that headset is Android's
+// communication device (Android 12+). `mic`: the chosen one, or null to let go.
+void SetBluetoothMic(App& app, JNIEnv* env, const MicInput* mic) {
+    if (!mic && !app.mic_bluetooth) return;
+    jobject manager = AudioManager(app, env);
+    if (!manager) return;
+    jclass am = env->GetObjectClass(manager);
+    if (!mic) {
+        jmethodID clear = env->GetMethodID(am, "clearCommunicationDevice", "()V");
+        if (clear) env->CallVoidMethod(manager, clear);
+        app.mic_bluetooth = false;
+        LOGI("microphone: Bluetooth headset let go");
+    } else if (!app.mic_bluetooth) {
+        // The headset's output side with the same address, from the devices Android offers for calls.
+        jmethodID available = env->GetMethodID(am, "getAvailableCommunicationDevices", "()Ljava/util/List;");
+        jmethodID set = env->GetMethodID(am, "setCommunicationDevice", "(Landroid/media/AudioDeviceInfo;)Z");
+        jobject list = available ? env->CallObjectMethod(manager, available) : nullptr;
+        if (list && set && !env->ExceptionCheck()) {
+            jclass list_cls = env->GetObjectClass(list);
+            jmethodID size = env->GetMethodID(list_cls, "size", "()I");
+            jmethodID get = env->GetMethodID(list_cls, "get", "(I)Ljava/lang/Object;");
+            jclass info = env->FindClass("android/media/AudioDeviceInfo");
+            jmethodID get_type = env->GetMethodID(info, "getType", "()I");
+            const jint n = env->CallIntMethod(list, size);
+            for (jint i = 0; i < n && !app.mic_bluetooth; ++i) {
+                jobject d = env->CallObjectMethod(list, get, i);
+                const int type = env->CallIntMethod(d, get_type);
+                if (IsBluetoothMic(type) || type == 8 /* BLUETOOTH_A2DP */) {
+                    app.mic_bluetooth = env->CallBooleanMethod(manager, set, d) == JNI_TRUE;
+                    LOGI("microphone: Bluetooth headset (type %d) as the communication device: %d", type,
+                         app.mic_bluetooth);
+                }
+                env->DeleteLocalRef(d);
+            }
+            env->DeleteLocalRef(info);
+            env->DeleteLocalRef(list_cls);
+        }
+        if (list) env->DeleteLocalRef(list);
+    }
+    env->DeleteLocalRef(am);
+    env->DeleteLocalRef(manager);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
+
 void UpdateMic(App& app) {
+    JNIEnv* env = nullptr;
+    if (app.android->activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return;
+    ListMics(app, env);   // also while off: the PC app lists them before the microphone is turned on
     const bool pc_there = std::chrono::steady_clock::now() - app.pc.at < std::chrono::seconds(5);
     if (!app.pc.mic || !pc_there) {
         if (app.mic.Running()) app.mic.Stop();
+        SetBluetoothMic(app, env, nullptr);
         app.mic_state = 0;
         return;
     }
+    const MicInput* chosen = nullptr;
+    for (const MicInput& m : app.mics) {
+        if (m.key == app.pc.mic_input) chosen = &m;
+    }
+    SetBluetoothMic(app, env, chosen && IsBluetoothMic(chosen->type) ? chosen : nullptr);
+    app.mic.Want(chosen ? chosen->id : 0);
     if (app.mic.Running()) return;
-    JNIEnv* env = nullptr;
-    if (app.android->activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return;
     if (HasMicPermission(app, env)) {
         app.mic.Start();
         app.mic_state = 2;
@@ -2559,6 +2747,7 @@ void Frame(App& app) {
             app.pc.body = JsonBool(m, "body", false);
             app.pc.wear = JsonBool(m, "wear", true);
             app.pc.mic = JsonBool(m, "mic", false);
+            if (!JsonString(m, "mic_input", &app.pc.mic_input)) app.pc.mic_input.clear();
             app.pc.hands = JsonBool(m, "hands", false);
             std::string name;
             if (JsonString(m, "pc", &name)) {

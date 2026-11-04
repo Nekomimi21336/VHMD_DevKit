@@ -7,7 +7,7 @@ The app sends a "headset" message now and then (inside its pose messages):
      "fov": [[l, r, u, d], [l, r, u, d]],          # radians, OpenXR signs
      "eyes": [[x, y, z, qw, qx, qy, qz], [...]]}   # eye poses in head space
 
-headset_bridge stores the latest in %LOCALAPPDATA%/VHMD/headset.json and says
+headset_bridge stores the latest in headset.json in the data folder (paths.data_dir()) and says
 when VHMD's projection differs. `python -m vhmd_client.mode vhmd --headset`
 then writes the matching settings and restarts SteamVR once:
 
@@ -23,12 +23,12 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import time
-from pathlib import Path
 from typing import Callable, Dict, Optional
 
-PATH = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "VHMD" / "headset.json"
+from .paths import data_dir
+
+PATH = data_dir() / "headset.json"
 # Present while VHMD renders for the headset (mode vhmd --headset until --no-headset),
 # so later switches keep the headset's settings.
 APPLIED = PATH.with_name("headset_applied")

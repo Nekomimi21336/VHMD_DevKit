@@ -157,7 +157,7 @@ From other languages, just send JSON over UDP.
 | `input` | Buttons, triggers, sticks |
 | `skeleton` | Fingers (curl values or 31 bones) |
 | `gaze` | Eye gaze |
-| `mic` | Microphone audio (sent by VHMD Link; Windows only) |
+| `mic` | Microphone audio (sent by VHMD Link; Windows and Linux) |
 | `config` | `list` / `ping` / `status` / `add` / `set_role` / `reset` / `offset` / `tracking` / `hand_mode` / `control` / `mic`, etc. |
 
 - The coordinate system follows SteamVR (right-handed, +Y up, -Z forward, meters); rotations are `[w, x, y, z]`.

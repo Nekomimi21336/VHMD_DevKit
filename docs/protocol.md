@@ -72,7 +72,7 @@
 { "type": "mic", "seq": 12, "pcm": "AQD//wAB" }
 ```
 
-ヘッドセットのマイクの音です(16 ビット・48 kHz・モノラルのリトルエンディアンを base64 にしたもの。1 つ 100 ms まで)。`config` の `mic` で出力先を決めると、ドライバがその出力へ再生します。`seq` は 1 ずつ増やします(`status` の `mic.lost` に使います)。Windows のみ。
+ヘッドセットのマイクの音です(16 ビット・48 kHz・モノラルのリトルエンディアンを base64 にしたもの。1 つ 100 ms まで)。`config` の `mic` で出力先を決めると、ドライバがその出力へ再生します。`seq` は 1 ずつ増やします(`status` の `mic.lost` に使います)。Windows と Linux(`libpulse-simple` が要る)。
 
 ### `input`(コントローラ / トラッカー / HMD)
 
@@ -174,7 +174,7 @@ HMD:
 | `set_role` | `id`, `role` | SteamVR 設定の `trackers` セクションにロールを書き込み(ユーザー設定を上書き) |
 | `offset` | `id`, `pos`(m)、`ypr`(度: ヨー、ピッチ、ロール)、`space`(`device` / `room`) | コントローラーとトラッカーの位置・角度の補正。`pos` は `space` の軸に沿い、`ypr` は機器の軸のまわり。値なしなら現在の補正を返す。HMD は不可。SteamVR の終了まで有効で、`status` の機器に `offset` が出る |
 | `tracking` | `id`、`mode`(`active` / `paused` / `disconnected`、省略時は現在の状態を返すだけ) | SteamVR に渡す内容を機器ごとに変える(SteamVR は止まりません)。`paused` はその場で固定(接続・追跡中のまま、ボタンは効く)。`disconnected` は未接続として報告し、押していた入力を離す。新しいデータが届いても `active` に戻すまで変わらない。どちらのあいだも受信は数え続ける。HMD は不可。SteamVR の終了まで有効で、`status` の機器に `tracking` が出る。`{"ok":true,"id":"tracker_1","mode":"paused"}` |
-| `mic` | `device`(再生先の音声出力の名前の一部、`""` で止める)、`mode`(`monitor` で既定の出力でも鳴らす、`quiet` で止める)。どちらも省略できる | ヘッドセットのマイクの音(メッセージ `mic`)の再生先。応答と `status` の `mic` に `device`、`state`、`monitor`、受信数が入る。Windows のみ |
+| `mic` | `device`(再生先の音声出力の名前の一部。Linux は PulseAudio / PipeWire のシンクの名前、既定 `vhmd_mic`。`""` で止める)、`mode`(`monitor` で既定の出力でも鳴らす、`quiet` で止める)。どちらも省略できる | ヘッドセットのマイクの音(メッセージ `mic`)の再生先。応答と `status` の `mic` に `device`、`state`、`monitor`、受信数が入る。Windows と Linux |
 | `reset` | `id`(省略時全台) | 設定ファイルの既定ポーズに戻す |
 | `add` | `id`(省略時はオンデマンド全台) | オンデマンドのデバイスを今すぐ SteamVR に追加(次のフレームで反映)。`{"ok":true,"ids":[...]}` |
 | `hand_mode` | `mode`(`controllers` / `hands`、省略時は現在のモードを返すだけ) | 左右の手をコントローラー / ハンドトラッキングで切り替え(SteamVR は止まりません)。`{"ok":true,"mode":"hands"}`。`status` にも `hand_mode` が入ります |

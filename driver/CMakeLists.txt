@@ -70,7 +70,8 @@ if(UNIX AND NOT APPLE)
   target_sources(driver_vhmd PRIVATE
     src/linux/direct_mode.cpp
     src/linux/frame_capture.cpp
-    src/linux/vk_loader.cpp)
+    src/linux/vk_loader.cpp
+    src/linux/mic_output.cpp)
   find_path(VHMD_VULKAN_INCLUDE_DIR vulkan/vulkan.h)
   if(NOT VHMD_VULKAN_INCLUDE_DIR)
     include(FetchContent)

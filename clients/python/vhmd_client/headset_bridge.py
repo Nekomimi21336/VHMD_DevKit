@@ -31,10 +31,11 @@ import math
 import platform
 import socket
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Optional
 
 from . import bindings, headset_info, native_relay, offsets
 from .client import DEFAULT_HOST, DEFAULT_PORT
@@ -43,6 +44,8 @@ from .headset_stream import VIDEO_PORT, VideoServer
 # Foveated encoding levels: [centre share x, edge squeeze x, centre y, squeeze y].
 FOVEATION = {0: None, 1: [0.5, 2.5, 0.5, 2.5], 2: [0.4, 4.0, 0.4, 4.0]}
 LISTEN_PORT = 39580
+# Where the driver plays the microphone: VB-CABLE on Windows, a sink VHMD makes on Linux (linux_audio).
+MIC_DEVICE = "CABLE Input" if sys.platform == "win32" else "vhmd_mic"
 DISCOVERY_PORT = 39582
 
 
@@ -69,7 +72,7 @@ class BridgeOptions:
     codec: str = "hevc"
     eye_width: int = 0
     video_source: str = "auto"
-    encoder: str = "h264_amf"
+    encoder: str = "auto"
     buffer: int = 0
     adaptive: bool = True         # lower the bitrate when the network cannot keep up
     sync: bool = True             # move VHMD's vsync to the headset's display timing
@@ -80,7 +83,7 @@ class BridgeOptions:
     auto_latency: bool = True     # frames wait on the headset only as long as their timing jitter needs
     predict: bool = True          # the headset sends poses predicted for when the PC's image will show
     eye_scale: float = 1.0        # video width per eye, share of the headset's (smaller: faster, softer)
-    native: str = "auto"          # the data path in vhmd-link-relay: "auto" (when built), "on", "off" (Python)
+    native: str = "auto"          # the data path in vhmd-link-relay: "auto" (when built; Windows), "on", "off" (Python)
     udp_video: bool = False       # frames and sound over UDP with parity (native data path; experimental)
     fec: int = 30                 # parity packets per 100 (UDP video)
     foveation: int = 0            # foveated encoding: 0 off, 1 light, 2 strong (FOVEATION)
@@ -89,8 +92,9 @@ class BridgeOptions:
     wear_detect: bool = True      # SteamVR hears when the headset is taken off (and goes on standby)
     hand_tracking: bool = False   # tracked hands in SteamVR when the controllers are put down
     mic: bool = False             # the headset's microphone, played into mic_device
-    mic_device: str = "CABLE Input"   # an audio output; programs record from its other end (VB-CABLE)
+    mic_device: str = MIC_DEVICE      # an audio output; programs record from its other end
     mic_monitor: bool = False     # also into the default output, to hear oneself through the PC
+    mic_input: str = ""           # which of the headset's microphones (a key from mics()), "" = the headset's choice
     offsets: Dict[str, dict] = field(default_factory=dict)   # by device id, see offsets.py
 
 
@@ -196,7 +200,9 @@ class Bridge:
         if o.adb:
             self._adb_reverse()
         host = "127.0.0.1" if o.usb_only else "0.0.0.0"
-        if o.native != "off" and self._start_native(host):
+        # Linux: the driver has no encoder of its own, and the video comes from
+        # ffmpeg here (VideoServer): the native data path only when asked for.
+        if (o.native == "on" or (o.native == "auto" and sys.platform == "win32")) and self._start_native(host):
             self._thread(self._monitor)
             if o.adb:
                 self._thread(self._adb_watch)
@@ -381,6 +387,24 @@ class Bridge:
         self.devices = [{**d, "tracking": r["mode"]} if d["id"] == r["id"] else d for d in self.devices]
         return ""
 
+    def _ensure_mic_sink(self) -> None:
+        """Linux: the sink the driver plays the microphone into, and its source for programs."""
+        from . import linux_audio
+        error = linux_audio.ensure_mic_sink()
+        if error != getattr(self, "_mic_sink_error", None):
+            self._mic_sink_error = error
+            self.log(f"microphone: {error}" if error else
+                     f"microphone: programs can record from \"{linux_audio.MIC_NAME}\" ({linux_audio.MIC_SOURCE})")
+
+    def mics(self) -> List[dict]:
+        """The headset's microphones: [{"key", "type", "name"}] (built in, USB,
+        Bluetooth...), as it last said."""
+        return [m for m in self.info.get("mics", []) if isinstance(m, dict) and m.get("key")]
+
+    def mic_using(self) -> str:
+        """The key of the microphone the headset records from now, "" = none."""
+        return str(self.info.get("mic_using", ""))
+
     def mic_state(self) -> str:
         """"off", "permission" (the headset has to allow it), "no_device" (no such
         audio output), "busy" (another program holds it alone), "on" (sound
@@ -463,6 +487,9 @@ class Bridge:
         """The headset's own messages (from Python's or the native data path)."""
         t = m.get("type")
         if t == "headset":
+            if m.get("mics") != self.info.get("mics"):
+                names = ", ".join(f"{x.get('key')} ({x.get('name')})" for x in m.get("mics", []) if isinstance(x, dict))
+                self.log(f"headset microphones: {names or 'none'}")
             self.info = m
             headset_info.update(m, log=self.log)
             if isinstance(self.video, native_relay.NativeVideo):
@@ -656,6 +683,8 @@ class Bridge:
                     self.devices = self.request("status").get("devices", [])
                     for msg in offsets.pending(self.devices, self.o.offsets):
                         self.request("offset", **msg)
+                    if self.o.mic and sys.platform != "win32" and self.o.mic_device == MIC_DEVICE:
+                        self._ensure_mic_sink()
                     self.mic_driver = self.request("mic", device=self.o.mic_device if self.o.mic else "",
                                                    mode="monitor" if self.o.mic and self.o.mic_monitor else "quiet"
                                                    ).get("mic", {})
@@ -697,6 +726,7 @@ class Bridge:
             if self.connected():
                 status = {"type": "status", "pc": platform.node(), **self.pc_state, "predict": self.o.predict,
                           "body": self.o.body_tracking, "wear": self.o.wear_detect, "mic": self.o.mic,
+                          "mic_input": self.o.mic_input,
                           "hands": self.o.hand_tracking}
                 if self.o.refresh > 0:
                     status["refresh"] = self.o.refresh
@@ -751,7 +781,8 @@ def main() -> None:
     ap.add_argument("--eye-width", type=int, default=0, help="video width per eye (default: the headset's)")
     ap.add_argument("--video-source", default="auto", choices=("auto", "driver", "ffmpeg"),
                     help="auto: the driver's hardware encoder if it runs, else ffmpeg on the preview")
-    ap.add_argument("--encoder", default="h264_amf", help="ffmpeg fallback: H.264 encoder (h264_amf, h264_nvenc, ...)")
+    ap.add_argument("--encoder", default="auto",
+                    help="ffmpeg fallback: H.264 encoder (auto: h264_amf on Windows, h264_nvenc or libx264 on Linux)")
     ap.add_argument("--buffer", type=int, default=0, choices=(0, 1, 2),
                     help="frames the headset holds back: 0 = newest (lowest latency), 1 = smoother (+1 frame)")
     ap.add_argument("--fixed-bitrate", action="store_true", help="keep --bitrate even when the network is slower")
@@ -777,9 +808,11 @@ def main() -> None:
                     help="do not send what the PICO Motion Trackers track as SteamVR trackers")
     ap.add_argument("--hand-tracking", action="store_true", help="tracked hands when the controllers are put down")
     ap.add_argument("--mic", action="store_true", help="use the headset's microphone")
-    ap.add_argument("--mic-device", default="CABLE Input",
+    ap.add_argument("--mic-device", default=MIC_DEVICE,
                     help="audio output to play it into; programs record from its other end (default: VB-CABLE's)")
     ap.add_argument("--mic-monitor", action="store_true", help="also play it into the default output, to hear yourself")
+    ap.add_argument("--mic-input", default="", metavar="KEY",
+                    help="which of the headset's microphones, as listed in the log (default: the headset's choice)")
     ap.add_argument("--no-wear-detect", action="store_true",
                     help="SteamVR always takes the headset as worn: no standby, video goes on when it is put down")
     ap.add_argument("--no-sync", action="store_true", help="do not move VHMD's vsync to the headset's display")
@@ -800,7 +833,7 @@ def main() -> None:
         predict=not args.no_predict, eye_scale=args.eye_scale, native=args.native, udp_video=args.udp_video,
         fec=args.fec, foveation=args.foveation, bindings=bound, body_tracking=not args.no_body_tracking,
         wear_detect=not args.no_wear_detect, mic=args.mic, mic_device=args.mic_device, hand_tracking=args.hand_tracking,
-        mic_monitor=args.mic_monitor),
+        mic_monitor=args.mic_monitor, mic_input=args.mic_input),
         log=lambda m: print(m, flush=True))
     bridge.start()
     try:

@@ -244,6 +244,12 @@ PC のアプリの「ヘッドセットのマイクを使う」をオンにし�
 - 音は LAN を暗号化せずに流れます。信頼できるネットワークで使ってください。
 - 確認(Pico 4 Ultra、Wi-Fi): 録音は 48 kHz で取りこぼしなし。音量はヘッドセットで静かなとき -96 dBFS、声 -21〜-34 dBFS。`CABLE Input` の再生は声のピーク -4〜-6 dBFS、16 秒で 1602 パケット、失われたパケット・音切れ 0。遅れは未測定(録音の受け渡しが 20 ms ごと + PC で約 40 ms ためる)。エコー除去の効きと音質は未確認。
 - 既定の出力に `CABLE Input` を選ぶと、PC の音がそのままマイクに入ります。
+- **使うマイク**: ヘッドセットにマイクが複数あるとき(USB-C のマイクやイヤホン、Bluetooth のヘッドセットをつないだとき)は、PC のアプリの「使うマイク」で選べます(`headset_bridge --mic-input KEY`、設定の `mic_input`)。既定の「ヘッドセットに任せる」は Android が選ぶマイクです。
+  - ヘッドセットのアプリが Android の `AudioManager.getDevices(GET_DEVICES_INPUTS)` からマイクだけ(内蔵、有線、USB、Bluetooth)を 2 秒ごとに読み、`headset` メッセージの `mics`(`key`・`type`・`name`)で PC に知らせます。録音中のマイクは `mic_using`。
+  - PC は選んだマイクの `key`(種類と Android のアドレス。差し直しても変わらない)を `status` の `mic_input` で返し、ヘッドセットはそのマイクで録音し直します(AAudio の `setDeviceId`)。そのマイクが今つながっていなければ、PC のアプリに「(つながっていません)」と出て、ヘッドセットは既定のマイクを使います。
+  - Bluetooth のヘッドセットは、Android の通話用の機器(`setCommunicationDevice`)にしているあいだだけ録音できるので、選んでいるあいだだけそうします。
+  - 確認(Pico 4 Ultra): 内蔵マイク(`15:bottom`)だけが一覧に出る(Android が持つ FM チューナー・エコー参照・リモートサブミックスの入力は出さない)。USB と Bluetooth のマイクでの切り替えは未確認。
+- **Linux**: VB-CABLE の代わりに、PC のアプリが PulseAudio / PipeWire に出力 `vhmd_mic` と、その音を録音できる入力 `VHMD-Microphone` を作ります(`pactl`、`pulseaudio-utils` が必要。ログアウトすると消え、次にマイクをオンにしたとき作り直す)。ドライバは `libpulse-simple` を実行時に読み込んで `vhmd_mic` へ再生します。VRChat などのマイクを `VHMD-Microphone` にします。WSL(WSLg の PulseAudio)で音が通ることを確認(10 ms ごとに送った 440 Hz を録音してピーク 3084 / 3000)。実機の Linux での遅れと取りこぼしは未確認。
 
 ### 視野角・解像度を合わせる
 

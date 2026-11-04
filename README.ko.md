@@ -157,7 +157,7 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 | `input` | 버튼·트리거·스틱 |
 | `skeleton` | 손가락(굽힘 값 또는 31개 본) |
 | `gaze` | 시선 |
-| `mic` | 마이크 소리(VHMD Link가 보냄. Windows 전용) |
+| `mic` | 마이크 소리(VHMD Link가 보냄. Windows와 Linux) |
 | `config` | `list` / `ping` / `status` / `add` / `set_role` / `reset` / `offset` / `tracking` / `hand_mode` / `control` / `mic` 등 |
 
 - 좌표계는 SteamVR 기준(오른손 좌표계, +Y 위, -Z 전방, 미터), 회전은 `[w, x, y, z]`.

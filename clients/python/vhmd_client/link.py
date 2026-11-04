@@ -12,7 +12,9 @@ and keeps the video settings. Closing the window leaves it in the tray.
 The developer view (always on with the "VHMD Link Dev" headset app, or --dev)
 adds the link statistics, the log and tools.
 
-Settings: %LOCALAPPDATA%/VHMD/link_settings.json.
+Settings: link_settings.json in %LOCALAPPDATA%/VHMD (Linux: ~/.local/state/vhmd).
+Windows and Linux; on Linux the tray icon needs pystray, and the keyboard / mouse
+tool and PICO Connect are not there.
 """
 
 from __future__ import annotations
@@ -21,7 +23,6 @@ import argparse
 import collections
 import ctypes
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -30,24 +31,26 @@ import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 from . import bindings, headset_info, mode, offsets, tracking
-from .fps import PALETTES, setup_style, ui_language, windows_theme
-from .headset_bridge import Bridge, BridgeOptions
+from .paths import IS_WINDOWS, config_home, data_dir
+from .ui_style import PALETTES, os_theme, setup_style, ui_fonts, ui_language
+from .headset_bridge import MIC_DEVICE, Bridge, BridgeOptions
 from .tray import TrayIcon
 
-DATA = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "VHMD"
+DATA = data_dir()
 FROZEN = bool(getattr(sys, "frozen", False))   # running as "VHMD Link.exe" (PyInstaller)
 SETTINGS = DATA / "link_settings.json"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_NAME = "VHMD Link"
+AUTOSTART = config_home() / "autostart" / "vhmd-link.desktop"   # Linux
 QUALITY = (("low", 20.0), ("standard", 40.0), ("high", 60.0), ("max", 80.0))
 DEFAULTS = {"quality": "standard", "codec": "hevc", "buffer": 0, "refresh": 72, "auto_steamvr": True,
             # performance settings (each trades some quality or safety for less latency)
             "auto_latency": True, "predict": True, "amf": True, "eye_scale": 1.0, "udp_video": False, "fec": 30, "foveation": 0,
             "bindings": {},                    # changes from bindings.DEFAULTS
-            "body_tracking": True, "hand_tracking": False, "wear_detect": True, "mic": False, "mic_device": "CABLE Input",
+            "body_tracking": True, "hand_tracking": False, "wear_detect": True, "mic": False, "mic_device": MIC_DEVICE, "mic_input": "",
             "offsets": offsets.DEFAULTS,       # by device id, see offsets.py
             "dev_view": False}
 
@@ -79,6 +82,12 @@ TEXT = {
         "mic_busy": "Another program is using \"{device}\" on its own. Close that program or change its output.",
         "mic_waiting": "Waiting for sound from the headset.",
         "mic_on": "Sound is reaching the PC.",
+        "mic_hint_linux": "In VRChat and other programs, choose \"VHMD-Microphone\" as the microphone "
+                          "(VHMD Link makes it with pactl).",
+        "mic_no_device_linux": "\"{device}\" could not be made. Install pulseaudio-utils (pactl).",
+        "mic_input": "Microphone", "mic_input_auto": "The headset's choice", "mic_input_gone": "{name} (not connected)",
+        "mic_input_builtin": "Built-in", "mic_input_usb": "USB", "mic_input_bluetooth": "Bluetooth",
+        "mic_input_wired": "Wired headset", "mic_using": "Recording from: {name}",
         "wear": "Put SteamVR on standby when the headset is taken off",
         "wear_hint": "Off: video goes on while the headset is put down.",
         "quality": "Quality", "codec": "Codec", "smooth": "Motion",
@@ -124,6 +133,7 @@ TEXT = {
         "dev_view": "Developer view", "startup": "Open when Windows starts",
         "take_back": "Give control to the headset", "fps_tool": "Keyboard/mouse control", "log": "Log",
         "quit": "Quit", "open": "Open", "tray_hint": "Closing the window keeps VHMD Link in the notification area.",
+        "no_tray_hint": "Closing the window quits VHMD Link.",
         "confirm_restart": "SteamVR restarts for this; running VR apps close. Continue?",
         "busy": "Working: {}", "failed": "Failed: {}",
         "already": "VHMD Link is already running (its network ports are in use).",
@@ -156,6 +166,11 @@ TEXT = {
         "mic_busy": "別のアプリが「{device}」を占有しています。そのアプリを閉じるか、出力先を変えてください。",
         "mic_waiting": "ヘッドセットの音を待っています。",
         "mic_on": "PC に音が届いています。",
+        "mic_hint_linux": "VRChat などのアプリのマイクを「VHMD-Microphone」にしてください(VHMD Link が pactl で作ります)。",
+        "mic_no_device_linux": "「{device}」を作れませんでした。pulseaudio-utils(pactl)を入れてください。",
+        "mic_input": "使うマイク", "mic_input_auto": "ヘッドセットに任せる", "mic_input_gone": "{name}(つながっていません)",
+        "mic_input_builtin": "内蔵マイク", "mic_input_usb": "USB", "mic_input_bluetooth": "Bluetooth",
+        "mic_input_wired": "有線のヘッドセット", "mic_using": "録音中のマイク: {name}",
         "wear": "ヘッドセットを外したら SteamVR を待機させる",
         "wear_hint": "切ると、ヘッドセットを置いているあいだも映像を送り続けます。",
         "quality": "画質", "codec": "圧縮方式", "smooth": "動き",
@@ -200,6 +215,7 @@ TEXT = {
         "dev_view": "開発者向けの表示", "startup": "Windows の起動時に開く",
         "take_back": "操作をヘッドセットに戻す", "fps_tool": "キーボード・マウス操作", "log": "ログ",
         "quit": "終了", "open": "開く", "tray_hint": "ウィンドウを閉じても VHMD Link は通知領域で動き続けます。",
+        "no_tray_hint": "ウィンドウを閉じると VHMD Link は終了します。",
         "confirm_restart": "SteamVR を再起動します。実行中の VR アプリは終了します。よろしいですか?",
         "busy": "処理中: {}", "failed": "失敗しました: {}",
         "already": "VHMD Link はすでに起動しています(ネットワークのポートが使用中です)。",
@@ -259,7 +275,11 @@ def make_icon() -> Optional[Path]:
 
 
 def launcher_command() -> str:
-    """How Windows should start this app at sign-in (no console window)."""
+    """How the desktop should start this app at sign-in (no console window)."""
+    if not IS_WINDOWS:
+        if FROZEN:
+            return f'"{sys.executable}" --minimized'
+        return f'"{sys.executable}" -m vhmd_client.link --minimized'
     if FROZEN:
         return f'"{sys.executable}" --minimized'
     exe = Path(sys.executable)
@@ -269,6 +289,8 @@ def launcher_command() -> str:
 
 
 def startup_enabled() -> bool:
+    if not IS_WINDOWS:
+        return AUTOSTART.exists()
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
@@ -279,6 +301,16 @@ def startup_enabled() -> bool:
 
 
 def set_startup(on: bool) -> None:
+    if not IS_WINDOWS:   # an XDG autostart entry
+        if on:
+            AUTOSTART.parent.mkdir(parents=True, exist_ok=True)
+            here = Path(__file__).resolve().parent.parent
+            AUTOSTART.write_text("[Desktop Entry]\nType=Application\nName=VHMD Link\n"
+                                 f"Exec={launcher_command()}\n" + ("" if FROZEN else f"Path={here}\n") +
+                                 "X-GNOME-Autostart-enabled=true\n", encoding="utf-8")
+        else:
+            AUTOSTART.unlink(missing_ok=True)
+        return
     import winreg
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
         if on:
@@ -297,19 +329,20 @@ def wheel_scrolls_page(box: ttk.Combobox, scroll) -> None:
         return "break"
 
     box.bind("<MouseWheel>", wheel)
+    box.bind("<Button-4>", wheel)   # X11
+    box.bind("<Button-5>", wheel)
 
 
 class LinkApp:
     def __init__(self, root: tk.Tk, lang: str, dev: bool, minimized: bool) -> None:
         self.root, self.t, self.lang = root, TEXT[lang], lang
+        if not IS_WINDOWS:   # no VB-CABLE: a sink VHMD makes
+            self.t = {**self.t, "mic_hint": self.t["mic_hint_linux"], "mic_no_device": self.t["mic_no_device_linux"]}
         self.s = load_settings()
         if dev:
             self.s["dev_view"] = True
-        self.pal = pal = PALETTES[windows_theme()]
-        family = "Yu Gothic UI" if lang == "ja" else "Segoe UI"
-        self.fonts = f = {"ui": (family, 10), "small": (family, 9), "small_bold": (family, 9, "bold"),
-                          "head": (family, 11, "bold"), "title": (family, 16, "bold"), "big": (family, 13, "bold"),
-                          "mono": ("Consolas", 9), "mono_small": ("Consolas", 9)}
+        self.pal = pal = PALETTES[os_theme()]
+        self.fonts = f = ui_fonts(root, lang)
         setup_style(root, pal, f)
         root.title(self.t["title"])
         root.minsize(520, 420)
@@ -340,7 +373,7 @@ class LinkApp:
                                            body_tracking=bool(self.s["body_tracking"]),
                                            hand_tracking=bool(self.s["hand_tracking"]),
                                            wear_detect=bool(self.s["wear_detect"]), mic=bool(self.s["mic"]),
-                                           mic_device=str(self.s["mic_device"]),
+                                           mic_device=str(self.s["mic_device"]), mic_input=str(self.s["mic_input"]),
                                            offsets=dict(self.s["offsets"])),
                              log=self.log)
         try:
@@ -356,9 +389,10 @@ class LinkApp:
         self.tray.start()
         if not self.tray.ok:
             self.log("notification-area icon not available: closing the window quits")
+            self.hint.config(text=self.t["no_tray_hint"])
         root.protocol("WM_DELETE_WINDOW", self.hide if self.tray.ok else self.quit)
-        if minimized and self.tray.ok:
-            root.withdraw()
+        if minimized:
+            root.withdraw() if self.tray.ok else root.iconify()
         threading.Thread(target=self.background, daemon=True).start()
         self.refresh()
 
@@ -413,8 +447,12 @@ class LinkApp:
         canvas.configure(yscrollcommand=bar.set)
         canvas.pack(side="left", fill="both", expand=True)
         bar.pack(side="right", fill="y")
-        self.scroll = lambda e: canvas.yview_scroll(int(-e.delta / 120), "units")
+        # Windows: <MouseWheel> with delta 120 a notch. X11: buttons 4 (up) and 5 (down).
+        self.scroll = lambda e: canvas.yview_scroll(-1 if getattr(e, "num", 0) == 4 else 1 if getattr(e, "num", 0) == 5
+                                                    else int(-e.delta / 120), "units")
         self.root.bind_all("<MouseWheel>", self.scroll)
+        self.root.bind_all("<Button-4>", self.scroll)
+        self.root.bind_all("<Button-5>", self.scroll)
 
         # Headset
         c = self.card(self.body, t["headset"])
@@ -442,7 +480,7 @@ class LinkApp:
         env.pack(fill="x", pady=(8, 0))
         ttk.Label(env, text=t["env"], style="CardMuted.TLabel").pack(side="left", padx=(0, 8))
         self.env_btns = {}
-        for m in ("vhmd", "pico", "off"):
+        for m in ("vhmd", "pico", "off") if IS_WINDOWS else ("vhmd", "off"):   # no PICO Connect on Linux
             b = ttk.Button(env, text=t["env_" + m], command=lambda m=m: self.switch(target=m))
             b.pack(side="left", padx=(0, 6))
             self.env_btns[m] = b
@@ -475,6 +513,16 @@ class LinkApp:
                         command=lambda: self.set_perf("mic", mic_var.get())).pack(anchor="w", pady=(8, 0))
         ttk.Label(c, text=t["mic_hint"], style="CardMuted.TLabel", wraplength=470,
                   justify="left").pack(anchor="w", padx=(22, 0))
+        row = ttk.Frame(c, style="Card.TFrame")
+        row.pack(anchor="w", padx=(22, 0), pady=(6, 0))
+        ttk.Label(row, text=t["mic_input"], style="Card.TLabel").pack(side="left", padx=(0, 12))
+        self.mic_input_var = tk.StringVar()
+        self.mic_input_box = ttk.Combobox(row, textvariable=self.mic_input_var, state="readonly", width=34)
+        self.mic_input_box.pack(side="left")
+        wheel_scrolls_page(self.mic_input_box, self.scroll)
+        self.mic_inputs: List[Tuple[str, str]] = []   # (key, label) as shown
+        self.mic_input_box.bind("<<ComboboxSelected>>", lambda _e: self.set_mic_input())
+        self.update_mic_inputs()
         monitor_var = tk.BooleanVar(value=False)   # not saved: it can howl
         self.monitor_btn = ttk.Checkbutton(c, text=t["mic_monitor"], style="Card.TCheckbutton", variable=monitor_var,
                                            command=lambda: self.set_monitor(monitor_var.get()))
@@ -576,7 +624,8 @@ class LinkApp:
         btns = ttk.Frame(dc, style="Card.TFrame")
         btns.pack(fill="x")
         ttk.Button(btns, text=t["take_back"], command=self.take_back).pack(side="left")
-        ttk.Button(btns, text=t["fps_tool"], command=self.fps_tool).pack(side="left", padx=(8, 0))
+        if IS_WINDOWS:   # the keyboard / mouse tool is Windows only
+            ttk.Button(btns, text=t["fps_tool"], command=self.fps_tool).pack(side="left", padx=(8, 0))
         self.log_box = tk.Text(dc, height=8, bg=pal["entry"], fg=pal["muted"], font=f["mono_small"], relief="flat",
                                highlightthickness=0, wrap="word")
         self.log_box.pack(fill="both", expand=True, pady=(8, 0))
@@ -755,6 +804,36 @@ class LinkApp:
         self.s[key] = value
         save_settings(self.s)
 
+    def mic_label(self, mic: dict, mics: List[dict]) -> str:
+        """How a headset microphone is listed: its kind, and its name if the kind does not say it all."""
+        t, kind = self.t, int(mic.get("type", 0))
+        name = str(mic.get("name", ""))
+        if kind == 15:   # built in: the product name is the headset's own
+            builtin = [m for m in mics if int(m.get("type", 0)) == 15]
+            where = str(mic.get("key", "")).partition(":")[2]
+            return t["mic_input_builtin"] + (f" ({where})" if len(builtin) > 1 and where else "")
+        kind_text = (t["mic_input_usb"] if kind in (11, 12, 22) else t["mic_input_bluetooth"] if kind in (7, 26)
+                     else t["mic_input_wired"] if kind == 3 else str(kind))
+        return f"{kind_text}: {name}" if name else kind_text
+
+    def update_mic_inputs(self) -> None:
+        """The headset's microphones as it last listed them, plus the chosen one if it is not there now."""
+        mics = self.bridge.mics()
+        choices = [("", self.t["mic_input_auto"])] + [(str(m["key"]), self.mic_label(m, mics)) for m in mics]
+        chosen = str(self.s.get("mic_input", ""))
+        if chosen and chosen not in [k for k, _ in choices]:
+            choices.append((chosen, self.t["mic_input_gone"].format(name=chosen)))
+        if choices != self.mic_inputs:
+            self.mic_inputs = choices
+            self.mic_input_box.config(values=[label for _, label in choices])
+        self.mic_input_var.set(dict(choices)[chosen])
+
+    def set_mic_input(self) -> None:
+        key = next(k for k, label in self.mic_inputs if label == self.mic_input_var.get())
+        self.set("mic_input", key)
+        self.bridge.o.mic_input = key            # told to the headset with the next status
+        self.log("headset microphone: " + (key or "the headset's choice"))
+
     def set_monitor(self, on: bool) -> None:
         self.bridge.o.mic_monitor = on           # with the next driver request
         self.log(f"microphone monitor: {'on' if on else 'off'}")
@@ -882,7 +961,13 @@ class LinkApp:
         self.monitor_btn.state(["disabled" if mic == "off" else "!disabled"])
         if self.bridge.o.mic_monitor and self.bridge.mic_driver.get("monitor") == "same device":
             mic = "monitor_same"
-        self.mic_lbl.config(text="" if mic == "off" else t["mic_" + mic].format(device=self.bridge.o.mic_device))
+        text = "" if mic == "off" else t["mic_" + mic].format(device=self.bridge.o.mic_device)
+        mics = self.bridge.mics()
+        using = next((m for m in mics if m["key"] == self.bridge.mic_using()), None)
+        if mic == "on" and using:
+            text += "  " + t["mic_using"].format(name=self.mic_label(using, mics))
+        self.mic_lbl.config(text=text)
+        self.update_mic_inputs()
 
         if st["headset"]:
             link = t["usb"] if st["link"] == "usb" else t["wifi"].format(addr=st["address"])

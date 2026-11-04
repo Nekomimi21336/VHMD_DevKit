@@ -42,6 +42,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import math3d
 from .client import DEFAULT_HOST, DEFAULT_PORT, VHMDClient
+from .ui_style import PALETTES, setup_style, ui_language, windows_theme  # noqa: F401 (also used by link)
 
 if sys.platform != "win32":
     raise SystemExit("vhmd_client.fps is Windows only")
@@ -176,83 +177,9 @@ TRACKER_SPOT = {
 COLORS = {"hmd": "#4c8dff", "left_hand": "#f59e0b", "right_hand": "#22c55e"}
 TRACKER_COLOR = "#a78bfa"
 OTHER_COLOR = "#8b949e"
-PALETTES = {
-    "dark": dict(bg="#16171a", card="#212328", card2="#2b2e34", border="#363a41", fg="#e8eaed", muted="#9aa1aa",
-                 accent="#4c8dff", accent_fg="#ffffff", accent_hover="#3a74d8", entry="#17181c", sel="#2f5fbf",
-                 ok="#173d2c", ok_fg="#9ff0c4", warn="#4a3a10", warn_fg="#ffe08a", bad="#4a1d24", bad_fg="#ffb3bd",
-                 map_bg="#1a1b1f", grid="#26282d", axis="#474c55", view_bg="#0c0d0f", key_bg="#30343b"),
-    "light": dict(bg="#eceef2", card="#ffffff", card2="#f3f4f7", border="#dde1e7", fg="#1c2026", muted="#68707b",
-                  accent="#2f6fed", accent_fg="#ffffff", accent_hover="#255ccc", entry="#ffffff", sel="#cddfff",
-                  ok="#ddf5e9", ok_fg="#12603a", warn="#fff1c4", warn_fg="#7a5300", bad="#fde1e4", bad_fg="#8f1d2c",
-                  map_bg="#fbfcfd", grid="#eceef2", axis="#c2c8d0", view_bg="#101114", key_bg="#eef0f4"),
-}
 VIEW_MODES = ("eye169", "both", "eye")
 VIEW_START = (640, 400)          # initial view area (pixels); it then follows the window
 UI_HZ = 30                       # table / map / view refresh
-
-
-def windows_theme() -> str:
-    """'dark' or 'light', following Windows' app theme setting."""
-    try:
-        import winreg
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
-            return "light" if winreg.QueryValueEx(k, "AppsUseLightTheme")[0] else "dark"
-    except OSError:
-        return "light"
-
-
-def setup_style(root: tk.Tk, pal: Dict[str, str], fonts: Dict[str, tuple]) -> None:
-    st = ttk.Style(root)
-    st.theme_use("clam")
-    root.configure(bg=pal["bg"])
-    ui, small, head = fonts["ui"], fonts["small"], fonts["head"]
-    st.configure(".", background=pal["bg"], foreground=pal["fg"], font=ui, bordercolor=pal["border"],
-                 lightcolor=pal["card2"], darkcolor=pal["card2"], troughcolor=pal["card2"],
-                 fieldbackground=pal["entry"], insertcolor=pal["fg"], selectbackground=pal["sel"],
-                 selectforeground=pal["fg"], focuscolor=pal["accent"])
-    st.configure("Card.TFrame", background=pal["card"])
-    st.configure("Card.TLabel", background=pal["card"], foreground=pal["fg"])
-    st.configure("CardMuted.TLabel", background=pal["card"], foreground=pal["muted"], font=small)
-    st.configure("CardHead.TLabel", background=pal["card"], foreground=pal["fg"], font=head)
-    st.configure("CardGroup.TLabel", background=pal["card"], foreground=pal["muted"], font=small)
-    st.configure("Muted.TLabel", background=pal["bg"], foreground=pal["muted"], font=small)
-    st.configure("Error.TLabel", background=pal["bg"], foreground=pal["bad_fg"], font=small)
-    st.configure("TButton", background=pal["card"], foreground=pal["fg"], padding=(12, 6), borderwidth=1,
-                 bordercolor=pal["border"], lightcolor=pal["card"], darkcolor=pal["card"], relief="flat")
-    st.map("TButton", background=[("disabled", pal["bg"]), ("pressed", pal["border"]), ("active", pal["card2"])],
-           foreground=[("disabled", pal["muted"])])
-    st.configure("Accent.TButton", background=pal["accent"], foreground=pal["accent_fg"], bordercolor=pal["accent"],
-                 lightcolor=pal["accent"], darkcolor=pal["accent"])
-    st.map("Accent.TButton", background=[("pressed", pal["accent_hover"]), ("active", pal["accent_hover"])],
-           foreground=[("disabled", pal["muted"])])
-    for name in ("TEntry", "TSpinbox", "TCombobox"):
-        st.configure(name, fieldbackground=pal["entry"], foreground=pal["fg"], background=pal["card2"],
-                     bordercolor=pal["border"], lightcolor=pal["border"], darkcolor=pal["border"],
-                     arrowcolor=pal["fg"], padding=(5, 3))
-        st.map(name, bordercolor=[("focus", pal["accent"])], lightcolor=[("focus", pal["accent"])],
-               darkcolor=[("focus", pal["accent"])])
-    st.map("TCombobox", fieldbackground=[("readonly", pal["entry"])], foreground=[("readonly", pal["fg"])],
-           selectbackground=[("readonly", pal["entry"])], selectforeground=[("readonly", pal["fg"])],
-           background=[("active", pal["card2"]), ("readonly", pal["card2"])])
-    root.option_add("*TCombobox*Listbox.background", pal["card"])
-    root.option_add("*TCombobox*Listbox.foreground", pal["fg"])
-    root.option_add("*TCombobox*Listbox.selectBackground", pal["sel"])
-    root.option_add("*TCombobox*Listbox.selectForeground", pal["fg"])
-    root.option_add("*TCombobox*Listbox.font", ui)
-    for name in ("Card.TCheckbutton", "Card.TRadiobutton"):
-        st.configure(name, background=pal["card"], foreground=pal["fg"], indicatorbackground=pal["entry"],
-                     indicatorforeground=pal["accent_fg"], indicatorcolor=pal["entry"], padding=(2, 2))
-        st.map(name, background=[("active", pal["card"])],
-               indicatorcolor=[("selected", pal["accent"]), ("pressed", pal["card2"])],
-               indicatorbackground=[("selected", pal["accent"])])
-
-
-def ui_language() -> str:
-    try:
-        return "ja" if ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF == 0x11 else "en"
-    except Exception:
-        return "en"
 
 
 def key(name: str) -> bool:

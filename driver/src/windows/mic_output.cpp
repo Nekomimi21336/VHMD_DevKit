@@ -1,4 +1,4 @@
-#include "windows/mic_output.h"
+#include "mic_output.h"
 
 #define NOMINMAX
 #include <windows.h>

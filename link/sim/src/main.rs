@@ -415,11 +415,14 @@ fn main() {
         msg.push_str(&pose_json("right_hand", &rh));
         if o.info && last_info.elapsed() >= Duration::from_secs(2) {
             last_info = Instant::now();
-            // A Pico 4 Ultra's display (same numbers, so VHMD's settings stay as they are).
+            // A Pico 4 Ultra's display (same numbers, so VHMD's settings stay as they are),
+            // and its microphones as the real app lists them (built in, and a Bluetooth headset).
             msg.push_str(&format!(
                 ",{{\"type\":\"headset\",\"model\":\"VHMD Link Simulator\",\"refresh\":{:.1},\"render\":[1920,1920],\
                  \"fov\":[[-0.82903,0.82903,0.82903,-0.82903],[-0.82903,0.82903,0.82903,-0.82903]],\
-                 \"eyes\":[[-0.036,0,0,1,0,0,0],[0.036,0,0,1,0,0,0]],\"edition\":{},\"version\":\"0.6.0\"{}}}",
+                 \"eyes\":[[-0.036,0,0,1,0,0,0],[0.036,0,0,1,0,0,0]],\"edition\":{},\"version\":\"0.6.0\"{},\
+                 \"mics\":[{{\"key\":\"15:bottom\",\"type\":15,\"name\":\"PICO 4 Ultra\"}},\
+                 {{\"key\":\"7:00_11_22_33_44_55\",\"type\":7,\"name\":\"Simulated earbuds\"}}],\"mic_using\":\"\"}}",
                 o.rate,
                 json_quote(&o.edition),
                 if udp_video_port != 0 { format!(",\"video_udp_port\":{udp_video_port}") } else { String::new() }

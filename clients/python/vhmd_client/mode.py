@@ -1,5 +1,6 @@
 """Switch SteamVR between the VHMD headset and a physical one (e.g. Pico 4 Ultra
-through PICO Connect), or back to how it was before VHMD. Windows only.
+through PICO Connect), or back to how it was before VHMD. Windows and Linux
+(Linux: no PICO Connect, so "pico" needs another registered driver named "pico").
 
     python -m vhmd_client.mode            # show the current mode
     python -m vhmd_client.mode pico       # physical HMD + VHMD trackers
@@ -19,14 +20,14 @@ touched: the mode is a few SteamVR settings,
 - ``vhmd_display``              (only with --headset),
 
 Before the first change, their values are recorded in
-%LOCALAPPDATA%/VHMD/original_steamvr.json; mode "off" puts them back (keys that
+original_steamvr.json in the data folder (paths.data_dir()); mode "off" puts them back (keys that
 did not exist are removed) and turns the VHMD driver off, so SteamVR runs as it
 did before (the driver folder stays registered; tools/uninstall_driver.ps1
 removes it).
 
 written through SteamVR's own settings API while it runs (so SteamVR does not
 overwrite them) and into steamvr.vrsettings while it is stopped. The derived
-configs live in %LOCALAPPDATA%/VHMD/profiles and are rebuilt from the installed
+configs live in profiles/ there and are rebuilt from the installed
 config on every switch, so edits to that config carry over.
 """
 
@@ -37,21 +38,22 @@ import ctypes
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-if sys.platform != "win32":
-    raise SystemExit("vhmd_client.mode is Windows only")
+from .paths import IS_WINDOWS, config_home, data_dir
 
-import winreg
+if IS_WINDOWS:
+    import winreg
 
 MODES = ("vhmd", "pico", "off")
 PHYSICAL_DRIVER = "pico"              # driver name in its driver.vrdrivermanifest
 DRIVER_SECTION = "driver_vhmd"
-PROFILE_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "VHMD" / "profiles"
+PROFILE_DIR = data_dir() / "profiles"
 # What each mode enables in the VHMD config (trackers keep their own settings).
 PROFILE_FLAGS = {"vhmd": {"hmd": True, "controllers": True}, "pico": {"hmd": False, "controllers": False}}
 ORIGINAL = PROFILE_DIR.parent / "original_steamvr.json"
@@ -63,7 +65,10 @@ Progress = Callable[[str], None]
 
 # -- locations ----------------------------------------------------------------
 def _openvrpaths() -> dict:
-    p = Path(os.environ["LOCALAPPDATA"]) / "openvr" / "openvrpaths.vrpath"
+    if IS_WINDOWS:
+        p = Path(os.environ["LOCALAPPDATA"]) / "openvr" / "openvrpaths.vrpath"
+    else:
+        p = config_home() / "openvr" / "openvrpaths.vrpath"
     try:
         return json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -71,8 +76,14 @@ def _openvrpaths() -> dict:
 
 
 def steam_path() -> Path:
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as k:
-        return Path(winreg.QueryValueEx(k, "SteamPath")[0])
+    if IS_WINDOWS:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as k:
+            return Path(winreg.QueryValueEx(k, "SteamPath")[0])
+    for p in (Path.home() / ".steam" / "steam", Path.home() / ".local" / "share" / "Steam",
+              Path.home() / ".var" / "app" / "com.valvesoftware.Steam" / ".local" / "share" / "Steam"):
+        if (p / "steamapps").exists():
+            return p.resolve()
+    return Path.home() / ".steam" / "steam"
 
 
 def settings_file() -> Path:
@@ -85,7 +96,7 @@ def settings_file() -> Path:
 
 def steamvr_dir() -> Path:
     for r in _openvrpaths().get("runtime", []):
-        if (Path(r) / "bin" / "win64" / "vrserver.exe").exists():
+        if (Path(r) / "bin" / ("win64/vrserver.exe" if IS_WINDOWS else "linux64/vrserver")).exists():
             return Path(r)
     return steam_path() / "steamapps" / "common" / "SteamVR"
 
@@ -105,7 +116,7 @@ def driver_dir(name: str) -> Optional[Path]:
 def base_config() -> Path:
     d = driver_dir("vhmd")
     if d is None:
-        raise SystemExit("the vhmd driver is not registered (tools/install_driver.ps1)")
+        raise SystemExit("the vhmd driver is not registered (tools/install_driver.%s)" % ("ps1" if IS_WINDOWS else "sh"))
     return d / "resources" / "settings" / "vhmd_config.json"
 
 
@@ -208,6 +219,18 @@ def wanted_settings(mode: str, headset: Optional[bool] = None) -> Dict[str, Dict
 
 # -- SteamVR processes --------------------------------------------------------
 def pids(image: str) -> List[int]:
+    """Processes with this image name ("vrserver.exe"; on Linux the name without .exe)."""
+    if not IS_WINDOWS:
+        name = image[:-4] if image.lower().endswith(".exe") else image
+        found = []
+        for d in Path("/proc").iterdir():
+            if d.name.isdigit():
+                try:
+                    if (d / "comm").read_text().strip() == name[:15]:   # the kernel keeps 15 characters
+                        found.append(int(d.name))
+                except OSError:
+                    pass
+        return found
     out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {image}", "/FO", "CSV", "/NH"], capture_output=True,
                          text=True, creationflags=subprocess.CREATE_NO_WINDOW).stdout
     found = []
@@ -223,6 +246,14 @@ def steamvr_running() -> bool:
 
 
 def _kill(pid_list: List[int]) -> None:
+    if not IS_WINDOWS:
+        # vrmonitor ends SteamVR on SIGTERM; a vrserver without one needs SIGKILL.
+        for pid in pid_list:
+            try:
+                os.kill(pid, signal.SIGTERM if _name(pid) == "vrmonitor" else signal.SIGKILL)
+            except OSError:
+                pass
+        return
     for pid in pid_list:
         subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True,
                        creationflags=subprocess.CREATE_NO_WINDOW)
@@ -248,7 +279,23 @@ def stop_steamvr(progress: Progress, timeout: float = 30.0) -> None:
         time.sleep(2.0)
 
 
+def _name(pid: int) -> str:
+    try:
+        return (Path("/proc") / str(pid) / "comm").read_text().strip()
+    except OSError:
+        return ""
+
+
 def start_steamvr() -> None:
+    if not IS_WINDOWS:
+        script = steamvr_dir() / "bin" / "vrstartup.sh"
+        if script.exists():
+            subprocess.Popen([str(script)], cwd=str(script.parent), start_new_session=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:   # let the Steam client start it
+            subprocess.Popen(["xdg-open", "steam://rungameid/250820"], start_new_session=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
     exe = steamvr_dir() / "bin" / "win64" / "vrstartup.exe"
     # The frozen PC app's DLL folder is inherited by what it starts: SteamVR would
     # load the app's runtime DLLs and keep them locked.

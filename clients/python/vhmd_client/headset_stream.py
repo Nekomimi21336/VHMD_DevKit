@@ -4,7 +4,10 @@ Preferred source: the driver's own hardware encoder (Windows direct mode,
 127.0.0.1:39583, see driver/src/windows/stream_encoder.h): GPU textures are
 encoded inside the driver and the messages below arrive ready to forward.
 Fallback (older driver, Linux): VHMD's eye images from the direct-mode preview
-in shared memory, encoded to H.264 by ffmpeg with the GPU's encoder.
+in shared memory, encoded to H.264 by ffmpeg with the GPU's encoder (encoder
+"auto": AMF on Windows; NVENC on Linux when ffmpeg has it, else x264). On Linux
+the PC's sound goes along (linux_audio.pc_sound()), as the driver's encoder does
+on Windows.
 
 ffmpeg sends RTP to a local UDP port: the RTP marker bit tells exactly where
 each frame ends, so a frame goes out as soon as it is encoded (Annex B access
@@ -34,6 +37,7 @@ import shutil
 import socket
 import struct
 import subprocess
+import sys
 import threading
 import time
 from typing import List, Optional
@@ -63,7 +67,21 @@ now_us = _precise_now_us()
 DRIVER_STREAM_PORT = 39583
 HEADER = struct.Struct("<4sIIIQQ7fI")
 assert HEADER.size == 64
-KIND_CONFIG, KIND_FRAME = 1, 2
+KIND_CONFIG, KIND_FRAME, KIND_AUDIO, KIND_AUDIO_FORMAT = 1, 2, 3, 4
+
+
+def pick_encoder(name: str) -> str:
+    """An ffmpeg H.264 encoder: `name`, or for "auto" the platform's usual one."""
+    if name != "auto":
+        return name
+    if sys.platform == "win32":
+        return "h264_amf"
+    try:
+        listed = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True,
+                                timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        listed = ""
+    return "h264_nvenc" if " h264_nvenc " in listed else "libx264"
 
 
 def eye_fovs() -> Optional[List[List[float]]]:
@@ -128,7 +146,7 @@ class RtpDepacketizer:
 
 class VideoServer(threading.Thread):
     def __init__(self, port: int = VIDEO_PORT, bitrate_mbps: float = 30.0, fps: float = 90.0,
-                 encoder: str = "h264_amf", log=print, host: str = "127.0.0.1", buffer: int = 0,
+                 encoder: str = "auto", log=print, host: str = "127.0.0.1", buffer: int = 0,
                  codec: str = "hevc", eye_width: int = 0, source: str = "auto", adaptive: bool = True) -> None:
         super().__init__(name="vhmd-video", daemon=True)
         self.port, self.bitrate, self.fps, self.encoder, self.log = port, bitrate_mbps, fps, encoder, log
@@ -138,6 +156,7 @@ class VideoServer(threading.Thread):
         self.eye_width = eye_width   # 0: the headset's own (headset.json), else the source's
         self.source = source   # "auto" (driver, else ffmpeg), "driver", "ffmpeg"
         self.frames_in = self.frames_out = self.bytes_out = self.frames_dropped = 0
+        self._send_lock = threading.Lock()   # video and sound share the connection
         self.current: Optional[socket.socket] = None   # the headset's connection, while there is one
         self.encoder_backend = "auto"   # driver encoder: "auto" (AMF on AMD), "amf", "mf" (Media Foundation)
         self.eye_scale = 1.0            # video width per eye as a share of the headset's own (performance setting)
@@ -316,6 +335,8 @@ class VideoServer(threading.Thread):
         client.preview(True)
         reader = PreviewReader()
         ffmpeg = None
+        sound = None
+        encoder = pick_encoder(self.encoder)
         try:
             frame = None
             t0 = time.time()
@@ -328,7 +349,7 @@ class VideoServer(threading.Thread):
             config = {"codec": "h264", "width": w, "height": h, "eye_width": frame.eye_width, "fov": eye_fovs(),
                       "pose": frame.pose is not None, "buffer": self.buffer}
             self.send(conn, KIND_CONFIG, 0, json.dumps(config).encode())
-            self.log(f"video: {w}x{h}, {self.encoder} {self.bitrate:g} Mbit/s, fov {config['fov'] is not None}")
+            self.log(f"video: {w}x{h}, {encoder} {self.bitrate:g} Mbit/s, fov {config['fov'] is not None}")
 
             rtp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             rtp.bind(("127.0.0.1", 0))
@@ -341,9 +362,13 @@ class VideoServer(threading.Thread):
                    # limited range and crush the dark end of a full-range stream.
                    "-vf", "scale=out_color_matrix=bt709:out_range=tv:flags=fast_bilinear,format=nv12",
                    "-color_range", "tv", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
-                   "-c:v", self.encoder]
-            if self.encoder.endswith("_amf"):
+                   "-c:v", encoder]
+            if encoder.endswith("_amf"):
                 cmd += ["-usage", "ultralowlatency", "-rc", "cbr", "-async_depth", "1", "-header_spacing", "30"]
+            elif encoder.endswith("_nvenc"):
+                cmd += ["-preset", "p1", "-tune", "ull", "-zerolatency", "1", "-rc", "cbr"]
+            elif encoder == "libx264":
+                cmd += ["-preset", "ultrafast", "-tune", "zerolatency"]
             # passthrough: exactly one output frame per input frame, so poses line up.
             cmd += ["-fps_mode", "passthrough", "-b:v", br, "-maxrate", br, "-bufsize", br, "-g", "30", "-bf", "0",
                     "-f", "rtp", "-payload_type", "96", f"rtp://127.0.0.1:{rtp_port}?pkt_size=1300"]
@@ -389,6 +414,8 @@ class VideoServer(threading.Thread):
 
             out = threading.Thread(target=out_loop, daemon=True)
             out.start()
+            if sys.platform != "win32":
+                sound = self.start_sound(conn, stop)
             feeder = threading.Thread(target=in_loop, daemon=True)
             feeder.start()
             last = -1
@@ -410,6 +437,8 @@ class VideoServer(threading.Thread):
                 stop.set()
                 rtp.close()
         finally:
+            if sound:
+                sound.kill()
             if ffmpeg:
                 try:
                     ffmpeg.stdin.close()
@@ -422,10 +451,37 @@ class VideoServer(threading.Thread):
                 pass
             reader.close()
 
+    def start_sound(self, conn: socket.socket, stop: threading.Event):
+        """Linux: the PC's sound to the headset, 10 ms a message (None without parec)."""
+        from . import linux_audio
+        sound = linux_audio.pc_sound()
+        if sound is None:
+            self.log("sound: parec not found (install pulseaudio-utils); video only")
+            return None
+        self.send(conn, KIND_AUDIO_FORMAT, 0,
+                  json.dumps({"rate": linux_audio.RATE, "channels": linux_audio.CHANNELS}).encode())
+        chunk = linux_audio.RATE // 100 * linux_audio.CHANNELS * 2
+
+        def loop() -> None:
+            n = 0
+            while not stop.is_set():
+                data = sound.stdout.read(chunk)
+                if not data:
+                    break
+                n += 1
+                try:
+                    self.send(conn, KIND_AUDIO, n, data)
+                except OSError:
+                    break
+
+        threading.Thread(target=loop, name="vhmd-sound", daemon=True).start()
+        return sound
+
     def send(self, conn: socket.socket, kind: int, index: int, payload: bytes, pose=None) -> None:
         flags = 1 if pose else 0
         p = pose or (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0)
-        conn.sendall(HEADER.pack(b"VHV1", kind, len(payload), flags, index, int(time.time() * 1e6), *p, 0) + payload)
+        with self._send_lock:
+            conn.sendall(HEADER.pack(b"VHV1", kind, len(payload), flags, index, int(time.time() * 1e6), *p, 0) + payload)
 
     def take_stats(self):
         out = (self.frames_in, self.frames_out, self.bytes_out)

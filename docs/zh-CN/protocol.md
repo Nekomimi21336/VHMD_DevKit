@@ -72,7 +72,7 @@
 { "type": "mic", "seq": 12, "pcm": "AQD//wAB" }
 ```
 
-头显麦克风的声音(16 位、48 kHz、单声道的小端序数据经 base64 编码。每条最多 100 ms)。通过 `config` 的 `mic` 决定输出目标后，驱动会向该输出播放。`seq` 每次加 1(用于 `status` 的 `mic.lost`)。仅限 Windows。
+头显麦克风的声音(16 位、48 kHz、单声道的小端序数据经 base64 编码。每条最多 100 ms)。通过 `config` 的 `mic` 决定输出目标后，驱动会向该输出播放。`seq` 每次加 1(用于 `status` 的 `mic.lost`)。Windows 和 Linux。
 
 ### `input`(控制器 / 追踪器 / HMD)
 
@@ -174,7 +174,7 @@ HMD：
 | `set_role` | `id`, `role` | 将角色写入 SteamVR 设置的 `trackers` 部分(覆盖用户设置) |
 | `offset` | `id`、`pos`(m)、`ypr`(度：偏航、俯仰、翻滚)、`space`(`device` / `room`) | 控制器和追踪器的位置、角度校正。`pos` 沿 `space` 的轴，`ypr` 绕设备的轴。不带值时返回当前的校正。不适用于 HMD。在 SteamVR 退出前一直有效，`status` 的设备中会出现 `offset` |
 | `tracking` | `id`、`mode`(`active` / `paused` / `disconnected`，省略时仅返回当前状态) | 按设备改变传给 SteamVR 的内容(SteamVR 不会停止)。`paused` 原地固定(保持已连接、追踪中，按键仍然有效)。`disconnected` 报告为未连接，并松开正在按下的输入。即使收到新数据，在恢复为 `active` 之前也不会改变。两种状态下都会继续统计接收数。不适用于 HMD。在 SteamVR 退出前一直有效，`status` 的设备中会出现 `tracking`。`{"ok":true,"id":"tracker_1","mode":"paused"}` |
-| `mic` | `device`(播放目标音频输出名称的一部分，`""` 为停止)、`mode`(`monitor` 同时在默认输出上播放，`quiet` 停止)。均可省略 | 头显麦克风的声音(消息 `mic`)的播放目标。响应和 `status` 的 `mic` 中包含 `device`、`state`、`monitor`、接收数。仅限 Windows |
+| `mic` | `device`(播放目标音频输出名称的一部分。Linux 为 PulseAudio / PipeWire 的 sink 名称，默认 `vhmd_mic`。`""` 为停止)、`mode`(`monitor` 同时在默认输出上播放，`quiet` 停止)。均可省略 | 头显麦克风的声音(消息 `mic`)的播放目标。响应和 `status` 的 `mic` 中包含 `device`、`state`、`monitor`、接收数。Windows 和 Linux |
 | `reset` | `id`(省略时为全部设备) | 恢复为配置文件中的默认姿态 |
 | `add` | `id`(省略时为全部按需设备) | 立即将按需设备添加到 SteamVR(下一帧生效)。`{"ok":true,"ids":[...]}` |
 | `hand_mode` | `mode`(`controllers` / `hands`，省略时仅返回当前模式) | 在控制器 / 手部追踪之间切换左右手(SteamVR 不会停止)。`{"ok":true,"mode":"hands"}`。`status` 中也包含 `hand_mode` |
