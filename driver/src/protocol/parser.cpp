@@ -309,6 +309,7 @@ std::string ParseConfig(const json& obj, Message& out) {
     if (auto role = obj.find("role"); role != obj.end() && role->is_string()) m.role = role->get<std::string>();
     if (auto mode = obj.find("mode"); mode != obj.end() && mode->is_string()) m.mode = mode->get<std::string>();
     if (auto d = obj.find("device"); d != obj.end() && d->is_string()) m.device = d->get<std::string>().substr(0, 128);
+    if (auto n = obj.find("name"); n != obj.end() && n->is_string()) m.name = n->get<std::string>().substr(0, 128);
     if (auto hz = obj.find("hz"); hz != obj.end() && hz->is_number()) m.hz = hz->get<double>();
     for (auto [key, field] : {std::pair{"slack_ms", &m.slack_ms}, std::pair{"period_ms", &m.period_ms},
                               std::pair{"target_ms", &m.target_ms}, std::pair{"weight", &m.weight}}) {

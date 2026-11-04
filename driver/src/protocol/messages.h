@@ -91,6 +91,8 @@ struct ConfigMessage {
     std::vector<std::string> devices;
     // "mic": the audio output to play the headset's microphone into ("" = off).
     std::optional<std::string> device;
+    // "record": the recording's file name (letters, digits, '-', '_', '.').
+    std::string name;
 };
 
 using Message = std::variant<PoseMessage, InputMessage, SkeletonMessage, GazeMessage, MicMessage, ConfigMessage>;

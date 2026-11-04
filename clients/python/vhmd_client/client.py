@@ -219,6 +219,18 @@ class VHMDClient:
     def status(self) -> Dict[str, Any]:
         return self.request("list")
 
+    def inspect(self, device_id: str) -> Dict[str, Any]:
+        """What a device last received and what SteamVR got from it: "devices" has
+        one entry per SteamVR device (a controller and its hand twin) with
+        "received" (inputs as sent), "given" (SteamVR's input values, derived
+        clicks included), "skeleton" (31 bones [x, y, z, w, qx, qy, qz] and where
+        they came from), "haptic" (the last vibration an app asked for), "gaze"
+        and "pose". Asking does not take haptic events away from the sender."""
+        r = self.request("inspect", id=device_id)
+        if not r.get("ok"):
+            raise RuntimeError(r.get("error", "inspect failed"))
+        return r
+
     def ping(self) -> bool:
         try:
             return bool(self.request("ping").get("ok"))

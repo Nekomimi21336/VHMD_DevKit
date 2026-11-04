@@ -184,6 +184,8 @@ HMD:
 | `refresh_rate` | `hz`(1〜240、省略時は現在値を返すだけ) | 仮想ディスプレイのフレームレートを変更(ダイレクトモード、SteamVR は止まりません)。`{"ok":true,"hz":30}` |
 | `control` | `source`(送り手の名前、`""` で誰でも。省略時は現在の状態を返すだけ)、`devices`(省略時は全デバイス) | どの送り手がデバイスを動かすかを決める(SteamVR は止まりません)。操作権を持たない送り手のメッセージは捨てられ、数えられます。操作権が移ったデバイスは、前の送り手が押していた入力を離した状態に戻し(装着センサー・バッテリーは除く)、速度による予測を止め、新しい送り手にタイムアウトの猶予を与えます。応答: `control`(`owner`、デバイスごとの `devices`、送り手ごとの `sources`: `age_s`・`accepted`・`ignored`)と `poses`(各デバイスの最新の位置・回転。引き継ぐ側が今の位置から続けられる)。`status` にも `control` が入ります |
 | `preview_window` | `mode`(`on` / `off`) | Windows のダイレクトモード(`display.mode = direct`)で、プレビューウィンドウ(HMD の映像)を表示 / 非表示。非表示のあいだは何もしません |
+| `inspect` | `id`(デバイス ID またはトラッカーのロール) | そのデバイスが最後に受け取ったものと、SteamVR に渡したもの。`devices` に SteamVR のデバイスごと(コントローラーとハンドの組は 2 つ)に `serial`、`active`(SteamVR で接続中か)、`index`、`pose`(`pos`、`rot`、`valid`、`connected`)、`received`(届いた入力を送られた名前のまま)、`given`(SteamVR の入力に渡した値。トリガーから作ったクリック、別名を直した名前、電池を含む)、`skeleton`(31 本の骨 `[x, y, z, qw, qx, qy, qz]` と `source`: `bones` 送られた骨 / `curl` 送られた曲げから / `buttons` ボタンから)、`haptic`(アプリからの振動の要求の回数と最後の値)、`gaze`(HMD)。PC のアプリの「入力と手の確認」と `python -m vhmd_client.inspector` がこれを使う |
+| `record` | `mode`(`start` / `stop`、省略時は状態を返すだけ)、`name`(英数字と `-` `_` `.`、省略時は時刻から) | デバイスを動かした JSON のデータグラムを、届いた時刻つきで 1 行ずつ記録する(`{"t":秒,"d":データグラム}`)。保存先はユーザーの VHMD のデータフォルダーの `recordings/<name>.jsonl` だけ(パスは指定できない。同じ名前は上書きしない。512 MB で止まる)。問い合わせ・マイクの音・VMT の OSC は記録しない。応答と状態は `record`(`recording`、`path`、`seconds`、`lines`、`bytes`、`folder`)。再生は `python -m vhmd_client.replay play <name>` |
 | (`status` の `perf`) | | ドライバ自身の負荷: `update_thread_cpu_pct`、`receive_thread_cpu_pct`(1 コア比の %、1 秒ごとに更新)、`update_tick_us_avg` / `update_tick_us_max`(更新 1 回の処理時間) |
 
 `status` の `display`: `mode`(`window` / `direct`)、`width`、`height`、`refresh_hz`。ダイレクトモード(Linux)では加えて `swap_sets_created`、`swap_sets_alive`、`layers_submitted`、`presents`、`vsyncs`、`eye_texture`(`width`、`height`、`vk_format`)、`preview`(`state`、`submitted`、`written`、`active`)。
@@ -192,7 +194,7 @@ HMD:
 
 ### ドライバ → クライアント: `haptic`
 
-アプリが振動を要求すると、**最後にパケットを送ってきたアドレス**へ送ります。VHMD Link を使っているときは `headset_bridge` がヘッドセットに転送し、コントローラーが振動します。
+アプリが振動を要求すると、**最後にデバイスを動かすデータ(`pose`・`input`・`skeleton`・`gaze`・`mic`)を送ってきたアドレス**へ送ります。`config` の問い合わせだけを送るツール(状態の表示、`inspect`)は振動の送り先を変えません。VHMD Link を使っているときは `headset_bridge` がヘッドセットに転送し、コントローラーが振動します。
 
 ```json
 { "type": "haptic", "id": "right_hand", "duration": 0.005, "frequency": 100.0, "amplitude": 0.75 }

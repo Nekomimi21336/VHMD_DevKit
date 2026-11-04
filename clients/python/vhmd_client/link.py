@@ -33,10 +33,12 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Dict, List, Optional, Tuple
 
-from . import bindings, headset_info, mode, offsets, tracking
+from . import bindings, headset_info, mode, offsets, replay, tracking
 from .paths import IS_WINDOWS, config_home, data_dir
 from .ui_style import PALETTES, os_theme, setup_style, ui_fonts, ui_language
 from .headset_bridge import MIC_DEVICE, Bridge, BridgeOptions
+from .inspector import InspectorWindow
+from .stats_view import StatsHistory, StatsWindow, sample_from
 from .tray import TrayIcon
 
 DATA = data_dir()
@@ -52,7 +54,7 @@ DEFAULTS = {"quality": "standard", "codec": "hevc", "buffer": 0, "refresh": 72, 
             "bindings": {},                    # changes from bindings.DEFAULTS
             "body_tracking": True, "hand_tracking": False, "wear_detect": True, "mic": False, "mic_device": MIC_DEVICE, "mic_input": "",
             "offsets": offsets.DEFAULTS,       # by device id, see offsets.py
-            "dev_view": False}
+            "dev_view": False, "headset_stats": True}
 
 TEXT = {
     "en": {
@@ -132,6 +134,18 @@ TEXT = {
         "refresh": "Refresh rate", "r72": "72 Hz", "r90": "90 Hz (more GPU load)",
         "dev_view": "Developer view", "startup": "Open when Windows starts",
         "take_back": "Give control to the headset", "fps_tool": "Keyboard/mouse control", "log": "Log",
+        "inspect": "Inputs and hands", "stats_graph": "Statistics over time",
+        "headset_stats": "Show the statistics in the headset (Dev edition)",
+        "rec_start": "Record", "rec_stop": "Stop recording", "play": "Play", "play_stop": "Stop",
+        "rec_on": "Recording {s:.0f} s", "rec_done": "Recorded {s:.1f} s: {name}",
+        "playing": "Playing {name}: {pos:.1f} / {dur:.1f} s (has the control of its devices)",
+        "no_recordings": "(no recordings yet)",
+        "safe_mode": "SteamVR turned VHMD off (safe mode, after SteamVR failed to close). Turning it back on restarts SteamVR.",
+        "safe_mode_fix": "Turn VHMD back on",
+        "relaunch_hint": "{names} starts SteamVR again a few seconds after it closes; the switch then takes effect "
+                         "with that new SteamVR.",
+        "refresh_hint": "The headset still shows {hz:.0f} Hz. On the Pico, set the display refresh rate to 90 Hz in "
+                        "its settings first (the app cannot change it).",
         "quit": "Quit", "open": "Open", "tray_hint": "Closing the window keeps VHMD Link in the notification area.",
         "no_tray_hint": "Closing the window quits VHMD Link.",
         "confirm_restart": "SteamVR restarts for this; running VR apps close. Continue?",
@@ -214,6 +228,16 @@ TEXT = {
         "refresh": "リフレッシュレート", "r72": "72 Hz", "r90": "90 Hz(GPU の負荷が増える)",
         "dev_view": "開発者向けの表示", "startup": "Windows の起動時に開く",
         "take_back": "操作をヘッドセットに戻す", "fps_tool": "キーボード・マウス操作", "log": "ログ",
+        "inspect": "入力と手の確認", "stats_graph": "統計のグラフ",
+        "headset_stats": "ヘッドセットの中に統計を表示する(開発版)",
+        "rec_start": "記録", "rec_stop": "記録を止める", "play": "再生", "play_stop": "止める",
+        "rec_on": "記録中 {s:.0f} 秒", "rec_done": "記録しました({s:.1f} 秒): {name}",
+        "playing": "再生中 {name}: {pos:.1f} / {dur:.1f} 秒(その機器の操作権を持っています)",
+        "no_recordings": "(記録はまだありません)",
+        "safe_mode": "SteamVR が VHMD を止めています(SteamVR の終了に失敗したあとのセーフモード)。有効に戻すと SteamVR を再起動します。",
+        "safe_mode_fix": "VHMD を有効に戻す",
+        "relaunch_hint": "{names} が動いているため、SteamVR を閉じても数秒後に自動で起動し直します。切り替えは、起動し直した SteamVR で反映されます。",
+        "refresh_hint": "ヘッドセットはまだ {hz:.0f} Hz です。Pico 本体の設定で、ディスプレイのリフレッシュレートを先に 90 Hz にしてください(アプリからは変えられません)。",
         "quit": "終了", "open": "開く", "tray_hint": "ウィンドウを閉じても VHMD Link は通知領域で動き続けます。",
         "no_tray_hint": "ウィンドウを閉じると VHMD Link は終了します。",
         "confirm_restart": "SteamVR を再起動します。実行中の VR アプリは終了します。よろしいですか?",
@@ -355,6 +379,10 @@ class LinkApp:
         self.auto_started_at = 0.0
         self.mode = None                      # SteamVR mode from the settings file, refreshed in the background
         self.differs = False
+        self.safe_blocked = False             # SteamVR's safe mode switched VHMD off
+        self.relaunch: List[str] = []         # running programs that start SteamVR again
+        self.refresh_set_at = 0.0             # when the refresh rate was last chosen
+        self.history = StatsHistory()         # the last minutes of statistics, for the graph and CSV
 
         icon = make_icon()
         if icon and (DATA / "vhmd_link.png").exists():
@@ -374,7 +402,8 @@ class LinkApp:
                                            hand_tracking=bool(self.s["hand_tracking"]),
                                            wear_detect=bool(self.s["wear_detect"]), mic=bool(self.s["mic"]),
                                            mic_device=str(self.s["mic_device"]), mic_input=str(self.s["mic_input"]),
-                                           offsets=dict(self.s["offsets"])),
+                                           offsets=dict(self.s["offsets"]),
+                                           headset_stats=bool(self.s["headset_stats"])),
                              log=self.log)
         try:
             self.bridge.start()
@@ -490,8 +519,15 @@ class LinkApp:
         ttk.Label(self.match_row, text=t["match_hint"], style="CardMuted.TLabel", wraplength=300,
                   justify="left").pack(side="left")
         ttk.Button(self.match_row, text=t["match"], command=lambda: self.switch(target="vhmd", headset=True)).pack(side="right")
-        self.busy_lbl = ttk.Label(c, text="", style="CardMuted.TLabel")
+        self.busy_lbl = ttk.Label(c, text="", style="CardMuted.TLabel", wraplength=470, justify="left")
         self.busy_lbl.pack(anchor="w")
+        # SteamVR's safe mode switched VHMD off: any mode switch clears it.
+        self.safe_row = ttk.Frame(c, style="Card.TFrame")
+        tk.Label(self.safe_row, text=t["safe_mode"], bg=pal["warn"], fg=pal["warn_fg"], font=f["small"],
+                 wraplength=300, justify="left", padx=8, pady=4).pack(side="left", fill="x", expand=True)
+        ttk.Button(self.safe_row, text=t["safe_mode_fix"],
+                   command=lambda: self.switch(target=self.mode if self.mode in mode.MODES else "vhmd", force=True)
+                   ).pack(side="right", padx=(8, 0))
         self.auto_var = tk.BooleanVar(value=bool(self.s["auto_steamvr"]))
         ttk.Checkbutton(c, text=t["auto_vr"], style="Card.TCheckbutton", variable=self.auto_var,
                         command=lambda: self.set("auto_steamvr", self.auto_var.get())).pack(anchor="w", pady=(4, 0))
@@ -508,6 +544,8 @@ class LinkApp:
         self.q_var = self.combo(grid, 0, t["quality"], [(k, t["q_" + k]) for k, _ in QUALITY], "quality")
         self.c_var = self.combo(grid, 1, t["codec"], [("hevc", t["c_hevc"]), ("av1", t["c_av1"]), ("h264", t["c_h264"])], "codec")
         self.r_var = self.combo(grid, 2, t["refresh"], [(72, t["r72"]), (90, t["r90"])], "refresh")
+        self.refresh_hint = ttk.Label(c, text="", style="CardMuted.TLabel", wraplength=470, justify="left")
+        self.refresh_hint.pack(anchor="w")
         mic_var = tk.BooleanVar(value=bool(self.s["mic"]))
         ttk.Checkbutton(c, text=t["mic"], style="Card.TCheckbutton", variable=mic_var,
                         command=lambda: self.set_perf("mic", mic_var.get())).pack(anchor="w", pady=(8, 0))
@@ -624,8 +662,30 @@ class LinkApp:
         btns = ttk.Frame(dc, style="Card.TFrame")
         btns.pack(fill="x")
         ttk.Button(btns, text=t["take_back"], command=self.take_back).pack(side="left")
+        ttk.Button(btns, text=t["inspect"], command=self.open_inspector).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text=t["stats_graph"], command=self.open_stats).pack(side="left", padx=(8, 0))
         if IS_WINDOWS:   # the keyboard / mouse tool is Windows only
             ttk.Button(btns, text=t["fps_tool"], command=self.fps_tool).pack(side="left", padx=(8, 0))
+        hs_stats_var = tk.BooleanVar(value=bool(self.s["headset_stats"]))
+        ttk.Checkbutton(dc, text=t["headset_stats"], style="Card.TCheckbutton", variable=hs_stats_var,
+                        command=lambda: self.set_perf("headset_stats", hs_stats_var.get())).pack(anchor="w", pady=(8, 0))
+        # Record what drives the devices (in the driver) and play it again.
+        rec = ttk.Frame(dc, style="Card.TFrame")
+        rec.pack(fill="x", pady=(8, 0))
+        self.rec_btn = ttk.Button(rec, text=t["rec_start"], command=self.toggle_record)
+        self.rec_btn.pack(side="left")
+        self.rec_var = tk.StringVar()
+        self.rec_box = ttk.Combobox(rec, textvariable=self.rec_var, state="readonly", width=28)
+        self.rec_box.pack(side="left", padx=(8, 0))
+        self.rec_box.bind("<Button-1>", lambda _e: self.update_recordings())
+        self.play_btn = ttk.Button(rec, text=t["play"], command=self.toggle_play)
+        self.play_btn.pack(side="left", padx=(8, 0))
+        self.rec_lbl = ttk.Label(dc, text="", style="CardMuted.TLabel")
+        self.rec_lbl.pack(anchor="w")
+        self.recording: Optional[dict] = None   # the driver's record status while recording
+        self.player: Optional[replay.Player] = None
+        self.player_name = ""
+        self.update_recordings()
         self.log_box = tk.Text(dc, height=8, bg=pal["entry"], fg=pal["muted"], font=f["mono_small"], relief="flat",
                                highlightthickness=0, wrap="word")
         self.log_box.pack(fill="both", expand=True, pady=(8, 0))
@@ -646,6 +706,7 @@ class LinkApp:
             self.set(key, value)
             if key == "refresh":   # the headset switches, VHMD follows it (no reconnect)
                 self.bridge.o.refresh = float(value)
+                self.refresh_set_at = time.monotonic()   # give the headset a moment before saying it did not follow
                 self.log(f"refresh rate: {value} Hz")
                 return
             if key == "foveation":
@@ -853,6 +914,8 @@ class LinkApp:
             self.bridge.o.wear_detect = on       # the same
         elif key == "mic":
             self.bridge.o.mic = on               # the same
+        elif key == "headset_stats":
+            self.bridge.o.headset_stats = on     # the same
         elif key == "amf":
             self.bridge.set_video(encoder_backend="auto" if on else "mf")
         elif key == "udp_video":
@@ -868,8 +931,8 @@ class LinkApp:
         except OSError as e:
             self.log(f"could not start SteamVR: {e}")
 
-    def switch(self, target: str, headset: Optional[bool] = None) -> None:
-        if self.busy or (target == self.mode and headset is None):
+    def switch(self, target: str, headset: Optional[bool] = None, force: bool = False) -> None:
+        if self.busy or (target == self.mode and headset is None and not force):
             return
         if mode.steamvr_running() and not messagebox.askyesno(self.t["title"], self.t["confirm_restart"]):
             return
@@ -893,6 +956,78 @@ class LinkApp:
             self.log("control: manual (the headset)")
         except (OSError, TimeoutError) as e:
             self.log(self.t["failed"].format(e))
+
+    def update_recordings(self) -> None:
+        names = [p.stem for p in replay.recordings()]
+        self.rec_box.configure(values=names or [self.t["no_recordings"]])
+        if names and self.rec_var.get() not in names:
+            self.rec_var.set(names[0])
+
+    def toggle_record(self) -> None:
+        try:
+            if self.recording is None:
+                r = self.bridge.request("record", mode="start", name="")
+                if not r.get("ok"):
+                    raise OSError(r.get("error", "?"))
+                self.recording = {**r["record"], "since": time.monotonic()}
+                self.log(f"recording to {r['record'].get('path')}")
+            else:
+                r = self.bridge.request("record", mode="stop")["record"]
+                self.recording = None
+                name = Path(r.get("path", "")).stem
+                self.rec_lbl.config(text=self.t["rec_done"].format(s=r.get("seconds", 0), name=name))
+                self.log(f"recorded {r.get('lines', 0)} datagrams, {r.get('seconds', 0):.1f} s: {name}")
+                self.update_recordings()
+                self.rec_var.set(name)
+        except (OSError, TimeoutError) as e:
+            self.log(self.t["failed"].format(e))
+        self.rec_btn.config(text=self.t["rec_stop" if self.recording is not None else "rec_start"])
+
+    def toggle_play(self) -> None:
+        """Plays the chosen recording with the control of its devices (the headset's
+        messages are ignored meanwhile), then gives them back."""
+        if self.player:
+            self.player.stop()
+            return
+        path = replay.path_of(self.rec_var.get())
+        frames = replay.load(path) if path.exists() else []
+        if not frames:
+            return
+        ids = sorted(replay.devices_in(frames))
+        try:
+            before = self.bridge.request("control")["control"]
+            self.bridge.request("control", source=replay.SOURCE, devices=ids)
+        except (OSError, TimeoutError) as e:
+            self.log(self.t["failed"].format(e))
+            return
+
+        def ended() -> None:
+            owners, default = before.get("devices", {}), before.get("owner", "")
+            for i in ids:
+                try:
+                    self.bridge.request("control", source=owners.get(i, default), devices=[i])
+                except (OSError, TimeoutError):
+                    pass
+            self.log(f"replay ended ({self.player.sent if self.player else 0} datagrams)")
+            self.player = None
+
+        self.player_name = path.stem
+        self.player = replay.Player(frames, on_end=ended).start()
+        self.log(f"playing {path.name} ({self.player.duration():.1f} s, {', '.join(ids)})")
+
+    def open_stats(self) -> None:
+        if getattr(self, "stats_win", None) and not self.stats_win.closed:
+            self.stats_win.win.lift()
+            return
+        self.stats_win = StatsWindow(self.root, self.history, self.lang, self.pal, self.fonts, os_theme() == "dark")
+
+    def open_inspector(self) -> None:
+        """Inputs, finger bones and vibrations as SteamVR got them. Asks through the
+        bridge's socket, like every request from here."""
+        if getattr(self, "inspector", None) and not self.inspector.closed:
+            self.inspector.win.lift()
+            return
+        self.inspector = InspectorWindow(self.root, self.bridge.request, self.lang, "left_hand", self.pal, self.fonts)
 
     def fps_tool(self) -> None:
         if FROZEN:   # the same exe runs the tool
@@ -928,6 +1063,8 @@ class LinkApp:
         while True:
             try:
                 self.mode = mode.current_mode()
+                self.safe_blocked = mode.safe_mode_blocked()
+                self.relaunch = mode.relaunchers()
                 info = headset_info.load()
                 self.differs = bool(info) and not headset_info.APPLIED.exists()
             except Exception:
@@ -957,6 +1094,8 @@ class LinkApp:
                 self.quit()
                 return
         st = self.bridge.status()
+        if st["headset"]:
+            self.history.add(sample_from(st))
         mic = self.bridge.mic_state()
         self.monitor_btn.state(["disabled" if mic == "off" else "!disabled"])
         if self.bridge.o.mic_monitor and self.bridge.mic_driver.get("monitor") == "same device":
@@ -1008,7 +1147,18 @@ class LinkApp:
             self.match_row.pack(fill="x", pady=(6, 0), before=self.busy_lbl)
         else:
             self.match_row.pack_forget()
-        self.busy_lbl.config(text=t["busy"].format(self.busy) if self.busy else "")
+        busy = t["busy"].format(self.busy) if self.busy else ""
+        if self.busy and self.relaunch:
+            busy += "\n" + t["relaunch_hint"].format(names=", ".join(self.relaunch))
+        self.busy_lbl.config(text=busy)
+        if self.safe_blocked and not self.busy:
+            self.safe_row.pack(fill="x", pady=(6, 0), after=self.busy_lbl)
+        else:
+            self.safe_row.pack_forget()
+        hz = float(st.get("refresh") or 0)
+        wrong_rate = (int(self.s["refresh"]) == 90 and st["headset"] and hz and abs(hz - 90) > 1
+                      and time.monotonic() - self.refresh_set_at > 5)
+        self.refresh_hint.config(text=t["refresh_hint"].format(hz=hz) if wrong_rate else "")
 
         dev = bool(self.s["dev_view"]) or st["edition"] == "dev"
         if dev:
@@ -1037,6 +1187,14 @@ class LinkApp:
                 f"Ahead  {h.get('predict_ms', 0):.1f} ms   shown {h.get('late_ms', 0):+.1f} ms after the predicted time",
             ]
             self.stats_lbl.config(text="\n".join(lines))
+            if self.recording is not None:
+                self.rec_lbl.config(text=self.t["rec_on"].format(s=time.monotonic() - self.recording["since"]))
+            elif self.player:
+                self.rec_lbl.config(text=self.t["playing"].format(name=self.player_name, pos=self.player.position,
+                                                                  dur=self.player.duration()))
+            elif self.rec_lbl.cget("text").startswith(self.t["playing"][:3]):
+                self.rec_lbl.config(text="")
+            self.play_btn.config(text=self.t["play_stop" if self.player else "play"])
             if self.log_dirty:
                 self.log_dirty = False
                 self.log_box.config(state="normal")

@@ -184,6 +184,8 @@ HMD:
 | `refresh_rate` | `hz`(1~240, 생략 시 현재 값만 반환) | 가상 디스플레이의 프레임 레이트를 변경(다이렉트 모드, SteamVR은 멈추지 않음). `{"ok":true,"hz":30}` |
 | `control` | `source`(송신자 이름, `""`이면 누구나. 생략 시 현재 상태만 반환), `devices`(생략 시 전체 디바이스) | 어느 송신자가 디바이스를 움직일지 정한다(SteamVR은 멈추지 않음). 조작권이 없는 송신자의 메시지는 버려지고 집계된다. 조작권이 넘어간 디바이스는 이전 송신자가 누르고 있던 입력을 뗀 상태로 되돌리고(착용 센서·배터리 제외), 속도에 의한 예측을 멈추며, 새 송신자에게 타임아웃 유예를 준다. 응답: `control`(`owner`, 디바이스별 `devices`, 송신자별 `sources`: `age_s`·`accepted`·`ignored`)과 `poses`(각 디바이스의 최신 위치·회전. 이어받는 쪽이 현재 위치에서 계속할 수 있음). `status`에도 `control`이 들어간다 |
 | `preview_window` | `mode`(`on` / `off`) | Windows 다이렉트 모드(`display.mode = direct`)에서 프리뷰 창(HMD 영상)을 표시 / 숨김. 숨긴 동안은 아무것도 하지 않음 |
+| `inspect` | `id`(디바이스 ID 또는 트래커 역할) | 그 디바이스가 마지막으로 받은 것과 SteamVR에 넘긴 것. `devices`에 SteamVR 디바이스마다(컨트롤러와 핸드 한 쌍은 2개) `serial`, `active`(SteamVR에서 연결 중인지), `index`, `pose`(`pos`, `rot`, `valid`, `connected`), `received`(보낸 이름 그대로의 입력), `given`(SteamVR 입력에 넘긴 값. 트리거로 만든 클릭, 고친 별칭, 배터리 포함), `skeleton`(31개 뼈 `[x, y, z, qw, qx, qy, qz]`와 `source`: `bones` 보낸 뼈 / `curl` 보낸 굽힘에서 / `buttons` 버튼에서), `haptic`(앱의 진동 요청 횟수와 마지막 값), `gaze`(HMD). PC 앱의 "입력과 손 확인"과 `python -m vhmd_client.inspector`가 사용 |
+| `record` | `mode`(`start` / `stop`, 생략 시 상태만 반환), `name`(영숫자와 `-` `_` `.`, 생략 시 시각으로) | 디바이스를 움직인 JSON 데이터그램을 도착 시각과 함께 한 줄씩 기록(`{"t":초,"d":데이터그램}`). 저장 위치는 사용자의 VHMD 데이터 폴더의 `recordings/<name>.jsonl`뿐(경로 지정 불가, 같은 이름은 덮어쓰지 않음, 512 MB에서 멈춤). 질의·마이크 소리·VMT의 OSC는 기록하지 않음. 응답과 상태는 `record`(`recording`, `path`, `seconds`, `lines`, `bytes`, `folder`). 재생: `python -m vhmd_client.replay play <name>` |
 | (`status`의 `perf`) | | 드라이버 자체의 부하: `update_thread_cpu_pct`, `receive_thread_cpu_pct`(코어 1개 대비 %, 1초마다 갱신), `update_tick_us_avg` / `update_tick_us_max`(갱신 1회의 처리 시간) |
 
 `status`의 `display`: `mode`(`window` / `direct`), `width`, `height`, `refresh_hz`. 다이렉트 모드(Linux)에서는 추가로 `swap_sets_created`, `swap_sets_alive`, `layers_submitted`, `presents`, `vsyncs`, `eye_texture`(`width`, `height`, `vk_format`), `preview`(`state`, `submitted`, `written`, `active`).
@@ -192,7 +194,7 @@ HMD:
 
 ### 드라이버 → 클라이언트: `haptic`
 
-앱이 진동을 요청하면 **마지막으로 패킷을 보낸 주소**로 보냅니다.
+앱이 진동을 요청하면 **마지막으로 디바이스를 움직이는 데이터(`pose`·`input`·`skeleton`·`gaze`·`mic`)를 보낸 주소**로 보냅니다. `config` 질의만 보내는 도구(상태 표시, `inspect`)는 진동을 보내는 곳을 바꾸지 않습니다.
 
 ```json
 { "type": "haptic", "id": "right_hand", "duration": 0.005, "frequency": 100.0, "amplitude": 0.75 }

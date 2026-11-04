@@ -96,8 +96,11 @@ void TrackerDevice::OnInput(const std::string& name, float value) {
     auto* in = vr::VRDriverInput();
     if (it->second.boolean) {
         in->UpdateBooleanComponent(it->second.handle, value >= 0.5f, 0.0);
+        NoteGiven(key, value >= 0.5f ? 1.0f : 0.0f);
     } else {
-        in->UpdateScalarComponent(it->second.handle, std::clamp(value, it->second.two_sided ? -1.0f : 0.0f, 1.0f), 0.0);
+        value = std::clamp(value, it->second.two_sided ? -1.0f : 0.0f, 1.0f);
+        in->UpdateScalarComponent(it->second.handle, value, 0.0);
+        NoteGiven(key, value);
     }
 }
 

@@ -18,6 +18,7 @@
 #include "config/roles.h"
 #include "protocol/osc.h"
 #include "state/device_state.h"
+#include "state/recorder.h"
 #include "util/log.h"
 
 namespace vhmd {
@@ -64,6 +65,11 @@ struct RouterHooks {
     std::function<std::string()> mic_status;
     // JSON object with the driver's own CPU use ("perf" in status).
     std::function<std::string()> perf_status;
+    // JSON array: what each SteamVR device of protocol id `id` last received and
+    // handed SteamVR (a controller and its hand twin are two entries).
+    std::function<std::string(const std::string& id)> inspect;
+    // Where recordings go (config op "record"); empty = Recorder::DefaultDir().
+    std::filesystem::path recordings_dir;
 };
 
 class MessageRouter {
@@ -71,7 +77,9 @@ public:
     MessageRouter(const DriverConfig& config, std::vector<std::shared_ptr<DeviceState>> devices, RouterHooks hooks = {});
 
     // Handles one datagram. Returns a reply to send back to the sender, if any.
-    std::optional<std::string> HandleDatagram(std::string_view data, Clock::time_point now);
+    // `drives` (optional) is set when the datagram drove a device (pose, input,
+    // skeleton, gaze or microphone), unlike one that only asked something.
+    std::optional<std::string> HandleDatagram(std::string_view data, Clock::time_point now, bool* drives = nullptr);
 
     // Looks up a device by id, or by tracker role short name ("waist").
     DeviceState* Find(std::string_view id) const;
@@ -124,6 +132,7 @@ private:
     std::map<std::string, SourceSeen> sources_;
     std::atomic<uint64_t> rejected_{0};
     std::unique_ptr<VmtState> vmt_ = std::make_unique<VmtState>();
+    std::unique_ptr<Recorder> recorder_;
     Clock::time_point vmt_last_alive_{};
 };
 

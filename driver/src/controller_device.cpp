@@ -203,7 +203,7 @@ void ControllerDevice::OnActivate(vr::PropertyContainerHandle_t c) {
             Log(LogLevel::Warning, "%s: CreateSkeletonComponent failed (%d)", Id().c_str(), err);
             skeleton_ = vr::k_ulInvalidInputComponentHandle;
         } else {
-            PushSkeleton(reference_bones_.data()); // SteamVR expects data right away
+            PushSkeleton(reference_bones_.data(), "buttons"); // SteamVR expects data right away
         }
     }
 }
@@ -216,6 +216,7 @@ void ControllerDevice::OnDeactivate() {
 
 void ControllerDevice::SetComponent(const std::string& canonical, float value) {
     values_[canonical] = value;
+    NoteGiven(canonical, value);
     auto it = components_.find(canonical);
     if (it == components_.end() || it->second.handle == vr::k_ulInvalidInputComponentHandle) return;
     if (it->second.boolean) {
@@ -270,21 +271,23 @@ void ControllerDevice::OnInput(const std::string& name, float value) {
     if (canonical == "trigger" || canonical == "grip") DeriveClickTouch(canonical, value);
 }
 
-void ControllerDevice::PushSkeleton(const vr::VRBoneTransform_t* bones) {
+void ControllerDevice::PushSkeleton(const vr::VRBoneTransform_t* bones, const char* source) {
     if (skeleton_ == vr::k_ulInvalidInputComponentHandle) return;
+    NoteBones(bones, source);
     auto* in = vr::VRDriverInput();
     in->UpdateSkeletonComponent(skeleton_, vr::VRSkeletalMotionRange_WithController, bones, 31);
     in->UpdateSkeletonComponent(skeleton_, vr::VRSkeletalMotionRange_WithoutController, bones, 31);
 }
 
-void ControllerDevice::UpdateSkeletonFromCurls(const std::array<float, 5>& curl, const std::array<float, 5>& splay) {
+void ControllerDevice::UpdateSkeletonFromCurls(const std::array<float, 5>& curl, const std::array<float, 5>& splay,
+                                               const char* source) {
     MyHandSimulation sim;
     std::array<vr::VRBoneTransform_t, 31> bones{};
     sim.ComputeSkeletonTransforms(left_ ? vr::TrackedControllerRole_LeftHand : vr::TrackedControllerRole_RightHand,
                                   MyFingerCurls{curl[0], curl[1], curl[2], curl[3], curl[4]},
                                   MyFingerSplays{splay[0], splay[1], splay[2], splay[3], splay[4]}, bones.data());
     SanitizeBones(bones.data(), bones.size());
-    PushSkeleton(bones.data());
+    PushSkeleton(bones.data(), source);
 }
 
 void ControllerDevice::OnSkeleton(const SkeletonMessage& m) {
@@ -302,10 +305,10 @@ void ControllerDevice::OnSkeleton(const SkeletonMessage& m) {
                 bones[i].position = {{static_cast<float>(p.x), static_cast<float>(p.y), static_cast<float>(p.z), 1.0f}};
             }
         }
-        PushSkeleton(bones.data());
+        PushSkeleton(bones.data(), "bones");
         return;
     }
-    if (m.curl) UpdateSkeletonFromCurls(*m.curl, m.splay.value_or(std::array<float, 5>{}));
+    if (m.curl) UpdateSkeletonFromCurls(*m.curl, m.splay.value_or(std::array<float, 5>{}), "curl");
 }
 
 void ControllerDevice::OnTick(Clock::time_point now) {
@@ -325,7 +328,7 @@ void ControllerDevice::OnTick(Clock::time_point now) {
     if (derived_pushed_at_ && curl == derived_curl_ && now - *derived_pushed_at_ < std::chrono::seconds(1)) return;
     derived_curl_ = curl;
     derived_pushed_at_ = now;
-    UpdateSkeletonFromCurls(curl, {});
+    UpdateSkeletonFromCurls(curl, {}, "buttons");
 }
 
 std::optional<HapticEvent> ControllerDevice::MatchHaptic(const vr::VREvent_t& event) const {

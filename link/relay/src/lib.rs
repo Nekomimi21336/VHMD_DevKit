@@ -383,7 +383,8 @@ pub fn start(cfg: Config) -> Result<u16, String> {
             loop {
                 if let Ok((n, _)) = driver_udp.recv_from(&mut buf) {
                     let d = &buf[..n];
-                    if contains(d, b"\"haptic\"") {
+                    // The type, not just the word: an "inspect" reply has a "haptic" field.
+                    if contains(d, b"\"type\":\"haptic\"") {
                         c.st.haptics.fetch_add(1, Ordering::Relaxed);
                         c.to_headset(d);
                     } else if contains(d, b"\"seq\"") {

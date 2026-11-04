@@ -2,6 +2,8 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <sstream>
@@ -134,6 +136,74 @@ TEST(router_hand_mode_op) {
     CHECK(bad["ok"] == false && bad["mode"] == "hands");
     auto status = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"list"})", now));
     CHECK(status["hand_mode"] == "hands");
+}
+
+TEST(router_inspect_op_and_who_drives) {
+    DriverConfig cfg = DefaultConfig();
+    std::vector<std::shared_ptr<DeviceState>> states;
+    for (const auto& d : cfg.devices) states.push_back(std::make_shared<DeviceState>(d, cfg));
+    std::string asked;
+    RouterHooks hooks;
+    hooks.inspect = [&](const std::string& id) {
+        asked = id;
+        return std::string(R"([{"serial":"S","given":{"trigger":0.5}}])");
+    };
+    MessageRouter router(cfg, states, hooks);
+    const auto now = Clock::now();
+    bool drives = true;
+    auto r = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"inspect","id":"waist","seq":4})", now, &drives));
+    CHECK(r["ok"] == true && r["id"] == "tracker_0" && r["kind"] == "tracker" && asked == "tracker_0");
+    CHECK(r["devices"][0]["given"]["trigger"] == 0.5);
+    CHECK(!drives);   // asking does not drive anything (haptics stay with the pose sender)
+    auto bad = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"inspect","id":"nope"})", now));
+    CHECK(bad["ok"] == false);
+    router.HandleDatagram(R"({"type":"input","id":"left_hand","values":{"trigger":1}})", now, &drives);
+    CHECK(drives);
+    router.HandleDatagram(R"({"type":"config","op":"list"})", now, &drives);
+    CHECK(!drives);
+    MessageRouter none(cfg, states);
+    CHECK(nlohmann::json::parse(*none.HandleDatagram(R"({"type":"config","op":"inspect","id":"hmd"})", now))["ok"] == false);
+}
+
+TEST(router_records_what_drives_devices) {
+    DriverConfig cfg = DefaultConfig();
+    std::vector<std::shared_ptr<DeviceState>> states;
+    for (const auto& d : cfg.devices) states.push_back(std::make_shared<DeviceState>(d, cfg));
+    const auto dir = std::filesystem::temp_directory_path() /
+                     ("vhmd_rec_test_" + std::to_string(Clock::now().time_since_epoch().count()));
+    RouterHooks hooks;
+    hooks.recordings_dir = dir;
+    MessageRouter router(cfg, states, hooks);
+    const auto t0 = Clock::now();
+    auto bad = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"record","mode":"start","name":"../x"})", t0));
+    CHECK(bad["ok"] == false);   // no paths, only names
+    auto start = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"record","mode":"start","name":"walk"})", t0));
+    CHECK(start["ok"] == true && start["record"]["recording"] == true);
+    router.HandleDatagram("[{\"type\":\"pose\",\"id\":\"hmd\",\"pos\":[0,1.6,0],\"rot\":[1,0,0,0]},\n"
+                          "{\"type\":\"input\",\"id\":\"left_hand\",\"values\":{\"trigger\":1}}]", t0 + 100ms);
+    router.HandleDatagram(R"({"type":"config","op":"list"})", t0 + 150ms);                       // asks, not recorded
+    router.HandleDatagram(R"({"type":"mic","seq":1,"pcm":""})", t0 + 160ms);                     // sound, not recorded
+    router.HandleDatagram(R"({"type":"pose","id":"nobody","pos":[0,0,0],"rot":[1,0,0,0]})", t0 + 170ms);   // rejected
+    router.HandleDatagram(R"({"type":"pose","id":"left_foot","pos":[0,0.1,0],"rot":[1,0,0,0]})", t0 + 250ms);
+    auto again = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"record","mode":"start"})", t0));
+    CHECK(again["ok"] == false);   // one at a time
+    auto stop = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"record","mode":"stop"})", t0 + 300ms));
+    CHECK(stop["ok"] == true && stop["record"]["recording"] == false && stop["record"]["lines"] == 2);
+    std::ifstream f(dir / "walk.jsonl");
+    std::string line1, line2, extra;
+    std::getline(f, line1);
+    std::getline(f, line2);
+    CHECK(!std::getline(f, extra));
+    f.close();   // Windows: an open file keeps its folder from being removed
+    const auto j1 = nlohmann::json::parse(line1), j2 = nlohmann::json::parse(line2);
+    CHECK_NEAR(j1["t"].get<double>(), 0.1, 1e-6);
+    CHECK(j1["d"].is_array() && j1["d"][1]["values"]["trigger"] == 1);
+    CHECK_NEAR(j2["t"].get<double>(), 0.25, 1e-6);
+    CHECK(j2["d"]["id"] == "left_foot");
+    auto exists = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"record","mode":"start","name":"walk"})", t0));
+    CHECK(exists["ok"] == false);   // never overwrites
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
 }
 
 TEST(config_preview_auto_start_and_op) {

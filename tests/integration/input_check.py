@@ -111,22 +111,44 @@ def main() -> int:
                 got, st = system.getControllerState(idx[dev])
                 failed.append(f"{desc} [got ok={got} pressed={st.ulButtonPressed:#x} "
                               f"axes={[(round(a.x, 3), round(a.y, 3)) for a in st.rAxis[:3]]}]")
-        for dev in ("left_hand", "right_hand"):
-            client.inputs(dev, {"trigger": 0, "grip": 0, "joystick_x": 0, "joystick_y": 0, "a": 0, "b": 0, "x": 0, "y": 0})
         results.append({"name": f"controller inputs visible to apps ({passed}/{len(CASES)})", "ok": not failed,
                         "detail": "failed: " + "; ".join(failed) if failed else ""})
 
-        # Haptics: a legacy pulse from the app must come back to the UDP client.
+        # "inspect": what the driver handed SteamVR, derived values included.
+        client.inputs("right_hand", {"trigger": 0.9, "grip": 0})
+        time.sleep(0.1)
+        r = client.inspect("right_hand")
+        d = next((x for x in r["devices"] if x["active"]), r["devices"][0])
+        given, received = d["given"], d["received"]
+        sk = d.get("skeleton") or {}
+        ok = (abs(given.get("trigger", 0) - 0.9) < 1e-3 and given.get("trigger_click") == 1
+              and received.get("secondary") == 1 and given.get("b") == 1
+              and sk.get("source") == "buttons" and len(sk.get("bones", [])) == 31)
+        results.append({"name": "inspect: inputs as SteamVR got them (derived click, alias), button-made hand",
+                        "ok": ok, "detail": f"given trigger={given.get('trigger')} trigger_click={given.get('trigger_click')} "
+                                            f"b={given.get('b')}; received secondary={received.get('secondary')}; "
+                                            f"skeleton {sk.get('source')} {len(sk.get('bones', []))} bones"})
+        for dev in ("left_hand", "right_hand"):
+            client.inputs(dev, {"trigger": 0, "grip": 0, "joystick_x": 0, "joystick_y": 0, "a": 0, "b": 0, "x": 0, "y": 0})
+
+        # Haptics: a legacy pulse from the app must come back to the UDP client
+        # (the one that drives the controller), even after another socket asked
+        # for status (a monitoring tool must not take the haptics away).
         client.poll_haptics()
-        client.ping()  # makes this socket the driver's most recent client
+        with VHMDClient(port=args.port, timeout=2.0) as watcher:
+            watcher.status()
+            watcher.inspect("right_hand")
         for _ in range(5):
             system.triggerHapticPulse(idx["right_hand"], 0, 3000)
             for _ in range(4):
                 pump()
         events = client.poll_haptics(timeout=0.5)
-        results.append({"name": "haptic pulse forwarded to UDP client",
+        results.append({"name": "haptic pulse forwarded to the UDP client that drives the controller",
                         "ok": any(e.get("id") == "right_hand" for e in events),
                         "detail": f"{len(events)} haptic events, first: {events[0] if events else None}"})
+        hp = next((x.get("haptic") for x in client.inspect("right_hand")["devices"] if x.get("haptic")), None)
+        results.append({"name": "inspect: haptic requests counted", "ok": bool(hp) and hp["count"] >= 1,
+                        "detail": str(hp)})
 
         # HMD proximity sensor through the legacy API (k_EButton_ProximitySensor,
         # mapped by legacy_bindings_vhmd_hmd.json). Apps that set an action

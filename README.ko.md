@@ -163,6 +163,16 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 - 좌표계는 SteamVR 기준(오른손 좌표계, +Y 위, -Z 전방, 미터), 회전은 `[w, x, y, z]`.
 - 잘못된 값(NaN·범위 밖·타입 불일치 등)은 폐기되며, 드라이버는 멈추지 않습니다.
 - 전체 사양: [docs/ko/protocol.md](docs/ko/protocol.md)
+- C#(.NET·Unity)에서는 [clients/csharp](clients/csharp/README.md)의 `VhmdClient.cs`(파일 1개, 설명은 일본어).
+
+### 개발용 도구
+
+| 도구 | 사용법 | 내용 |
+|---|---|---|
+| 입력과 손 확인 | `python -m vhmd_client.inspector`(PC 앱의 개발자용 표시에도 있음) | 디바이스마다 SteamVR에 넘긴 버튼·스틱·트리거 값, 손가락 뼈, 앱의 진동 요청, 자세, 시선을 초당 10회 표시. 송신자와 상관없음 |
+| 기록과 재생 | `python -m vhmd_client.replay record walk` → `play walk --take` | 드라이버가 디바이스를 움직인 데이터를 시각과 함께 기록하고 같은 간격으로 다시 보낸다. 같은 동작을 몇 번이든 시험할 수 있음 |
+| 디바이스 데이터 읽기 | `python clients/python/examples/read_devices.py --csv out.csv` | 자신의 프로그램에서 자세와 입력을 읽는 예(`VHMDClient.inspect`) |
+| 통계 그래프 | PC 앱의 개발자용 표시 → "통계 그래프" | VHMD Link의 최근 5분간 화면 수·비트레이트·시간과 CSV |
 
 ## 키보드와 마우스로 조작하기(Windows)
 
@@ -282,8 +292,8 @@ FPS 조작 도구의 "Pico 로 전환" / "VHMD 로 전환" 버튼으로도 같�
 
 | 종류 | 명령 | 내용 |
 |---|---|---|
-| C++ 단위 테스트 | `ctest --preset vs2022-release` | 69건(파서, 좌표 변환, 설정, 타임아웃, 라우터, UDP, 라벨 생성, VMT 호환 OSC, 보정, 손의 본, 마이크 버퍼, 영상 UDP 수신) |
-| Python 단위 테스트 | `python -m pytest tests/python` | 52건(클라이언트, 프리뷰 읽기, VHMD Link의 PC 측) |
+| C++ 단위 테스트 | `ctest --preset vs2022-release` | 71건(파서, 좌표 변환, 설정, 타임아웃, 라우터, UDP, 라벨 생성, VMT 호환 OSC, 보정, 손의 본, 마이크 버퍼, 영상 UDP 수신, 입력 확인, 기록) |
+| Python 단위 테스트 | `python -m pytest tests/python` | 62건(클라이언트, 프리뷰 읽기, VHMD Link의 PC 측, 재생) |
 | VHMD Link 네이티브 부분 | `cargo test`(`link/`에서) | 16건(PC ↔ 헤드셋 간 규약, 오류 정정, 버튼 할당) |
 | Linux 캡처 셀프 테스트 | `ctest`(Linux) | 실제 Vulkan으로 공유 이미지 → 공유 메모리를 확인(SteamVR 불필요) |
 | Linux 실제 장비 확인 | `python3 tests/integration/linux_check.py` | 다이렉트 모드의 표시 경로 + 통합 테스트, 리포트 출력 |

@@ -163,6 +163,16 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 - 坐标系遵循 SteamVR(右手系、+Y 向上、-Z 向前、单位米)，旋转为 `[w, x, y, z]`。
 - 非法值(NaN、超出范围、类型错误等)会被丢弃，驱动不会停止。
 - 完整规范：[docs/zh-CN/protocol.md](docs/zh-CN/protocol.md)
+- 从 C#(.NET、Unity)使用:[clients/csharp](clients/csharp/README.md) 中的 `VhmdClient.cs`(一个文件，说明为日语)。
+
+### 开发用工具
+
+| 工具 | 用法 | 内容 |
+|---|---|---|
+| 输入与手部确认 | `python -m vhmd_client.inspector`(PC 应用的开发者视图中也有) | 每个设备每秒 10 次显示交给 SteamVR 的按钮・摇杆・扳机值、手指骨骼、应用请求的振动、姿态和视线。不论发送端是谁 |
+| 录制与回放 | `python -m vhmd_client.replay record walk` → `play walk --take` | 驱动按时间记录驱动设备的数据，并以相同间隔重新发送，可反复测试同一动作 |
+| 读取设备数据 | `python clients/python/examples/read_devices.py --csv out.csv` | 在自己的程序中读取姿态和输入的示例(`VHMDClient.inspect`) |
+| 统计图表 | PC 应用的开发者视图 →“统计图表” | VHMD Link 最近 5 分钟的画面数、码率、时间，并可导出 CSV |
 
 ## 用键盘和鼠标操作(Windows)
 
@@ -282,8 +292,8 @@ FPS 操作工具中的"切换到 Pico"/"切换到 VHMD"按钮作用相同(切换
 
 | 类型 | 命令 | 内容 |
 |---|---|---|
-| C++ 单元测试 | `ctest --preset vs2022-release` | 69 项(解析器、坐标变换、配置、超时、路由器、UDP、标签生成、VMT 兼容 OSC、校正、手部骨骼、麦克风缓冲区、画面的 UDP 接收) |
-| Python 单元测试 | `python -m pytest tests/python` | 52 项(客户端、预览读取、VHMD Link 的 PC 端) |
+| C++ 单元测试 | `ctest --preset vs2022-release` | 71 项(解析器、坐标变换、配置、超时、路由器、UDP、标签生成、VMT 兼容 OSC、校正、手部骨骼、麦克风缓冲区、画面的 UDP 接收、输入检查、录制) |
+| Python 单元测试 | `python -m pytest tests/python` | 62 项(客户端、预览读取、VHMD Link 的 PC 端、回放) |
 | VHMD Link 的原生部分 | `cargo test`(在 `link/` 中) | 16 项(PC ↔ 头显的约定、纠错、按键分配) |
 | Linux 捕获自测 | `ctest`(Linux) | 用真实 Vulkan 确认共享图像 → 共享内存(无需 SteamVR) |
 | Linux 实机确认 | `python3 tests/integration/linux_check.py` | 直接模式的显示路径 + 集成测试，输出报告 |

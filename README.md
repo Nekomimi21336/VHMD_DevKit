@@ -163,6 +163,16 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 - 座標系は SteamVR 準拠(右手系、+Y 上、-Z 前方、メートル)、回転は `[w, x, y, z]`。
 - 不正な値(NaN・範囲外・型違いなど)は破棄され、ドライバは止まりません。
 - 全仕様: [docs/protocol.md](docs/protocol.md)
+- C#(.NET・Unity)からは [clients/csharp](clients/csharp/README.md) の `VhmdClient.cs`(1 ファイル)。
+
+### 開発のための道具
+
+| 道具 | 使い方 | 中身 |
+|---|---|---|
+| 入力と手の確認 | `python -m vhmd_client.inspector`(PC のアプリの開発者向けの表示にもある) | 機器ごとに、SteamVR に渡したボタン・スティック・トリガーの値、指の骨の形、アプリからの振動、姿勢、視線を 10 回/秒で表示。送り手を問わない |
+| 記録と再生 | `python -m vhmd_client.replay record walk` → `play walk --take` | ドライバが機器を動かしたデータを時刻つきで記録し、同じ間隔で送り直す。同じ動きを何度でも試せる |
+| 機器のデータを読む | `python clients/python/examples/read_devices.py --csv out.csv` | 姿勢と入力を自分のプログラムで読む例(`VHMDClient.inspect`) |
+| 統計のグラフ | PC のアプリの開発者向けの表示 →「統計のグラフ」 | VHMD Link の画像の数・ビットレート・時間の直近 5 分と CSV |
 
 ## キーボードとマウスで操作する(Windows)
 
@@ -282,8 +292,8 @@ FPS 操作ツールの「Pico に切り替え」「VHMD に切り替え」ボタ
 
 | 種類 | コマンド | 内容 |
 |---|---|---|
-| C++ 単体テスト | `ctest --preset vs2022-release` | 69 件(パーサ、座標変換、設定、タイムアウト、ルーター、UDP、ラベル生成、VMT 互換 OSC、補正、手の骨、マイクのバッファ、映像の UDP 受信) |
-| Python 単体テスト | `python -m pytest tests/python` | 52 件(クライアント、プレビュー読み取り、VHMD Link の PC 側) |
+| C++ 単体テスト | `ctest --preset vs2022-release` | 71 件(パーサ、座標変換、設定、タイムアウト、ルーター、UDP、ラベル生成、VMT 互換 OSC、補正、手の骨、マイクのバッファ、映像の UDP 受信、入力の確認、記録) |
+| Python 単体テスト | `python -m pytest tests/python` | 62 件(クライアント、プレビュー読み取り、VHMD Link の PC 側、記録の再生) |
 | VHMD Link のネイティブ部分 | `cargo test`(`link/` で) | 16 件(PC ↔ ヘッドセットの取り決め、誤り訂正、ボタンの割り当て) |
 | Linux キャプチャセルフテスト | `ctest`(Linux) | 実際の Vulkan で共有イメージ → 共有メモリを確認(SteamVR 不要) |
 | Linux 実機確認 | `python3 tests/integration/linux_check.py` | ダイレクトモードの表示経路 + 統合テスト、レポート出力 |

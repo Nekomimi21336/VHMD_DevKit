@@ -7,6 +7,7 @@ add_library(vhmd_core STATIC
   src/config/driver_config.cpp
   src/state/device_state.cpp
   src/state/router.cpp
+  src/state/recorder.cpp
   src/net/udp_socket.cpp
   src/net/udp_receiver.cpp
   src/util/log.cpp

@@ -2,8 +2,10 @@
 // and the SteamVR device index; subclasses add properties and components.
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -11,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include <nlohmann/json.hpp>
 #include <openvr_driver.h>
 
 #include "state/device_state.h"
@@ -100,7 +103,18 @@ public:
     using ParentLookup = std::function<bool(const std::string& serial, Vec3& pos, Quat& rot)>;
     static void SetParentLookup(ParentLookup lookup);
 
+    // What the device last received and what it handed SteamVR (config op
+    // "inspect"). Safe from any thread.
+    nlohmann::json InspectJson(Clock::time_point now) const;
+    // An app asked this device to vibrate (RunFrame).
+    void NoteHaptic(float duration_s, float frequency, float amplitude);
+
 protected:
+    // Subclasses note what they hand SteamVR, for InspectJson.
+    void NoteGiven(const std::string& name, float value);
+    // 31 bones as SteamVR got them; source: "bones" (sent), "curl" (sent curls) or "buttons" (derived).
+    void NoteBones(const vr::VRBoneTransform_t* bones, const char* source);
+
     DeviceState& State() { return *state_; }
     // This device's property container, or invalid before Activate().
     vr::PropertyContainerHandle_t Container() const;
@@ -127,6 +141,19 @@ private:
     vr::DriverPose_t last_pose_{};
     Clock::time_point last_publish_{};
     bool published_active_ = true;
+
+    // For InspectJson; its own lock, taken after mu_ when both are held.
+    mutable std::mutex inspect_mu_;
+    std::map<std::string, float> received_;   // as the client named them
+    std::map<std::string, float> given_;      // SteamVR component values, derived ones included
+    std::array<vr::VRBoneTransform_t, 31> bones_{};
+    std::string bones_source_;
+    Clock::time_point bones_at_{};
+    uint64_t haptics_ = 0;
+    float haptic_[3] = {0, 0, 0};   // duration, frequency, amplitude
+    Clock::time_point haptic_at_{};
+    std::optional<GazeMessage> gaze_;
+    Clock::time_point gaze_at_{};
 };
 
 // Helpers shared by device implementations.

@@ -184,6 +184,8 @@ HMD：
 | `refresh_rate` | `hz`(1〜240，省略时仅返回当前值) | 更改虚拟显示器的帧率(直接模式，SteamVR 不会停止)。`{"ok":true,"hz":30}` |
 | `control` | `source`(发送端名称,`""` 表示任何人。省略时仅返回当前状态)、`devices`(省略时为全部设备) | 决定由哪个发送端驱动设备(SteamVR 不会停止)。没有控制权的发送端的消息会被丢弃并计数。控制权转移的设备会释放前一个发送端按下的输入(佩戴传感器、电池除外),停止基于速度的预测,并给新的发送端超时宽限。响应: `control`(`owner`、按设备的 `devices`、按发送端的 `sources`: `age_s`・`accepted`・`ignored`)和 `poses`(各设备最新的位置・旋转,接手的一方可以从当前位置继续)。`status` 中也有 `control` |
 | `preview_window` | `mode`(`on` / `off`) | 在 Windows 直接模式(`display.mode = direct`)下显示 / 隐藏预览窗口(HMD 画面)。隐藏期间不进行任何处理 |
+| `inspect` | `id`(设备 ID 或追踪器角色) | 该设备最后收到的内容，以及交给 SteamVR 的内容。`devices` 中每个 SteamVR 设备一项(控制器与手部组合为两项):`serial`、`active`(在 SteamVR 中是否已连接)、`index`、`pose`(`pos`、`rot`、`valid`、`connected`)、`received`(按发送时的名称记录的输入)、`given`(交给 SteamVR 输入的值，包括由扳机生成的点击、修正后的别名和电池)、`skeleton`(31 根骨骼 `[x, y, z, qw, qx, qy, qz]` 及 `source`:`bones` 发送的骨骼 / `curl` 由发送的弯曲值生成 / `buttons` 由按钮生成)、`haptic`(应用请求振动的次数及最后一次的值)、`gaze`(HMD)。PC 应用的“输入与手部确认”和 `python -m vhmd_client.inspector` 使用它 |
+| `record` | `mode`(`start` / `stop`，省略时仅返回状态)、`name`(字母数字及 `-` `_` `.`，省略时按时间命名) | 将驱动了设备的 JSON 数据报连同到达时间逐行记录(`{"t":秒,"d":数据报}`)。只保存到用户 VHMD 数据文件夹的 `recordings/<name>.jsonl`(不能指定路径，不覆盖同名文件，达到 512 MB 停止)。不记录查询、麦克风声音和 VMT 的 OSC。响应和状态在 `record` 中(`recording`、`path`、`seconds`、`lines`、`bytes`、`folder`)。回放: `python -m vhmd_client.replay play <name>` |
 | (`status` 中的 `perf`) | | 驱动自身的负载：`update_thread_cpu_pct`、`receive_thread_cpu_pct`(占单核的 %，每秒更新)、`update_tick_us_avg` / `update_tick_us_max`(每次更新的处理时间) |
 
 `status` 的 `display`：`mode`(`window` / `direct`)、`width`、`height`、`refresh_hz`。在直接模式(Linux)下还包含 `swap_sets_created`、`swap_sets_alive`、`layers_submitted`、`presents`、`vsyncs`、`eye_texture`(`width`、`height`、`vk_format`)、`preview`(`state`、`submitted`、`written`、`active`)。
@@ -192,7 +194,7 @@ HMD：
 
 ### 驱动 → 客户端：`haptic`
 
-当应用请求振动时，会发送到**最后一个发来数据包的地址**。
+当应用请求振动时，会发送到**最后一个发来驱动设备的数据(`pose`、`input`、`skeleton`、`gaze`、`mic`)的地址**。只发送 `config` 查询的工具(状态显示、`inspect`)不会改变振动的发送目标。
 
 ```json
 { "type": "haptic", "id": "right_hand", "duration": 0.005, "frequency": 100.0, "amplitude": 0.75 }

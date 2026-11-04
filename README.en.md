@@ -163,6 +163,16 @@ From other languages, just send JSON over UDP.
 - The coordinate system follows SteamVR (right-handed, +Y up, -Z forward, meters); rotations are `[w, x, y, z]`.
 - Invalid values (NaN, out of range, wrong type, etc.) are discarded, and the driver keeps running.
 - Full specification: [docs/en/protocol.md](docs/en/protocol.md)
+- From C# (.NET, Unity): `VhmdClient.cs` (one file) in [clients/csharp](clients/csharp/README.md) (explained in Japanese).
+
+### Tools for development
+
+| Tool | How | What it does |
+|---|---|---|
+| Inputs and hands | `python -m vhmd_client.inspector` (also in the PC app's developer view) | Per device, ten times a second: the button, stick and trigger values SteamVR got, the finger bones, vibrations apps ask for, the pose and the gaze. Whoever sends the data |
+| Record and replay | `python -m vhmd_client.replay record walk` → `play walk --take` | The driver records what moved the devices, with its timing, and sends it again at the same pace: the same motion as often as needed |
+| Read device data | `python clients/python/examples/read_devices.py --csv out.csv` | An example of reading poses and inputs from your own program (`VHMDClient.inspect`) |
+| Statistics over time | PC app, developer view → "Statistics over time" | The last 5 minutes of VHMD Link's pictures, bitrate and times, and a CSV |
 
 ## Keyboard and mouse control (Windows)
 
@@ -282,8 +292,8 @@ The FPS control tool's "Switch to Pico" / "Switch to VHMD" button does the same 
 
 | Kind | Command | Contents |
 |---|---|---|
-| C++ unit tests | `ctest --preset vs2022-release` | 69 tests (parser, coordinate conversion, config, timeouts, router, UDP, label generation, VMT-compatible OSC, offsets, hand bones, microphone buffer, video UDP receive) |
-| Python unit tests | `python -m pytest tests/python` | 52 tests (client, preview reader, VHMD Link PC side) |
+| C++ unit tests | `ctest --preset vs2022-release` | 71 tests (parser, coordinate conversion, config, timeouts, router, UDP, label generation, VMT-compatible OSC, offsets, hand bones, microphone buffer, video UDP receive, input inspection, recording) |
+| Python unit tests | `python -m pytest tests/python` | 62 tests (client, preview reader, VHMD Link PC side, replay) |
 | VHMD Link native part | `cargo test` (in `link/`) | 16 tests (PC ↔ headset protocol, error correction, button mapping) |
 | Linux capture self-test | `ctest` (Linux) | Checks shared image → shared memory with real Vulkan (no SteamVR needed) |
 | Linux on-hardware check | `python3 tests/integration/linux_check.py` | Direct-mode display path + integration tests, writes a report |

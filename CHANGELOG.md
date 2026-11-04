@@ -6,6 +6,17 @@
 - **使うマイクを選ぶ**: ヘッドセットにマイクが複数あるとき(USB-C や Bluetooth のマイク)、PC のアプリの「使うマイク」で選べる。ヘッドセットのアプリがマイクの一覧(`headset` メッセージの `mics`、録音中は `mic_using`)を送り、PC が選んだもの(`status` の `mic_input`)で録音し直す。Bluetooth のヘッドセットは選んでいるあいだだけ通話用の機器にする。`headset_bridge --mic-input`。ヘッドセットの代役 `vhmd-link-sim` も一覧を送る。
 - **VHMD Link の PC のアプリを Linux で**(`python3 -m vhmd_client.link`): 画面、ヘッドセットとの接続、SteamVR の状態・起動・停止・モードの切り替え(`mode.py` が Linux の SteamVR の場所と `/proc` を使う)、自動起動(`~/.config/autostart`)、通知領域(`pystray` があれば)。設定は `~/.local/state/vhmd`。映像はダイレクトモードのプレビューを ffmpeg で(`--encoder auto`: Linux は NVENC か x264)、PC の音は `parec` で送る。キーボード・マウス操作と PICO Connect の切り替えは Windows のみ。
 - **マイクを Linux でも**: ドライバが `libpulse-simple` を実行時に読み込み、PulseAudio / PipeWire のシンクへ再生する(`driver/src/linux/mic_output.cpp`)。PC のアプリが `pactl` でシンク `vhmd_mic` と入力 `VHMD-Microphone` を作る(`linux_audio.py`)。
+- **入力と手の確認**(`config` の `inspect`、`VHMDClient.inspect`、`python -m vhmd_client.inspector`、PC のアプリの開発者向けの表示の「入力と手の確認」): 機器ごとに、SteamVR に渡したボタン・スティック・トリガーの値(トリガーから作ったクリックなども)、届いたままの値、指の骨の形(上から・横から、骨がどこから来たか)、アプリからの振動の要求、姿勢、視線を 10 回/秒で表示する。送り手を問わない(VHMD Link、スクリプト、VMT)。
+- **記録と再生**(`config` の `record`、`python -m vhmd_client.replay record|play|list`、PC のアプリの「記録」「再生」): ドライバが、機器を動かした JSON のデータグラムを届いた時刻つきで記録し(ユーザーの VHMD のデータフォルダーの `recordings/`)、同じ間隔で送り直す。再生のあいだはその機器の操作権を持ち(`--take`)、終わると元に戻す。速さ(`--speed`)と繰り返し(`--loop`)。
+- **統計のグラフと CSV**(PC のアプリの「統計のグラフ」): 直近 5 分の画像の数、ビットレート、復号・表示までの待ち・中継の時間を線グラフで表示し、CSV に書き出す(`stats/`)。
+- **ヘッドセットの中の統計を消せる**(開発版): PC のアプリの「ヘッドセットの中に統計を表示する」、`headset_bridge --no-headset-stats`、`status` の `stats`。
+- **C# のクライアント**(`clients/csharp`): 1 ファイルの `VhmdClient.cs`(.NET と Unity、パッケージ不要)、.NET の例、Unity のコンポーネント `VhmdPoseSender`。
+- **機器のデータを自分のプログラムで読む例**(`clients/python/examples/read_devices.py`): `inspect` で姿勢と入力を読み、表示または CSV に書く。
+- PC のアプリが、SteamVR のセーフモードで VHMD が止められていることを知らせ、「VHMD を有効に戻す」で直す。SteamVR を閉じても起動し直すソフト(SnapVR、OpenVR Advanced Settings)が動いているときは、切り替えの途中でそう伝える。90 Hz を選んでもヘッドセットが 72 Hz のままなら、Pico 本体の設定を案内する。
+
+### 修正
+- アプリの振動が、状態を聞いただけのツール(PC のアプリの外の確認ツールなど)に送られることがあった: ドライバは、機器を動かすデータを送ってきた相手にだけ振動を送る。
+- 中継(`vhmdlinkrelay`、Python の `headset_bridge`)が、`"haptic"` という語を含むだけの応答も振動としてヘッドセットに送っていた: 種類(`"type":"haptic"`)で見分ける。
 
 ### 変更
 - 画面の見た目(色、スタイル、フォント、テーマと言語の検出)を `ui_style.py` に分け、Linux のフォント・GNOME のダークモード・`LANG` に対応。
@@ -13,6 +24,7 @@
 - `driver/src/windows/mic_output.h` を `driver/src/mic_output.h` に移した(Windows と Linux の共通)。
 
 ### テスト
+- C++: `inspect` と振動の送り先、記録(単体テスト 71 件)。Python: `inspect`、骨の位置の計算、記録の読み込み・送り直しの間隔(62 件)。統合テストに `inspect` と「状態を聞いたツールが振動を奪わない」を追加。
 - Python: マイクの一覧、Linux の保存場所、`vhmd_mic` の作成、エンコーダーの選択(56 件)。WSL の Ubuntu 24.04 で、PC のアプリと `vhmd-link-sim`、Rust の単体テスト 16 件、Linux のマイク再生を確認。
 
 ## v0.6.0(2026-11-04)

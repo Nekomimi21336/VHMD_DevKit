@@ -96,6 +96,7 @@ class BridgeOptions:
     mic_monitor: bool = False     # also into the default output, to hear oneself through the PC
     mic_input: str = ""           # which of the headset's microphones (a key from mics()), "" = the headset's choice
     offsets: Dict[str, dict] = field(default_factory=dict)   # by device id, see offsets.py
+    headset_stats: bool = True    # Dev edition: the statistics shown in the headset
 
 
 class Stats:
@@ -612,7 +613,7 @@ class Bridge:
                 data, _ = self._udp.recvfrom(65536)
             except OSError:
                 continue
-            if b'"haptic"' in data:
+            if b'"type":"haptic"' in data:   # not a reply that mentions haptics ("inspect")
                 self.link.send(data)
             elif b'"seq"' in data:
                 self._on_reply(data)
@@ -727,7 +728,7 @@ class Bridge:
                 status = {"type": "status", "pc": platform.node(), **self.pc_state, "predict": self.o.predict,
                           "body": self.o.body_tracking, "wear": self.o.wear_detect, "mic": self.o.mic,
                           "mic_input": self.o.mic_input,
-                          "hands": self.o.hand_tracking}
+                          "hands": self.o.hand_tracking, "stats": self.o.headset_stats}
                 if self.o.refresh > 0:
                     status["refresh"] = self.o.refresh
                 self.link.send(json.dumps(status, separators=(",", ":")).encode())
@@ -815,6 +816,8 @@ def main() -> None:
                     help="which of the headset's microphones, as listed in the log (default: the headset's choice)")
     ap.add_argument("--no-wear-detect", action="store_true",
                     help="SteamVR always takes the headset as worn: no standby, video goes on when it is put down")
+    ap.add_argument("--no-headset-stats", action="store_true",
+                    help="Dev edition: no statistics in the headset (screenshots, recordings)")
     ap.add_argument("--no-sync", action="store_true", help="do not move VHMD's vsync to the headset's display")
     ap.add_argument("--sync-target-ms", type=float, default=0.0,
                     help="how long frames should wait on the headset before shown (default: 0.4 frame)")
@@ -833,7 +836,7 @@ def main() -> None:
         predict=not args.no_predict, eye_scale=args.eye_scale, native=args.native, udp_video=args.udp_video,
         fec=args.fec, foveation=args.foveation, bindings=bound, body_tracking=not args.no_body_tracking,
         wear_detect=not args.no_wear_detect, mic=args.mic, mic_device=args.mic_device, hand_tracking=args.hand_tracking,
-        mic_monitor=args.mic_monitor, mic_input=args.mic_input),
+        mic_monitor=args.mic_monitor, mic_input=args.mic_input, headset_stats=not args.no_headset_stats),
         log=lambda m: print(m, flush=True))
     bridge.start()
     try:

@@ -59,8 +59,8 @@ private:
 
     void SetComponent(const std::string& canonical, float value);
     void DeriveClickTouch(const std::string& axis, float value);
-    void UpdateSkeletonFromCurls(const std::array<float, 5>& curl, const std::array<float, 5>& splay);
-    void PushSkeleton(const vr::VRBoneTransform_t* bones);
+    void UpdateSkeletonFromCurls(const std::array<float, 5>& curl, const std::array<float, 5>& splay, const char* source);
+    void PushSkeleton(const vr::VRBoneTransform_t* bones, const char* source);
 
     ControllerDevice(std::shared_ptr<DeviceState> state, std::string serial);
     void InitReferenceBones();

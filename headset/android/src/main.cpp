@@ -1413,6 +1413,7 @@ struct App {
         bool mic = false;       // send the microphone
         std::string mic_input;  // which one (MicInput::key), "" = Android's choice
         bool hands = false;     // tracked hands take over when the controllers are put down
+        bool stats = true;      // Dev edition: the statistics overlay (off for screenshots and recordings)
         std::chrono::steady_clock::time_point at{};
     } pc;
     std::string shown_control;  // last owner announced in a notice
@@ -2600,7 +2601,7 @@ void UpdatePanels(App& app, bool video, const XrSpaceLocation& head) {
         app.notice_panel.visible = false;
 
     // Dev edition: statistics under the line of sight while the image shows.
-    if (kDev && video) {
+    if (kDev && video && app.pc.stats) {
         std::vector<TextLine> l;
         l.push_back({Fmt(T("映像 %.0f/%.0f fps  表示 %.0f Hz  %.1f Mbit/s  待ち %.1f ms",
                            "Video %.0f/%.0f fps  display %.0f Hz  %.1f Mbit/s  wait %.1f ms"),
@@ -2749,6 +2750,7 @@ void Frame(App& app) {
             app.pc.mic = JsonBool(m, "mic", false);
             if (!JsonString(m, "mic_input", &app.pc.mic_input)) app.pc.mic_input.clear();
             app.pc.hands = JsonBool(m, "hands", false);
+            app.pc.stats = JsonBool(m, "stats", true);   // older PC apps do not say: shown
             std::string name;
             if (JsonString(m, "pc", &name)) {
                 std::lock_guard<std::mutex> l(g_pc_mu);

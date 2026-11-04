@@ -125,6 +125,33 @@ def test_hand_mode(server):
     assert seen[0]["op"] == "hand_mode" and seen[0]["mode"] == "hands"
 
 
+def test_inspect(server):
+    def fake_driver():
+        for reply in ({"ok": True, "id": "left_hand", "devices": [{"serial": "VHMD-CTL-L", "given": {"trigger": 1}}]},
+                      {"ok": False, "error": "unknown device id"}):
+            msg, addr = recv_json(server)
+            server.sendto(json.dumps({"type": "result", "seq": msg["seq"], **reply}).encode(), addr)
+
+    t = threading.Thread(target=fake_driver)
+    t.start()
+    with VHMDClient(port=server.getsockname()[1]) as c:
+        assert c.inspect("left_hand")["devices"][0]["given"]["trigger"] == 1
+        with pytest.raises(RuntimeError):
+            c.inspect("nope")
+    t.join()
+
+
+def test_inspector_bone_positions():
+    from vhmd_client.inspector import bone_positions
+    turn = math3d.from_euler(yaw=90)   # the wrist turns left: the thumb's bones follow it
+    bones = [[0, 0, 0, 1, 0, 0, 0], [0, 0.1, 0, *turn]] + [[0, 0, -0.05, 1, 0, 0, 0]] * 29
+    pos = bone_positions(bones)
+    assert pos[1] == pytest.approx((0, 0.1, 0))
+    assert pos[2] == pytest.approx((-0.05, 0.1, 0), abs=1e-9)   # -Z turned left is -X
+    assert pos[5] == pytest.approx((-0.2, 0.1, 0), abs=1e-9)    # four bones along the thumb
+    assert pos[6] == pytest.approx((-0.05, 0.1, 0), abs=1e-9)   # the index starts at the wrist again
+
+
 def test_request_timeout():
     with VHMDClient(port=9, timeout=0.2) as c:  # nothing listens on the discard port
         assert c.ping() is False

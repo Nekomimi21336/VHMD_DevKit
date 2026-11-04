@@ -383,9 +383,11 @@ void HmdDevice::OnDeactivate() {
 void HmdDevice::OnInput(const std::string& name, float value) {
     if ((name == "system" || name == "/input/system/click") && system_click_ != vr::k_ulInvalidInputComponentHandle) {
         vr::VRDriverInput()->UpdateBooleanComponent(system_click_, value >= 0.5f, 0.0);
+        NoteGiven("system", value >= 0.5f ? 1.0f : 0.0f);
     }
     if ((name == "proximity" || name == "/proximity") && proximity_ != vr::k_ulInvalidInputComponentHandle) {
         vr::VRDriverInput()->UpdateBooleanComponent(proximity_, value >= 0.5f, 0.0);
+        NoteGiven("proximity", value >= 0.5f ? 1.0f : 0.0f);
     }
 }
 

@@ -93,6 +93,14 @@ vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* driver_context) {
                             {"update_tick_us_max", perf_.tick_max_us.load()}};
         return j.dump();
     };
+    hooks.inspect = [this](const std::string& id) {
+        const auto now = Clock::now();
+        nlohmann::json list = nlohmann::json::array();
+        for (const auto& d : devices_) {   // fixed once Init is done
+            if (d->Id() == id) list.push_back(d->InspectJson(now));
+        }
+        return list.dump();
+    };
     hooks.set_hand_mode = [this](const std::string& mode) { return SetHandMode(mode); };
     hooks.hand_mode = [this]() {
         std::lock_guard<std::mutex> lock(hand_mode_mu_);
@@ -366,11 +374,15 @@ void DeviceProvider::SendVmtOutputs(Clock::time_point now) {
 }
 
 void DeviceProvider::OnDatagram(std::string_view data, const Endpoint& from) {
+    bool drives = false;
+    auto reply = router_->HandleDatagram(data, Clock::now(), &drives);
+    // Haptics go to whoever drives the devices: a tool that only asks for
+    // status must not take them away from the sender of the poses.
     {
         std::lock_guard<std::mutex> lock(client_mu_);
-        last_client_ = from;
+        if (drives || !last_client_.valid()) last_client_ = from;
     }
-    if (auto reply = router_->HandleDatagram(data, Clock::now())) receiver_.SendTo(*reply, from);
+    if (reply) receiver_.SendTo(*reply, from);
 }
 
 int DeviceProvider::DeviceIndexFor(const std::string& id) const {
@@ -399,6 +411,7 @@ void DeviceProvider::RunFrame() {
     while (vr::VRServerDriverHost()->PollNextEvent(&event, sizeof(event))) {
         for (auto* c : controllers_) {
             if (auto h = c->MatchHaptic(event)) {
+                c->NoteHaptic(h->duration_s, h->frequency, h->amplitude);
                 Endpoint to;
                 {
                     std::lock_guard<std::mutex> lock(client_mu_);

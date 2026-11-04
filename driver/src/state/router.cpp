@@ -37,7 +37,8 @@ json Reply(const char* type, std::optional<double> seq) {
 MessageRouter::MessageRouter(const DriverConfig& config, std::vector<std::shared_ptr<DeviceState>> devices,
                              RouterHooks hooks)
     : config_(config), devices_(std::move(devices)), hooks_(std::move(hooks)),
-      error_limiter_(config.log_errors_per_second, config.log_errors_per_second) {
+      error_limiter_(config.log_errors_per_second, config.log_errors_per_second),
+      recorder_(std::make_unique<Recorder>(hooks_.recordings_dir)) {
     for (const auto& d : devices_) by_id_[d->Config().id] = d.get();
     // Role aliases ("waist" -> tracker_0) only where unambiguous and not shadowing an id.
     std::map<std::string, int> role_count;
@@ -80,8 +81,9 @@ void MessageRouter::ReportErrors(const std::vector<std::string>& errors) {
     }
 }
 
-std::optional<std::string> MessageRouter::HandleDatagram(std::string_view data, Clock::time_point now) {
+std::optional<std::string> MessageRouter::HandleDatagram(std::string_view data, Clock::time_point now, bool* drives) {
     ++total_packets_;
+    bool drove = false;
     ParseResult parsed;
     if (LooksLikeJson(data)) {
         parsed = ParseJsonPacket(data, config_.limits);
@@ -100,6 +102,7 @@ std::optional<std::string> MessageRouter::HandleDatagram(std::string_view data, 
         }
         if (const auto* mic = std::get_if<MicMessage>(&msg)) {
             if (hooks_.mic) hooks_.mic(*mic);
+            drove = true;
             continue;
         }
         const std::string id = std::visit([](const auto& m) -> std::string {
@@ -117,6 +120,7 @@ std::optional<std::string> MessageRouter::HandleDatagram(std::string_view data, 
             else return m.src;
         }, msg);
         if (!Accept(id, src, now)) continue;   // another sender has control of this device
+        drove = true;
         // On-demand devices join SteamVR when a client first talks to them.
         // The value is buffered first, so the device starts in sync.
         const auto* pose = std::get_if<PoseMessage>(&msg);
@@ -128,6 +132,9 @@ std::optional<std::string> MessageRouter::HandleDatagram(std::string_view data, 
         if (wants_device && dev->Config().on_demand && hooks_.request_add) hooks_.request_add(dev->Config().id);
     }
     ReportErrors(parsed.errors);
+    if (drives) *drives = drove;
+    // VMT's OSC is binary and is not recorded; replays are JSON.
+    if (drove && LooksLikeJson(data)) recorder_->Add(data, now);
     return reply;
 }
 
@@ -374,6 +381,40 @@ std::optional<std::string> MessageRouter::HandleConfig(const ConfigMessage& m, C
             r["ok"] = true;
             r["id"] = dev->Config().id;
             r["offset"] = OffsetJson(dev->Offset());
+        }
+    } else if (m.op == "record") {
+        // {"op":"record","mode":"start","name":"walk"} / "stop" / no mode = query.
+        // Into the user's VHMD data folder only (recordings/<name>.jsonl).
+        if (m.mode == "start") {
+            const std::string err = recorder_->Start(m.name, now);
+            r["ok"] = err.empty();
+            if (!err.empty()) r["error"] = err;
+        } else if (m.mode == "stop") {
+            recorder_->Stop();
+            r["ok"] = true;
+        } else if (m.mode.empty()) {
+            r["ok"] = true;
+        } else {
+            r["ok"] = false;
+            r["error"] = "mode must be start or stop";
+        }
+        r["record"] = recorder_->Status(now);
+    } else if (m.op == "inspect") {
+        // {"op":"inspect","id":"left_hand"}: what the device last received and
+        // what SteamVR got from it (inputs, finger bones, haptics, gaze).
+        DeviceState* dev = Find(m.id);
+        if (!dev) {
+            r["ok"] = false;
+            r["error"] = "unknown device id";
+        } else if (!hooks_.inspect) {
+            r["ok"] = false;
+            r["error"] = "inspect not available";
+        } else {
+            r["ok"] = true;
+            r["id"] = dev->Config().id;
+            r["kind"] = KindName(dev->Config().kind);
+            json devices = json::parse(hooks_.inspect(dev->Config().id), nullptr, false);
+            r["devices"] = devices.is_discarded() ? json::array() : std::move(devices);
         }
     } else if (m.op == "tracking") {
         // {"op":"tracking","id":"left_foot","mode":"paused"}; no mode = query. Not the

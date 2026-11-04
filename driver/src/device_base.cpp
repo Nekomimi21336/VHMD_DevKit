@@ -180,6 +180,14 @@ void VirtualDevice::Publish(Clock::time_point now, const Frame& f) {
     }
     // Inputs are applied even while inactive so the device is current when it
     // becomes active; skeleton and per-tick work are skipped until then.
+    if (!f.inputs.empty() || f.gaze) {
+        std::lock_guard<std::mutex> ilock(inspect_mu_);
+        for (const auto& [name, value] : f.inputs) received_[name] = value;
+        if (f.gaze) {
+            gaze_ = f.gaze;
+            gaze_at_ = now;
+        }
+    }
     for (const auto& [name, value] : f.inputs) {
         if (!HandleCommonInput(name, value)) OnInput(name, value);
     }
@@ -216,10 +224,72 @@ bool VirtualDevice::HandleCommonInput(const std::string& name, float value) {
     if (name == "battery") {
         p->SetBoolProperty(c, vr::Prop_DeviceProvidesBatteryStatus_Bool, true);
         p->SetFloatProperty(c, vr::Prop_DeviceBatteryPercentage_Float, std::clamp(value, 0.0f, 1.0f));
+        NoteGiven("battery", std::clamp(value, 0.0f, 1.0f));
     } else {
         p->SetBoolProperty(c, vr::Prop_DeviceIsCharging_Bool, value >= 0.5f);
+        NoteGiven("charging", value >= 0.5f ? 1.0f : 0.0f);
     }
     return true;
+}
+
+void VirtualDevice::NoteGiven(const std::string& name, float value) {
+    std::lock_guard<std::mutex> lock(inspect_mu_);
+    given_[name] = value;
+}
+
+void VirtualDevice::NoteBones(const vr::VRBoneTransform_t* bones, const char* source) {
+    std::lock_guard<std::mutex> lock(inspect_mu_);
+    std::copy(bones, bones + bones_.size(), bones_.begin());
+    bones_source_ = source;
+    bones_at_ = Clock::now();
+}
+
+void VirtualDevice::NoteHaptic(float duration_s, float frequency, float amplitude) {
+    std::lock_guard<std::mutex> lock(inspect_mu_);
+    ++haptics_;
+    haptic_[0] = duration_s;
+    haptic_[1] = frequency;
+    haptic_[2] = amplitude;
+    haptic_at_ = Clock::now();
+}
+
+nlohmann::json VirtualDevice::InspectJson(Clock::time_point now) const {
+    const auto age = [&](Clock::time_point t) { return std::chrono::duration<double>(now - t).count(); };
+    nlohmann::json j = {{"serial", serial_}, {"active", active_.load()}};
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        j["index"] = index_ == vr::k_unTrackedDeviceIndexInvalid ? -1 : static_cast<int>(index_);
+        const auto& p = last_pose_;
+        j["pose"] = {{"pos", {p.vecPosition[0], p.vecPosition[1], p.vecPosition[2]}},
+                     {"rot", {p.qRotation.w, p.qRotation.x, p.qRotation.y, p.qRotation.z}},
+                     {"valid", p.poseIsValid},
+                     {"connected", p.deviceIsConnected}};
+    }
+    std::lock_guard<std::mutex> lock(inspect_mu_);
+    j["received"] = received_;
+    j["given"] = given_;
+    if (!bones_source_.empty()) {
+        nlohmann::json bones = nlohmann::json::array();
+        for (const auto& b : bones_) {
+            bones.push_back({b.position.v[0], b.position.v[1], b.position.v[2], b.orientation.w, b.orientation.x,
+                             b.orientation.y, b.orientation.z});
+        }
+        j["skeleton"] = {{"source", bones_source_}, {"age_s", age(bones_at_)}, {"bones", std::move(bones)}};
+    }
+    if (haptics_ > 0) {
+        j["haptic"] = {{"count", haptics_},
+                       {"age_s", age(haptic_at_)},
+                       {"duration", haptic_[0]},
+                       {"frequency", haptic_[1]},
+                       {"amplitude", haptic_[2]}};
+    }
+    if (gaze_) {
+        j["gaze"] = {{"origin", {gaze_->origin.x, gaze_->origin.y, gaze_->origin.z}},
+                     {"target", {gaze_->target.x, gaze_->target.y, gaze_->target.z}},
+                     {"valid", gaze_->valid},
+                     {"age_s", age(gaze_at_)}};
+    }
+    return j;
 }
 
 void VirtualDevice::SetIcons(vr::PropertyContainerHandle_t c, const std::string& prefix) {

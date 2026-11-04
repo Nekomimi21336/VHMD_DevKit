@@ -245,6 +245,24 @@ def steamvr_running() -> bool:
     return bool(pids("vrserver.exe"))
 
 
+# Overlays SteamVR starts with itself that start SteamVR again a few seconds after
+# it closes (they are only detected and named, never stopped from here).
+RELAUNCHERS = {"snapvr-engined.exe": "SnapVR", "AdvancedSettings.exe": "OpenVR Advanced Settings"}
+
+
+def relaunchers() -> List[str]:
+    """Names of running programs known to start SteamVR again after it closes."""
+    if not IS_WINDOWS:
+        return []
+    return [name for image, name in RELAUNCHERS.items() if pids(image)]
+
+
+def safe_mode_blocked() -> bool:
+    """SteamVR switched VHMD off after it failed to stop (its safe mode). Any mode
+    switch clears it (while SteamVR is stopped)."""
+    return bool(_read_settings().get(DRIVER_SECTION, {}).get("blocked_by_safe_mode"))
+
+
 def _kill(pid_list: List[int]) -> None:
     if not IS_WINDOWS:
         # vrmonitor ends SteamVR on SIGTERM; a vrserver without one needs SIGKILL.

@@ -184,6 +184,8 @@ Passed to `IVRDriverInput::CreateEyeTrackingComponent("/eyetracking")` as `VREye
 | `preview` | `mode` (`on` / `off`) | Starts / pauses the preview (eye images in shared memory) in direct mode (Linux, or Windows with `display.mode = direct`). It is off by default, so nothing is copied or written while nobody watches (`preview_viewer.py` and `linux_check.py` start and stop it themselves) |
 | `refresh_rate` | `hz` (1-240; without it, only returns the current rate) | Changes the virtual display's frame rate (direct mode; SteamVR keeps running). `{"ok":true,"hz":30}` |
 | `preview_window` | `mode` (`on` / `off`) | Shows / hides the preview window (the HMD image) in Windows direct mode (`display.mode = direct`). Nothing is done while it is hidden |
+| `inspect` | `id` (device id or tracker role) | What the device last received and what it handed SteamVR. `devices` has one entry per SteamVR device (a controller and its hand twin are two): `serial`, `active` (connected in SteamVR), `index`, `pose` (`pos`, `rot`, `valid`, `connected`), `received` (inputs under the names they were sent with), `given` (the values SteamVR's inputs got, clicks derived from the trigger, corrected aliases and the battery included), `skeleton` (31 bones `[x, y, z, qw, qx, qy, qz]` and `source`: `bones` sent bones / `curl` from sent curls / `buttons` from the buttons), `haptic` (how many vibrations apps asked for, and the last one), `gaze` (HMD). The PC app's "Inputs and hands" and `python -m vhmd_client.inspector` use it |
+| `record` | `mode` (`start` / `stop`; without it, only returns the state), `name` (letters, digits, `-` `_` `.`; default: from the time) | Records the JSON datagrams that moved a device, one line each with its arrival time (`{"t":seconds,"d":datagram}`). Only into `recordings/<name>.jsonl` in the user's VHMD data folder (no paths; an existing name is not overwritten; stops at 512 MB). Requests, microphone sound and VMT's OSC are not recorded. Reply and state in `record` (`recording`, `path`, `seconds`, `lines`, `bytes`, `folder`). To play: `python -m vhmd_client.replay play <name>` |
 | (`perf` in `status`) | | The driver's own load: `update_thread_cpu_pct`, `receive_thread_cpu_pct` (% of one core, refreshed every second), `update_tick_us_avg` / `update_tick_us_max` (time per update) |
 
 `display` in `status`: `mode` (`window` / `direct`), `width`, `height`, `refresh_hz`. In direct mode (Linux), additionally `swap_sets_created`, `swap_sets_alive`, `layers_submitted`, `presents`, `vsyncs`, `eye_texture` (`width`, `height`, `vk_format`), `preview` (`state`, `submitted`, `written`, `active`).
@@ -192,7 +194,7 @@ Each device in `status`: `id, serial, kind, role, enabled, on_demand, timeout_po
 
 ### Driver → client: `haptic`
 
-When an app requests haptics, the driver sends it to **the address that last sent a packet**. With VHMD Link, `headset_bridge` forwards it to the headset and the controller vibrates.
+When an app requests haptics, the driver sends it to **the address that last sent data that moves a device** (`pose`, `input`, `skeleton`, `gaze`, `mic`). A tool that only sends `config` requests (status displays, `inspect`) does not take the haptics away. With VHMD Link, `headset_bridge` forwards it to the headset and the controller vibrates.
 
 ```json
 { "type": "haptic", "id": "right_hand", "duration": 0.005, "frequency": 100.0, "amplitude": 0.75 }
