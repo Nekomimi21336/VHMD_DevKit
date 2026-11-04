@@ -97,6 +97,16 @@ def get_pose(system, idx):
     return p, pos, rot
 
 
+def corrected(pos, rot, offset):
+    """Where SteamVR shows a pose after the driver's correction ("offset" in
+    `status`). VHMD Link sends its corrections whenever SteamVR runs (the hands
+    get one by default), so the round trip expects them instead of clearing them."""
+    if not offset:
+        return pos, rot
+    arm = offset["pos"] if offset.get("space") == "room" else math3d.rotate(rot, offset["pos"])
+    return tuple(a + b for a, b in zip(pos, arm)), math3d.multiply(rot, math3d.from_euler(*offset["ypr"]))
+
+
 def wait_pose(system, idx, pos, rot, timeout=1.0):
     """Polls until the device reports pos/rot within tolerance. Returns (ok, dpos, drot, elapsed)."""
     t0 = time.perf_counter()
@@ -259,6 +269,9 @@ def main() -> int:
                   and calib == openvr.ChaperoneCalibrationState_OK,
                   f"universe {[hex(u) if u is not None else None for u in universes]}, calibration state {calib}")
         idx_by_id = {d["id"]: d["index"] for d in status["devices"] if d["index"] >= 0}
+        offset_by_id = {d["id"]: d.get("offset") for d in client.status()["devices"]}
+        if any(offset_by_id.values()):
+            rep.info["offsets"] = {k: v for k, v in offset_by_id.items() if v}
 
         # --- 3. pose round trip ----------------------------------------------
         rng = random.Random(1234)
@@ -270,7 +283,7 @@ def main() -> int:
                 rot = math3d.from_euler(rng.uniform(-180, 180), rng.uniform(-60, 60), rng.uniform(-90, 90))
                 t_send = time.perf_counter()
                 client.pose(dev_id, pos, rot, vel=(0, 0, 0), angvel=(0, 0, 0))
-                ok, dp, dr, _ = wait_pose(system, idx_by_id[dev_id], pos, rot)
+                ok, dp, dr, _ = wait_pose(system, idx_by_id[dev_id], *corrected(pos, rot, offset_by_id.get(dev_id)))
                 lat.append((time.perf_counter() - t_send) * 1000)
                 errs_p.append(dp)
                 errs_r.append(dr)
@@ -292,7 +305,8 @@ def main() -> int:
         with client.batch():
             for dev_id, (p, r) in frame.items():
                 client.pose(dev_id, p, r)
-        batch_ok = all(wait_pose(system, idx_by_id[d], p, r)[0] for d, (p, r) in frame.items())
+        batch_ok = all(wait_pose(system, idx_by_id[d], *corrected(p, r, offset_by_id.get(d)))[0]
+                       for d, (p, r) in frame.items())
         rep.check(f"batched update of {len(frame)} devices in one datagram", batch_ok)
 
         # --- 4a. explicit invalidation & recovery ----------------------------

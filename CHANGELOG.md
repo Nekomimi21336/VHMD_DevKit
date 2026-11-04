@@ -24,7 +24,7 @@
 - `driver/src/windows/mic_output.h` を `driver/src/mic_output.h` に移した(Windows と Linux の共通)。
 
 ### テスト
-- C++: `inspect` と振動の送り先、記録(単体テスト 71 件)。Python: `inspect`、骨の位置の計算、記録の読み込み・送り直しの間隔(62 件)。統合テストに `inspect` と「状態を聞いたツールが振動を奪わない」を追加。
+- C++: `inspect` と振動の送り先、記録(単体テスト 71 件)。Python: `inspect`、骨の位置の計算、記録の読み込み・送り直しの間隔(62 件)。統合テストに `inspect` と「状態を聞いたツールが振動を奪わない」を追加(61 件すべて通過)。姿勢の往復の確認は、VHMD Link が入れる手の補正を含めて比べるようにした(VHMD Link が動いていると失敗していた)。C# の例からの送信、ドライバでの記録、`replay` での再生を SteamVR で確認。
 - Python: マイクの一覧、Linux の保存場所、`vhmd_mic` の作成、エンコーダーの選択(56 件)。WSL の Ubuntu 24.04 で、PC のアプリと `vhmd-link-sim`、Rust の単体テスト 16 件、Linux のマイク再生を確認。
 
 ## v0.6.0(2026-11-04)
