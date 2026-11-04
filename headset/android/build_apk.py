@@ -30,7 +30,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 CACHE = HERE.parent / ".cache"
 BUILD = HERE / "build"
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 VERSION_CODE = 6
 EDITIONS = {
     "link": {"package": "com.vhmd.link", "label": "VHMD Link", "apk": "vhmd-link.apk", "dev": "OFF"},

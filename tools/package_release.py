@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COMMON = [
     "README.md", "README.en.md", "README.zh-CN.md", "README.ko.md",
     "LICENSE", "THIRD_PARTY_NOTICES.md", "CHANGELOG.md",
-    "docs", "clients/python", "link/Cargo.toml", "link/Cargo.lock", "link/proto", "link/relay", "link/sim", "link/README.md",
+    "docs", "clients/python", "clients/csharp", "link/Cargo.toml", "link/Cargo.lock", "link/proto", "link/relay", "link/sim", "link/README.md",
     "tests/integration",  # linux_check.py / soak_test.py etc., so testers need no clone
 ]
 TOOLS = {
@@ -43,7 +43,8 @@ TOOLS = {
     "linux64": ["tools/common.sh", "tools/install_driver.sh", "tools/uninstall_driver.sh", "tools/verify_env.sh", "tools/vhmd_records.py"],
 }
 BINARY = {"win64": "driver_vhmd.dll", "linux64": "driver_vhmd.so"}
-SKIP_PARTS = {"__pycache__", ".pytest_cache", "results"}
+SKIP_PARTS = {"__pycache__", ".pytest_cache", "results", "obj"}
+SKIP_BUILT = "clients/csharp/"   # its bin/ is the .NET build output
 
 
 APKS = ("vhmd-link.apk", "vhmd-link-dev.apk")
@@ -69,9 +70,10 @@ def collect(platform: str, driver_dir: Path, apk_dir: Path | None = None,
         p = ROOT / item
         srcs = [p] if p.is_file() else sorted(x for x in p.rglob("*") if x.is_file())
         for s in srcs:
-            if SKIP_PARTS & set(s.parts) or s.suffix == ".pyc":
+            rel = s.relative_to(ROOT).as_posix()
+            if SKIP_PARTS & set(s.parts) or s.suffix == ".pyc" or (rel.startswith(SKIP_BUILT) and "/bin/" in rel):
                 continue
-            files.append((s.relative_to(ROOT).as_posix(), s))
+            files.append((rel, s))
     if platform == "win64" and apk_dir:
         for name in APKS:
             if (apk_dir / name).exists():

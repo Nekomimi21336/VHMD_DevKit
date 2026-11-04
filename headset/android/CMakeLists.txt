@@ -20,7 +20,7 @@ add_library(vhmdlink SHARED src/main.cpp src/text.cpp)
 # Two editions from the same source: VHMD Link (connecting a PC) and VHMD Link
 # Dev (adds the statistics overlay; the PC shows controllers as axes).
 option(VHMD_DEV_EDITION "build VHMD Link Dev" OFF)
-set(VHMD_LINK_VERSION "0.6.0" CACHE STRING "version shown in the app")
+set(VHMD_LINK_VERSION "0.7.0" CACHE STRING "version shown in the app")
 target_compile_definitions(vhmdlink PRIVATE VHMD_DEV_EDITION=$<BOOL:${VHMD_DEV_EDITION}>
                            VHMD_LINK_VERSION="${VHMD_LINK_VERSION}")
 target_include_directories(vhmdlink PRIVATE ${OPENXR_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/../../driver/src/math)

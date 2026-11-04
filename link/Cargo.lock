@@ -4,18 +4,18 @@ version = 3
 
 [[package]]
 name = "vhmd-link-proto"
-version = "0.6.0"
+version = "0.7.0"
 
 [[package]]
 name = "vhmd-link-relay"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "vhmd-link-proto",
 ]
 
 [[package]]
 name = "vhmd-link-sim"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "vhmd-link-proto",
 ]
