@@ -63,7 +63,16 @@
 | `acc`, `angacc` | | 가속도(m/s², rad/s²) [x, y, z]. 절댓값 ≤ 1000. SteamVR에 그대로 전달합니다 |
 | `age` | | 송신 시점에 샘플이 이미 몇 초 지났는지(0~0.5). SteamVR은 샘플을 얻은 시각부터 예측합니다(`poseTimeOffset`). 카메라 추정 등 지연이 있는 송신원용 |
 | `ts` | | 송신 측 UNIX 시각(초). 진단용(`status`의 `latency_ms`) |
+| `src` | | 송신자 이름(32자까지). `pose` / `input` / `skeleton` / `gaze` 공통. 조작권(`config`의 `control`)을 가진 송신자의 데이터만 반영됩니다 |
 | `valid` | | `false`로 "트래킹 상실"을 명시. `pos`/`rot`는 생략 가능. 다음 유효한 `pose`로 복귀 |
+
+### `mic`
+
+```json
+{ "type": "mic", "seq": 12, "pcm": "AQD//wAB" }
+```
+
+헤드셋 마이크의 소리입니다(16비트·48 kHz·모노 리틀 엔디언을 base64로 만든 것. 1개당 100 ms까지). `config`의 `mic`로 출력 대상을 정하면 드라이버가 그 출력으로 재생합니다. `seq`는 1씩 늘립니다(`status`의 `mic.lost`에 사용됩니다). Windows 전용.
 
 ### `input`(컨트롤러 / 트래커 / HMD)
 
@@ -128,8 +137,9 @@ HMD:
 ```
 
 - `curl`: 엄지, 검지, 중지, 약지, 소지의 굽힘 0(펼침)~1(쥠). `splay`: -1~1(생략 시 0). OpenVR 샘플 `handskeletonsimulation`의 손 모델로 본을 생성합니다.
+- `pack`: `bones`와 `positions`를 작게 만든 것. 31개 본, 각각 7개의 리틀 엔디언 int16(회전 w x y z는 1/32767, 위치 x y z는 0.1 mm)을 base64로 만든 문자열. 패킷 1개에 들어갑니다(VHMD Link의 핸드 트래킹이 사용합니다).
 - `bones`: OpenVR 핸드 스켈레톤(31개 본, `HandSkeletonBone` 순서)의 **부모 본 공간** 회전. `[w,x,y,z,px,py,pz]`로 위치를 함께 지정하거나, `positions`를 별도로 전달할 수 있습니다(생략 시 펼친 손의 참조 위치).
-- 마지막 `skeleton` 이후 500 ms 이상 아무것도 오지 않는 동안에는 `trigger`/`grip`/버튼의 터치 상태로부터 손가락 굽힘을 자동 생성합니다.
+- 마지막 `skeleton` 이후 500 ms 이상 아무것도 오지 않는 동안에는 `trigger`/`grip`/버튼의 터치 상태로부터 손가락 굽힘을 자동 생성합니다(`driver/src/math/finger_curls.h`). 엄지를 내리고 그립을 놓고 있을 때는 트리거에서 손가락을 떼면 브이 사인, 트리거를 당기면 록 사인(뿔 모양)이 됩니다.
 - SteamVR에는 `WithController` / `WithoutController` 두 모션 레인지 모두에 같은 값을 보냅니다.
 - 컨트롤러와 핸드 트래킹을 **SteamVR을 멈추지 않고 전환**할 수 있습니다(`config`의 `hand_mode`). `controllers`(기본)는 실제 컨트롤러와 같은 취급이며 스켈레톤은 Partial(SteamVR이 손가락 본을 정리)입니다. `hands`에서는 손마다 별도의 디바이스(`VHMD-HAND-L/R`, 스켈레톤은 Full로 보낸 본을 그대로 반영)로 교체되며, VRChat 등은 핸드 트래킹으로 취급합니다(버튼으로 메뉴 조작은 비활성화되고 제스처 조작이 됩니다). 두 모드 모두 ID는 `left_hand` / `right_hand` 그대로이므로 보내는 내용을 바꿀 필요가 없습니다. 핸드 디바이스는 처음 `hands`로 전환할 때 추가됩니다. VRChat 메뉴는 두 모드 모두 레이저 + 트리거로 조작할 수 있습니다. 자동 조작으로 레이저를 맞출 때는 메뉴 면에 대해 정면에 가까운 각도로 맞춰 주십시오(얕은 각도에서는 판정에 들어가지 않습니다).
 
@@ -162,12 +172,17 @@ HMD:
 | `ping` | | `{"type":"result","op":"ping","ok":true,"version":"0.1.0"}` |
 | `roles` | | 사용 가능한 롤 목록 |
 | `set_role` | `id`, `role` | SteamVR 설정의 `trackers` 섹션에 롤을 기록(사용자 설정을 덮어씀) |
+| `offset` | `id`, `pos`(m), `ypr`(도: 요, 피치, 롤), `space`(`device` / `room`) | 컨트롤러와 트래커의 위치·각도 보정. `pos`는 `space`의 축을 따르고, `ypr`은 디바이스 축을 중심으로 함. 값이 없으면 현재 보정을 반환. HMD는 불가. SteamVR 종료까지 유효하며, `status`의 디바이스에 `offset`이 표시됨 |
+| `tracking` | `id`, `mode`(`active` / `paused` / `disconnected`, 생략 시 현재 상태만 반환) | SteamVR에 전달하는 내용을 디바이스별로 바꿈(SteamVR은 멈추지 않음). `paused`는 그 자리에 고정(연결·추적 중 상태 유지, 버튼은 동작). `disconnected`는 미연결로 보고하고, 누르고 있던 입력을 뗌. 새 데이터가 도착해도 `active`로 되돌릴 때까지 바뀌지 않음. 두 상태 모두 수신은 계속 집계함. HMD는 불가. SteamVR 종료까지 유효하며, `status`의 디바이스에 `tracking`이 표시됨. `{"ok":true,"id":"tracker_1","mode":"paused"}` |
+| `mic` | `device`(재생할 오디오 출력 이름의 일부, `""`로 정지), `mode`(`monitor`로 기본 출력에서도 재생, `quiet`로 정지). 둘 다 생략 가능 | 헤드셋 마이크 소리(메시지 `mic`)의 재생 대상. 응답과 `status`의 `mic`에 `device`, `state`, `monitor`, 수신 수가 포함됨. Windows 전용 |
 | `reset` | `id`(생략 시 전체) | 설정 파일의 기본 포즈로 되돌림 |
 | `add` | `id`(생략 시 온디맨드 전체) | 온디맨드 디바이스를 즉시 SteamVR에 추가(다음 프레임에 반영). `{"ok":true,"ids":[...]}` |
 | `hand_mode` | `mode`(`controllers` / `hands`, 생략 시 현재 모드만 반환) | 좌우 손을 컨트롤러 / 핸드 트래킹으로 전환(SteamVR은 멈추지 않음). `{"ok":true,"mode":"hands"}`. `status`에도 `hand_mode`가 포함됨 |
 | `render_models` | `mode`(`labeled` / `axes`, 생략 시 현재 설정만 반환) | 컨트롤러·트래커의 외형을 전환(SteamVR은 멈추지 않음). `labeled`는 이름이 들어간 형태(기본), `axes`는 개발용 색상 축(X 빨강·Y 초록·Z 파랑, 10 cm, 흰 선이 앞 = -Z). 시작 시 기본값은 설정의 `renderModels` |
+| `display_sync` | `slack_ms`, `period_ms`(필수), `target_ms`(기본값은 주기의 0.4), `weight`(0~1) | 스트리밍 대상 헤드셋과 프레임 타이밍을 맞춘다(다이렉트 모드). 헤드셋에서 프레임이 표시될 때까지 기다린 시간(표시 주기상의 원형 평균)을 넘기면, `target_ms`에 가까워지도록 VHMD의 vsync를 옮긴다(오차의 절반, 최대 3 ms, 프레임당 0.5 ms까지). `{"ok":true,"shift_ms":-0.4}`. 주기가 VHMD와 다르면 오류. `headset_bridge`가 0.5초마다 보낸다 |
 | `preview` | `mode`(`on` / `off`) | 다이렉트 모드(Linux, 또는 Windows에서 `display.mode = direct`)에서 프리뷰(공유 메모리로 영상 출력)를 시작 / 정지. 기본은 꺼져 있어 보는 사람이 없을 때는 GPU 복사도 쓰기도 하지 않음(`preview_viewer.py`와 `linux_check.py`는 자동으로 시작·정지) |
 | `refresh_rate` | `hz`(1~240, 생략 시 현재 값만 반환) | 가상 디스플레이의 프레임 레이트를 변경(다이렉트 모드, SteamVR은 멈추지 않음). `{"ok":true,"hz":30}` |
+| `control` | `source`(송신자 이름, `""`이면 누구나. 생략 시 현재 상태만 반환), `devices`(생략 시 전체 디바이스) | 어느 송신자가 디바이스를 움직일지 정한다(SteamVR은 멈추지 않음). 조작권이 없는 송신자의 메시지는 버려지고 집계된다. 조작권이 넘어간 디바이스는 이전 송신자가 누르고 있던 입력을 뗀 상태로 되돌리고(착용 센서·배터리 제외), 속도에 의한 예측을 멈추며, 새 송신자에게 타임아웃 유예를 준다. 응답: `control`(`owner`, 디바이스별 `devices`, 송신자별 `sources`: `age_s`·`accepted`·`ignored`)과 `poses`(각 디바이스의 최신 위치·회전. 이어받는 쪽이 현재 위치에서 계속할 수 있음). `status`에도 `control`이 들어간다 |
 | `preview_window` | `mode`(`on` / `off`) | Windows 다이렉트 모드(`display.mode = direct`)에서 프리뷰 창(HMD 영상)을 표시 / 숨김. 숨긴 동안은 아무것도 하지 않음 |
 | (`status`의 `perf`) | | 드라이버 자체의 부하: `update_thread_cpu_pct`, `receive_thread_cpu_pct`(코어 1개 대비 %, 1초마다 갱신), `update_tick_us_avg` / `update_tick_us_max`(갱신 1회의 처리 시간) |
 

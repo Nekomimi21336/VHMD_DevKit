@@ -1,6 +1,6 @@
 # 変更履歴
 
-## 未リリース
+## v0.6.0(2026-11-04)
 
 ### 追加
 - **手のトラッキング**: コントローラーを置くと、手を SteamVR の手として送る。標準の `XR_EXT_hand_tracking` を使い、全関節を SteamVR の骨に変換して送る(`skeleton` の `pack`)。親指と人差し指のつまみはトリガーになる。既定はオフで、PC のアプリの「コントローラーを置いたら手のトラッキングに切り替える」で使う(`headset_bridge --hand-tracking`)。コントローラー用の補正は手には掛けない。
@@ -73,7 +73,9 @@
 ### ドキュメント
 - 実機 HMD(Pico 4 Ultra + PICO Connect)にトラッカーを足す構成を確認し、「実機 HMD と併用するとき」を書き直した。
 - 実機併用での VMT、30 分の連続稼働、実行中のアンインストール、VRChat(ダイレクトモード)の結果を追記。
-- Pico 4 Ultra 向けアプリの調査メモ(`docs/pico4ultra_research.md`)。
+- Pico 4 Ultra 向けアプリの調査メモ(`docs/pico4ultra_research.md`)。カメラ・マイク・センサーで普通のアプリから届くもの、PICO の拡張に PICO のローダーが要る理由。
+- README(4 言語)に VHMD Link、機器ごとの補正と停止、メッセージ `mic` と `config` の新しい命令、今のテスト件数を追記。英語・中国語・韓国語のプロトコル仕様に `mic`、`pack`、`offset`、`tracking` を追記。
+- PICO の SDK とローダーを VHMD に入れない判断(`docs/decisions.md` §5)。
 
 ## v0.5.0(2026-10-20)
 

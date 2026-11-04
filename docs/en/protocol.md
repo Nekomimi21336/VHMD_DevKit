@@ -66,6 +66,14 @@ The `vhmd` driver writes messages received over UDP into each virtual device's "
 | `src` | | Sender name (up to 32 characters), on `pose` / `input` / `skeleton` / `gaze`. Only the sender holding control (`config` op `control`) is applied |
 | `valid` | | `false` explicitly signals "tracking lost". `pos`/`rot` may be omitted. Recovers on the next valid `pose` |
 
+### `mic`
+
+```json
+{ "type": "mic", "seq": 12, "pcm": "AQD//wAB" }
+```
+
+Audio from the headset's microphone (16-bit, 48 kHz, mono, little-endian, base64-encoded; up to 100 ms per message). Once an output is chosen with `config` op `mic`, the driver plays it to that output. Increase `seq` by 1 each time (used for `mic.lost` in `status`). Windows only.
+
 ### `input` (controllers / trackers / HMD)
 
 ```json
@@ -129,8 +137,9 @@ All devices:
 ```
 
 - `curl`: curl of thumb, index, middle, ring, little finger, from 0 (open) to 1 (closed). `splay`: -1 to 1 (0 if omitted). Bones are generated using the hand model from the OpenVR sample `handskeletonsimulation`.
+- `pack`: a compact form of `bones` and `positions`. A base64 string of 31 bones, each 7 little-endian int16 values (rotation w x y z in units of 1/32767, position x y z in units of 0.1 mm). Fits in one packet (used by VHMD Link's hand tracking).
 - `bones`: rotations in **parent-bone space** for the OpenVR hand skeleton (31 bones, in `HandSkeletonBone` order). Positions can be given at the same time as `[w,x,y,z,px,py,pz]`, or passed separately in `positions` (if omitted, the reference positions of an open hand are used).
-- While nothing arrives for 500 ms or more after the last `skeleton`, finger curl is generated automatically from `trigger`/`grip`/button touch states.
+- While nothing arrives for 500 ms or more after the last `skeleton`, finger curl is generated automatically from `trigger`/`grip`/button touch states (`driver/src/math/finger_curls.h`). With the thumb down and the grip released, lifting the finger off the trigger makes a peace sign, and pulling the trigger makes the horns.
 - The same values are sent to SteamVR for both the `WithController` and `WithoutController` motion ranges.
 - Controllers and hand tracking can be **switched while SteamVR runs** (`config` op `hand_mode`). `controllers` (default) behave like hardware controllers with a Partial skeleton (SteamVR tidies the finger bones). `hands` swaps each hand to a separate device (`VHMD-HAND-L/R`, Full skeleton: bones are passed through as sent), which apps such as VRChat treat as hand tracking (button-driven menus are disabled there; gestures are used instead). The ids stay `left_hand` / `right_hand` in both modes, so senders need no changes. The hand devices are added the first time `hands` is selected. VRChat menus can be used with the laser + trigger in either mode. When aiming the laser programmatically, point it at the menu face from close to straight on (at shallow angles it does not register a hit).
 
@@ -163,6 +172,9 @@ Passed to `IVRDriverInput::CreateEyeTrackingComponent("/eyetracking")` as `VREye
 | `ping` | | `{"type":"result","op":"ping","ok":true,"version":"0.1.0"}` |
 | `roles` | | List of available roles |
 | `set_role` | `id`, `role` | Writes the role into the `trackers` section of the SteamVR settings (overwrites the user's setting) |
+| `offset` | `id`, `pos` (m), `ypr` (degrees: yaw, pitch, roll), `space` (`device` / `room`) | Position / rotation offset for controllers and trackers. `pos` is along the axes of `space`; `ypr` is about the device's axes. With no values, returns the current offset. Not for the HMD. Lasts until SteamVR exits; shown as `offset` on the device in `status` |
+| `tracking` | `id`, `mode` (`active` / `paused` / `disconnected`; if omitted, only returns the current state) | Changes what is passed to SteamVR, per device (SteamVR keeps running). `paused` freezes the device in place (still connected and tracking; buttons still work). `disconnected` reports it as not connected and releases any held inputs. New data does not change it until it is set back to `active`; received data keeps being counted in both. Not for the HMD. Lasts until SteamVR exits; shown as `tracking` on the device in `status`. `{"ok":true,"id":"tracker_1","mode":"paused"}` |
+| `mic` | `device` (part of the name of the audio output to play to; `""` stops), `mode` (`monitor` also plays on the default output, `quiet` stops that). Both optional | Where the headset's microphone audio (message `mic`) is played. The response and `mic` in `status` contain `device`, `state`, `monitor` and the receive count. Windows only |
 | `reset` | `id` (all devices if omitted) | Restores the default pose from the config file |
 | `add` | `id` (all on-demand devices if omitted) | Adds on-demand devices to SteamVR immediately (applied on the next frame). `{"ok":true,"ids":[...]}` |
 | `control` | `source` (a sender name, `""` = anyone; without it only reports), `devices` (default: all) | Chooses which sender drives the devices (SteamVR keeps running). Messages from other senders are dropped and counted. A device changing hands has the inputs the previous sender held released (except proximity / battery), stops velocity prediction and gives the new sender a full timeout. Reply: `control` (`owner`, per-device `devices`, per-sender `sources`: `age_s`, `accepted`, `ignored`) and `poses` (latest position / rotation of each device, so the sender taking over can continue from there). `status` carries `control` too |

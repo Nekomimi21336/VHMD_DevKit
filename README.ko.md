@@ -43,6 +43,8 @@
 - **창 없이 저부하로 실행 가능**: Windows에서도 다이렉트 모드를 선택할 수 있으며, 프리뷰 창 표시 여부와 프레임 레이트(1~240 Hz, 실행 중 변경 가능)를 지정 가능. 영상은 Python에서 가져올 수 있음(머신러닝·자동화용)
 - **Python 클라이언트**(의존성 없음)와 예제, SteamVR 위에서 동작하는 자동 검증 스크립트
 - **위장 없음**: 독자적인 컨트롤러 타입 `vhmd_*`로 등록. 기존 앱의 바인딩은 SteamVR의 리매핑으로 재사용
+- **디바이스별 보정과 정지**: 컨트롤러와 트래커의 위치·각도 보정(`offset`), 그 자리에 고정하는 정지와 SteamVR에서 떼어 내는 연결 끊기(`tracking`). UDP든 VMT든 보내는 방식과 관계없이 적용
+- **VHMD Link(Windows + Pico 4 Ultra)**: 단독형 헤드셋을 VHMD의 표시와 입력으로 삼아 PC의 SteamVR 게임을 플레이할 수 있음. 영상(HEVC / H.264 / AV1, Wi-Fi 또는 USB), PC의 소리, 헤드셋의 마이크, 배터리와 착용, PICO Motion Tracker의 허리와 발, 핸드 트래킹(모든 관절). 연결용과 개발용(통계 표시 포함) 2개의 앱과 PC 앱(트레이 상주). 자세한 내용은 [headset/README.md](headset/README.md)(일본어)
 
 > 용도는 VR 앱 개발·테스트, 아바타 / IK / 풀 트래킹 동작 검증, 모션 캡처 데이터 입력입니다.
 > 치트, 타인 디바이스의 위장, 대인 환경에서의 부정 사용에는 사용하지 마십시오.
@@ -68,6 +70,8 @@
    |---|---|---|
    | Windows | `VHMD_DevKit-<버전>-win64.zip` | `powershell -ExecutionPolicy Bypass -File tools/install_driver.ps1` |
    | Linux | `VHMD_DevKit-<버전>-linux64.tar.gz` | `tools/install_driver.sh`(glibc 2.38 이상) |
+
+   Windows 아카이브에는 VHMD Link(PC 앱 `VHMD Link\VHMD Link.exe`와 헤드셋 앱 `headset\*.apk`)도 들어 있습니다. Pico 4 Ultra에서 사용할 때는 대신 `tools/install_link.ps1 -Start`를 실행합니다(드라이버 등록도 수행합니다. [headset/README.md](headset/README.md#使い方)(일본어)).
 
    등록하기 전에 SteamVR 설정 파일(`openvrpaths.vrpath`, `steamvr.vrsettings`, `chaperone_info.vrchap`)과 등록된 드라이버 목록을 기록합니다(Windows: `%LOCALAPPDATA%\VHMD_DevKit\history`, Linux: `~/.local/state/vhmd_devkit/history`).
 
@@ -153,7 +157,8 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 | `input` | 버튼·트리거·스틱 |
 | `skeleton` | 손가락(굽힘 값 또는 31개 본) |
 | `gaze` | 시선 |
-| `config` | `list` / `ping` / `add` / `set_role` / `reset` |
+| `mic` | 마이크 소리(VHMD Link가 보냄. Windows 전용) |
+| `config` | `list` / `ping` / `status` / `add` / `set_role` / `reset` / `offset` / `tracking` / `hand_mode` / `control` / `mic` 등 |
 
 - 좌표계는 SteamVR 기준(오른손 좌표계, +Y 위, -Z 전방, 미터), 회전은 `[w, x, y, z]`.
 - 잘못된 값(NaN·범위 밖·타입 불일치 등)은 폐기되며, 드라이버는 멈추지 않습니다.
@@ -277,11 +282,12 @@ FPS 조작 도구의 "Pico 로 전환" / "VHMD 로 전환" 버튼으로도 같�
 
 | 종류 | 명령 | 내용 |
 |---|---|---|
-| C++ 단위 테스트 | `ctest --preset vs2022-release` | 53건(파서, 좌표 변환, 설정, 타임아웃, 라우터, UDP, 라벨 생성, VMT 호환 OSC) |
-| Python 단위 테스트 | `python -m pytest tests/python` | 14건(클라이언트, 프리뷰 읽기) |
+| C++ 단위 테스트 | `ctest --preset vs2022-release` | 69건(파서, 좌표 변환, 설정, 타임아웃, 라우터, UDP, 라벨 생성, VMT 호환 OSC, 보정, 손의 본, 마이크 버퍼, 영상 UDP 수신) |
+| Python 단위 테스트 | `python -m pytest tests/python` | 52건(클라이언트, 프리뷰 읽기, VHMD Link의 PC 측) |
+| VHMD Link 네이티브 부분 | `cargo test`(`link/`에서) | 16건(PC ↔ 헤드셋 간 규약, 오류 정정, 버튼 할당) |
 | Linux 캡처 셀프 테스트 | `ctest`(Linux) | 실제 Vulkan으로 공유 이미지 → 공유 메모리를 확인(SteamVR 불필요) |
 | Linux 실제 장비 확인 | `python3 tests/integration/linux_check.py` | 다이렉트 모드의 표시 경로 + 통합 테스트, 리포트 출력 |
-| SteamVR 통합 테스트 | `python tests/integration/run_integration.py` | 58개 항목(열거, 온디맨드 추가, 오차, 지연, 입력, 스켈레톤, 핸드 모드 전환, 시선, 착용 센서, 배터리, OpenXR 핸드 트래킹, 잘못된 패킷, 부하, 종료 처리). `vmt.enabled: true`이면 VMT 호환 OSC 9개 항목이 추가됨 |
+| SteamVR 통합 테스트 | `python tests/integration/run_integration.py` | 59개 항목(열거, 온디맨드 추가, 오차, 지연, 입력, 스켈레톤, 핸드 모드 전환, 시선, 착용 센서, 배터리, OpenXR 핸드 트래킹, 잘못된 패킷, 부하, 종료 처리). `vmt.enabled: true`이면 VMT 호환 OSC 9개 항목이 추가됨 |
 | 시작/종료 반복 | `python tests/integration/stress_restart.py --cycles 30` | 매번 드라이버의 종료 처리와 크래시 여부를 확인 |
 | 장시간 안정성 | `python tests/integration/soak_test.py --minutes 30` | 프레임 레이트, 자세 오차, 메모리 증가, 경고를 일정 간격으로 기록 |
 
@@ -295,11 +301,14 @@ FPS 조작 도구의 "Pico 로 전환" / "VHMD 로 전환" 버튼으로도 같�
 | 프로토콜 사양 | [protocol](docs/protocol.md) | [protocol](docs/en/protocol.md) | [protocol](docs/zh-CN/protocol.md) | [protocol](docs/ko/protocol.md) |
 | 아키텍처·확장 방법 | [architecture](docs/architecture.md) | [architecture](docs/en/architecture.md) | [architecture](docs/zh-CN/architecture.md) | [architecture](docs/ko/architecture.md) |
 | Linux | [linux](docs/linux.md) | [linux](docs/en/linux.md) | [linux](docs/zh-CN/linux.md) | [linux](docs/ko/linux.md) |
+| VHMD Link(헤드셋 앱, PC 앱) | [headset/README](headset/README.md) (일본어) | — | — | — |
+| VHMD Link 네이티브 부분(Rust) | [link/README](link/README.md) (일본어) | — | — | — |
+| Pico 4 Ultra 조사 | [pico4ultra_research](docs/pico4ultra_research.md) (일본어) | — | — | — |
 | 검증 절차와 결과 | [verification](docs/verification.md) (일본어) | — | — | — |
 | 판단·미대응 사항 기록 | [decisions](docs/decisions.md) (일본어) | — | — | — |
 | 변경 이력 | [CHANGELOG](CHANGELOG.md) (일본어) | — | — | — |
 
-검증 기록·판단 기록·변경 이력은 개발 기록이므로 일본어로만 제공됩니다.
+VHMD Link 설명, 조사·검증·판단 기록, 변경 이력은 일본어로만 제공됩니다.
 
 ## 저장소 구성
 
@@ -319,7 +328,9 @@ driver/
     controller_device.* 컨트롤러, 진동, 스켈레톤
     tracker_device.*    트래커, 롤
     math/ protocol/ config/ state/ net/ util/   OpenVR 비의존 코어(단위 테스트 대상)
-clients/python/         vhmd_client 패키지와 examples/
+clients/python/         vhmd_client 패키지와 examples/, VHMD Link PC 앱(link.py)
+headset/android/        VHMD Link 헤드셋 앱(OpenXR 네이티브 앱, Gradle 없이 빌드)
+link/                   VHMD Link 데이터 경로(Rust)와 헤드셋 대역
 tools/                  등록 / 해제 / 환경 확인(Windows: .ps1, Linux: .sh), 배포물 생성, 모델 생성
 tests/                  unit/(C++), python/, integration/(SteamVR)
 docs/                   문서(위의 표)

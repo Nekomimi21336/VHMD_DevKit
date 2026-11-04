@@ -63,7 +63,16 @@
 | `acc`, `angacc` | | 加速度(m/s²、rad/s²)[x, y, z]。绝对值 ≤ 1000。直接传给 SteamVR |
 | `age` | | 样本在发送时已经过时多少秒(0〜0.5)。SteamVR 从采样时刻开始预测(`poseTimeOffset`)。适用于摄像头估计等存在延迟的发送端 |
 | `ts` | | 发送端 UNIX 时间(秒)。用于诊断(`status` 的 `latency_ms`) |
+| `src` | | 发送端名称(最多 32 个字符)。`pose` / `input` / `skeleton` / `gaze` 通用。只有持有控制权(`config` 的 `control`)的发送端会生效 |
 | `valid` | | 设为 `false` 可显式表示“追踪丢失”。可省略 `pos`/`rot`。收到下一个有效的 `pose` 时恢复 |
+
+### `mic`
+
+```json
+{ "type": "mic", "seq": 12, "pcm": "AQD//wAB" }
+```
+
+头显麦克风的声音(16 位、48 kHz、单声道的小端序数据经 base64 编码。每条最多 100 ms)。通过 `config` 的 `mic` 决定输出目标后，驱动会向该输出播放。`seq` 每次加 1(用于 `status` 的 `mic.lost`)。仅限 Windows。
 
 ### `input`(控制器 / 追踪器 / HMD)
 
@@ -128,8 +137,9 @@ HMD：
 ```
 
 - `curl`：拇指、食指、中指、无名指、小指的弯曲程度，0(张开)〜1(握紧)。`splay`：-1〜1(省略时为 0)。使用 OpenVR 示例 `handskeletonsimulation` 的手部模型生成骨骼。
+- `pack`：`bones` 和 `positions` 的压缩形式。31 根骨骼，每根 7 个小端序 int16(旋转 w x y z 单位为 1/32767，位置 x y z 单位为 0.1 mm)，经 base64 编码的字符串。可放入 1 个数据包(VHMD Link 的手部追踪使用)。
 - `bones`：OpenVR 手部骨骼(31 根骨骼，按 `HandSkeletonBone` 顺序)在**父骨骼空间**中的旋转。可以用 `[w,x,y,z,px,py,pz]` 同时指定位置，也可以单独传入 `positions`(省略时使用张开手的参考位置)。
-- 自最后一条 `skeleton` 起 500 ms 以上没有收到任何内容期间，会根据 `trigger`/`grip`/按键的触摸状态自动生成手指弯曲。
+- 自最后一条 `skeleton` 起 500 ms 以上没有收到任何内容期间，会根据 `trigger`/`grip`/按键的触摸状态自动生成手指弯曲(`driver/src/math/finger_curls.h`)。在拇指放下且松开握把时，手指离开扳机为剪刀手(V 字)，扣下扳机为摇滚手势(角手势)。
 - 向 SteamVR 的 `WithController` / `WithoutController` 两种运动范围发送相同的值。
 - 控制器与手部追踪可以**在不停止 SteamVR 的情况下切换**(`config` 的 `hand_mode`)。`controllers`(默认)与硬件控制器的处理方式相同，骨骼为 Partial(由 SteamVR 整理手指骨骼)。`hands` 时每只手换成另一个设备(`VHMD-HAND-L/R`，骨骼为 Full，发送的骨骼原样反映)，VRChat 等会将其视为手部追踪(此时按键菜单操作无效，改为手势操作)。两种模式下 ID 都保持 `left_hand` / `right_hand`，发送内容无需修改。手部设备在首次切换到 `hands` 时添加。两种模式下都可以用激光 + 扳机操作 VRChat 菜单。自动操作瞄准时，请以接近正面的角度照射菜单表面(角度过浅不会命中)。
 
@@ -162,12 +172,17 @@ HMD：
 | `ping` | | `{"type":"result","op":"ping","ok":true,"version":"0.1.0"}` |
 | `roles` | | 可用角色列表 |
 | `set_role` | `id`, `role` | 将角色写入 SteamVR 设置的 `trackers` 部分(覆盖用户设置) |
+| `offset` | `id`、`pos`(m)、`ypr`(度：偏航、俯仰、翻滚)、`space`(`device` / `room`) | 控制器和追踪器的位置、角度校正。`pos` 沿 `space` 的轴，`ypr` 绕设备的轴。不带值时返回当前的校正。不适用于 HMD。在 SteamVR 退出前一直有效，`status` 的设备中会出现 `offset` |
+| `tracking` | `id`、`mode`(`active` / `paused` / `disconnected`，省略时仅返回当前状态) | 按设备改变传给 SteamVR 的内容(SteamVR 不会停止)。`paused` 原地固定(保持已连接、追踪中，按键仍然有效)。`disconnected` 报告为未连接，并松开正在按下的输入。即使收到新数据，在恢复为 `active` 之前也不会改变。两种状态下都会继续统计接收数。不适用于 HMD。在 SteamVR 退出前一直有效，`status` 的设备中会出现 `tracking`。`{"ok":true,"id":"tracker_1","mode":"paused"}` |
+| `mic` | `device`(播放目标音频输出名称的一部分，`""` 为停止)、`mode`(`monitor` 同时在默认输出上播放，`quiet` 停止)。均可省略 | 头显麦克风的声音(消息 `mic`)的播放目标。响应和 `status` 的 `mic` 中包含 `device`、`state`、`monitor`、接收数。仅限 Windows |
 | `reset` | `id`(省略时为全部设备) | 恢复为配置文件中的默认姿态 |
 | `add` | `id`(省略时为全部按需设备) | 立即将按需设备添加到 SteamVR(下一帧生效)。`{"ok":true,"ids":[...]}` |
 | `hand_mode` | `mode`(`controllers` / `hands`，省略时仅返回当前模式) | 在控制器 / 手部追踪之间切换左右手(SteamVR 不会停止)。`{"ok":true,"mode":"hands"}`。`status` 中也包含 `hand_mode` |
 | `render_models` | `mode`(`labeled` / `axes`，省略时仅返回当前设置) | 切换控制器、追踪器的外观(SteamVR 不会停止)。`labeled` 为带名称的形状(默认)，`axes` 为开发用的彩色坐标轴(X 红、Y 绿、Z 蓝，10 cm，白线指向前方 = -Z)。启动时的默认值为配置项 `renderModels` |
+| `display_sync` | `slack_ms`、`period_ms`(必需)、`target_ms`(默认为周期的 0.4)、`weight`(0〜1) | 与串流目标头显对齐帧时序(直接模式)。传入头显上帧等待显示的时间(在显示周期上的圆平均),VHMD 会移动 vsync 使其接近 `target_ms`(误差的一半,最多 3 ms,每帧最多 0.5 ms)。`{"ok":true,"shift_ms":-0.4}`。周期与 VHMD 不同时返回错误。`headset_bridge` 每 0.5 秒发送一次 |
 | `preview` | `mode`(`on` / `off`) | 在直接模式下(Linux，或 Windows 上 `display.mode = direct`)开始 / 暂停预览(向共享内存写出画面)。默认关闭，无人查看时不进行 GPU 复制和写入(`preview_viewer.py` 和 `linux_check.py` 会自动开始和停止) |
 | `refresh_rate` | `hz`(1〜240，省略时仅返回当前值) | 更改虚拟显示器的帧率(直接模式，SteamVR 不会停止)。`{"ok":true,"hz":30}` |
+| `control` | `source`(发送端名称,`""` 表示任何人。省略时仅返回当前状态)、`devices`(省略时为全部设备) | 决定由哪个发送端驱动设备(SteamVR 不会停止)。没有控制权的发送端的消息会被丢弃并计数。控制权转移的设备会释放前一个发送端按下的输入(佩戴传感器、电池除外),停止基于速度的预测,并给新的发送端超时宽限。响应: `control`(`owner`、按设备的 `devices`、按发送端的 `sources`: `age_s`・`accepted`・`ignored`)和 `poses`(各设备最新的位置・旋转,接手的一方可以从当前位置继续)。`status` 中也有 `control` |
 | `preview_window` | `mode`(`on` / `off`) | 在 Windows 直接模式(`display.mode = direct`)下显示 / 隐藏预览窗口(HMD 画面)。隐藏期间不进行任何处理 |
 | (`status` 中的 `perf`) | | 驱动自身的负载：`update_thread_cpu_pct`、`receive_thread_cpu_pct`(占单核的 %，每秒更新)、`update_tick_us_avg` / `update_tick_us_max`(每次更新的处理时间) |
 

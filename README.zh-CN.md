@@ -43,6 +43,8 @@
 - **可在无窗口、低负载下运行**：Windows 上也可选择直接模式，并可指定是否显示预览窗口以及帧率(1〜240 Hz，运行中可更改)。画面可从 Python 取出(面向机器学习、自动化)
 - **Python 客户端**(无依赖)及示例、可在 SteamVR 上运行的自动验证脚本
 - **不冒充其他设备**：以自有控制器类型 `vhmd_*` 注册。现有应用的按键绑定通过 SteamVR 的重映射复用
+- **按设备校正与停止**：控制器和追踪器的位置、角度校正(`offset`)，原地固定的暂停以及从 SteamVR 中移除的断开(`tracking`)。无论通过 UDP 还是 VMT 发送都有效
+- **VHMD Link(Windows + Pico 4 Ultra)**：把一体机头显作为 VHMD 的显示和输入，游玩 PC 上的 SteamVR 游戏。画面(HEVC / H.264 / AV1，Wi-Fi 或 USB)、PC 的声音、头显的麦克风、电池与佩戴状态、PICO Motion Tracker 的腰部和脚部、手部追踪(全部关节)。包括连接用和开发用(带统计显示)两个应用，以及 PC 应用(常驻托盘)。详见 [headset/README.md](headset/README.md)
 
 > 用途为 VR 应用的开发与测试、头像 / IK / 全身追踪行为的验证、动作捕捉数据的导入。
 > 请勿用于作弊、冒充他人设备，或在多人环境中进行不正当使用。
@@ -68,6 +70,8 @@
    |---|---|---|
    | Windows | `VHMD_DevKit-<版>-win64.zip` | `powershell -ExecutionPolicy Bypass -File tools/install_driver.ps1` |
    | Linux | `VHMD_DevKit-<版>-linux64.tar.gz` | `tools/install_driver.sh`(glibc 2.38 及以上) |
+
+   Windows 的压缩包中还包含 VHMD Link(PC 应用 `VHMD Link\VHMD Link.exe` 和头显应用 `headset\*.apk`)。在 Pico 4 Ultra 上使用时，请改为运行 `tools/install_link.ps1 -Start`(也会注册驱动。[headset/README.md](headset/README.md#使い方))。
 
    注册前会记录 SteamVR 的设置文件(`openvrpaths.vrpath`、`steamvr.vrsettings`、`chaperone_info.vrchap`)和已注册驱动的列表(Windows：`%LOCALAPPDATA%\VHMD_DevKit\history`，Linux：`~/.local/state/vhmd_devkit/history`)。
 
@@ -153,7 +157,8 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 | `input` | 按键、扳机、摇杆 |
 | `skeleton` | 手指(弯曲值或 31 根骨骼) |
 | `gaze` | 视线 |
-| `config` | `list` / `ping` / `add` / `set_role` / `reset` |
+| `mic` | 麦克风的声音(由 VHMD Link 发送。仅限 Windows) |
+| `config` | `list` / `ping` / `status` / `add` / `set_role` / `reset` / `offset` / `tracking` / `hand_mode` / `control` / `mic` 等 |
 
 - 坐标系遵循 SteamVR(右手系、+Y 向上、-Z 向前、单位米)，旋转为 `[w, x, y, z]`。
 - 非法值(NaN、超出范围、类型错误等)会被丢弃，驱动不会停止。
@@ -277,11 +282,12 @@ FPS 操作工具中的"切换到 Pico"/"切换到 VHMD"按钮作用相同(切换
 
 | 类型 | 命令 | 内容 |
 |---|---|---|
-| C++ 单元测试 | `ctest --preset vs2022-release` | 53 项(解析器、坐标变换、配置、超时、路由器、UDP、标签生成、VMT 兼容 OSC) |
-| Python 单元测试 | `python -m pytest tests/python` | 14 项(客户端、预览读取) |
+| C++ 单元测试 | `ctest --preset vs2022-release` | 69 项(解析器、坐标变换、配置、超时、路由器、UDP、标签生成、VMT 兼容 OSC、校正、手部骨骼、麦克风缓冲区、画面的 UDP 接收) |
+| Python 单元测试 | `python -m pytest tests/python` | 52 项(客户端、预览读取、VHMD Link 的 PC 端) |
+| VHMD Link 的原生部分 | `cargo test`(在 `link/` 中) | 16 项(PC ↔ 头显的约定、纠错、按键分配) |
 | Linux 捕获自测 | `ctest`(Linux) | 用真实 Vulkan 确认共享图像 → 共享内存(无需 SteamVR) |
 | Linux 实机确认 | `python3 tests/integration/linux_check.py` | 直接模式的显示路径 + 集成测试，输出报告 |
-| SteamVR 集成测试 | `python tests/integration/run_integration.py` | 58 项(枚举、按需添加、误差、延迟、输入、骨骼、手部模式切换、视线、佩戴传感器、电池、OpenXR 手部追踪、非法数据包、负载、退出处理)。`vmt.enabled: true` 时会追加 9 项 VMT 兼容 OSC 测试 |
+| SteamVR 集成测试 | `python tests/integration/run_integration.py` | 59 项(枚举、按需添加、误差、延迟、输入、骨骼、手部模式切换、视线、佩戴传感器、电池、OpenXR 手部追踪、非法数据包、负载、退出处理)。`vmt.enabled: true` 时会追加 9 项 VMT 兼容 OSC 测试 |
 | 反复启动/退出 | `python tests/integration/stress_restart.py --cycles 30` | 每次都检查驱动的退出处理以及是否崩溃 |
 | 长时间稳定性 | `python tests/integration/soak_test.py --minutes 30` | 按固定间隔记录帧率、姿态误差、内存增长、警告 |
 
@@ -295,11 +301,14 @@ FPS 操作工具中的"切换到 Pico"/"切换到 VHMD"按钮作用相同(切换
 | 协议规范 | [protocol](docs/protocol.md) | [protocol](docs/en/protocol.md) | [protocol](docs/zh-CN/protocol.md) | [protocol](docs/ko/protocol.md) |
 | 架构、扩展方法 | [architecture](docs/architecture.md) | [architecture](docs/en/architecture.md) | [architecture](docs/zh-CN/architecture.md) | [architecture](docs/ko/architecture.md) |
 | Linux | [linux](docs/linux.md) | [linux](docs/en/linux.md) | [linux](docs/zh-CN/linux.md) | [linux](docs/ko/linux.md) |
+| VHMD Link(头显应用、PC 应用) | [headset/README](headset/README.md) | — | — | — |
+| VHMD Link 的原生部分(Rust) | [link/README](link/README.md) | — | — | — |
+| Pico 4 Ultra 的调查 | [pico4ultra_research](docs/pico4ultra_research.md) | — | — | — |
 | 验证步骤与结果 | [verification](docs/verification.md) | — | — | — |
 | 决策、未处理事项记录 | [decisions](docs/decisions.md) | — | — | — |
 | 变更历史 | [CHANGELOG](CHANGELOG.md) | — | — | — |
 
-验证记录、决策记录和变更历史属于开发记录，因此仅有日文版。
+VHMD Link 的说明、调查/验证/决策记录以及变更历史仅有日文版。
 
 ## 仓库结构
 
@@ -319,7 +328,9 @@ driver/
     controller_device.* 控制器、振动、骨骼
     tracker_device.*    追踪器、角色
     math/ protocol/ config/ state/ net/ util/   不依赖 OpenVR 的核心(单元测试对象)
-clients/python/         vhmd_client 包与 examples/
+clients/python/         vhmd_client 包与 examples/、VHMD Link 的 PC 应用(link.py)
+headset/android/        VHMD Link 的头显应用(OpenXR 原生应用，无需 Gradle 即可构建)
+link/                   VHMD Link 的数据通路(Rust)与头显的替身
 tools/                  注册 / 卸载 / 环境检查(Windows：.ps1、Linux：.sh)、发布包制作、模型生成
 tests/                  unit/(C++)、python/、integration/(SteamVR)
 docs/                   文档(见上表)

@@ -43,6 +43,8 @@ No hardware needed: poses and inputs sent from an external process over UDP/JSON
 - **Runs windowless at low load**: direct mode is available on Windows too, with a choice of whether to show a preview window and of the frame rate (1-240 Hz, changeable while running). Frames can be grabbed from Python (for machine learning and automation)
 - **Python client** (no dependencies) with samples, plus automated verification scripts that run against SteamVR
 - **No impersonation**: registers its own controller types `vhmd_*`. Existing apps' bindings are reused via SteamVR remapping
+- **Per-device offset and pause**: position / rotation offsets for controllers and trackers (`offset`), plus pausing (freeze in place) and disconnecting (remove from SteamVR) (`tracking`). Works however the data is sent, UDP or VMT
+- **VHMD Link (Windows + Pico 4 Ultra)**: turns a standalone headset into VHMD's display and input, so you can play PC SteamVR games. Video (HEVC / H.264 / AV1, over Wi-Fi or USB), PC audio, the headset's microphone, battery and proximity, waist and feet from PICO Motion Tracker, and hand tracking (all joints). Two headset apps, one for connecting and one for development (with a stats overlay), and a PC app (lives in the tray). Details in [headset/README.md](headset/README.md) (Japanese)
 
 > Intended uses: developing and testing VR apps, verifying avatar / IK / full-body tracking behavior, and feeding in motion-capture data.
 > Do not use it for cheating, impersonating other people's devices, or abuse in multiplayer environments.
@@ -68,6 +70,8 @@ A tracker is **added the moment you send to it** (about 40 ms measured), and sho
    |---|---|---|
    | Windows | `VHMD_DevKit-<version>-win64.zip` | `powershell -ExecutionPolicy Bypass -File tools/install_driver.ps1` |
    | Linux | `VHMD_DevKit-<version>-linux64.tar.gz` | `tools/install_driver.sh` (glibc 2.38 or later) |
+
+   The Windows archive also contains VHMD Link (the PC app `VHMD Link\VHMD Link.exe` and the headset apps `headset\*.apk`). To use it with a Pico 4 Ultra, run `tools/install_link.ps1 -Start` instead (it registers the driver too; see [headset/README.md](headset/README.md#使い方)).
 
    Before registering, it records SteamVR's settings files (`openvrpaths.vrpath`, `steamvr.vrsettings`, `chaperone_info.vrchap`) and the list of registered drivers (Windows: `%LOCALAPPDATA%\VHMD_DevKit\history`, Linux: `~/.local/state/vhmd_devkit/history`).
 
@@ -153,7 +157,8 @@ From other languages, just send JSON over UDP.
 | `input` | Buttons, triggers, sticks |
 | `skeleton` | Fingers (curl values or 31 bones) |
 | `gaze` | Eye gaze |
-| `config` | `list` / `ping` / `add` / `set_role` / `reset` |
+| `mic` | Microphone audio (sent by VHMD Link; Windows only) |
+| `config` | `list` / `ping` / `status` / `add` / `set_role` / `reset` / `offset` / `tracking` / `hand_mode` / `control` / `mic`, etc. |
 
 - The coordinate system follows SteamVR (right-handed, +Y up, -Z forward, meters); rotations are `[w, x, y, z]`.
 - Invalid values (NaN, out of range, wrong type, etc.) are discarded, and the driver keeps running.
@@ -277,11 +282,12 @@ The FPS control tool's "Switch to Pico" / "Switch to VHMD" button does the same 
 
 | Kind | Command | Contents |
 |---|---|---|
-| C++ unit tests | `ctest --preset vs2022-release` | 53 tests (parser, coordinate conversion, config, timeouts, router, UDP, label generation, VMT-compatible OSC) |
-| Python unit tests | `python -m pytest tests/python` | 14 tests (client, preview reader) |
+| C++ unit tests | `ctest --preset vs2022-release` | 69 tests (parser, coordinate conversion, config, timeouts, router, UDP, label generation, VMT-compatible OSC, offsets, hand bones, microphone buffer, video UDP receive) |
+| Python unit tests | `python -m pytest tests/python` | 52 tests (client, preview reader, VHMD Link PC side) |
+| VHMD Link native part | `cargo test` (in `link/`) | 16 tests (PC ↔ headset protocol, error correction, button mapping) |
 | Linux capture self-test | `ctest` (Linux) | Checks shared image → shared memory with real Vulkan (no SteamVR needed) |
 | Linux on-hardware check | `python3 tests/integration/linux_check.py` | Direct-mode display path + integration tests, writes a report |
-| SteamVR integration tests | `python tests/integration/run_integration.py` | 58 items (enumeration, on-demand addition, error, latency, input, skeleton, hand mode switching, eye gaze, proximity sensor, battery, OpenXR hand tracking, invalid packets, load, shutdown). With `vmt.enabled: true`, 9 VMT-compatible OSC items are added |
+| SteamVR integration tests | `python tests/integration/run_integration.py` | 59 items (enumeration, on-demand addition, error, latency, input, skeleton, hand mode switching, eye gaze, proximity sensor, battery, OpenXR hand tracking, invalid packets, load, shutdown). With `vmt.enabled: true`, 9 VMT-compatible OSC items are added |
 | Repeated start/stop | `python tests/integration/stress_restart.py --cycles 30` | Checks the driver's shutdown and whether it crashed on every cycle |
 | Long-run stability | `python tests/integration/soak_test.py --minutes 30` | Records frame rate, pose error, memory growth and warnings at regular intervals |
 
@@ -295,11 +301,14 @@ The integration tests require `pip install openvr`. In environments with an over
 | Protocol specification | [protocol](docs/protocol.md) | [protocol](docs/en/protocol.md) | [protocol](docs/zh-CN/protocol.md) | [protocol](docs/ko/protocol.md) |
 | Architecture and extension | [architecture](docs/architecture.md) | [architecture](docs/en/architecture.md) | [architecture](docs/zh-CN/architecture.md) | [architecture](docs/ko/architecture.md) |
 | Linux | [linux](docs/linux.md) | [linux](docs/en/linux.md) | [linux](docs/zh-CN/linux.md) | [linux](docs/ko/linux.md) |
+| VHMD Link (headset apps, PC app) | [headset/README](headset/README.md) | — | — | — |
+| VHMD Link native part (Rust) | [link/README](link/README.md) | — | — | — |
+| Pico 4 Ultra research | [pico4ultra_research](docs/pico4ultra_research.md) | — | — | — |
 | Verification procedures and results | [verification](docs/verification.md) | — | — | — |
 | Record of decisions and open items | [decisions](docs/decisions.md) | — | — | — |
 | Changelog | [CHANGELOG](CHANGELOG.md) | — | — | — |
 
-The verification records, decision records and changelog are development logs, so they are available in Japanese only.
+The VHMD Link documentation, the research, verification and decision records, and the changelog are available in Japanese only.
 
 ## Repository layout
 
@@ -319,7 +328,9 @@ driver/
     controller_device.* Controllers, haptics, skeleton
     tracker_device.*    Trackers, roles
     math/ protocol/ config/ state/ net/ util/   OpenVR-independent core (covered by unit tests)
-clients/python/         vhmd_client package and examples/
+clients/python/         vhmd_client package and examples/, VHMD Link PC app (link.py)
+headset/android/        VHMD Link headset app (native OpenXR app, built without Gradle)
+link/                   VHMD Link data path (Rust) and a headset stand-in
 tools/                  Register / unregister / environment check (Windows: .ps1, Linux: .sh), packaging, model generation
 tests/                  unit/ (C++), python/, integration/ (SteamVR)
 docs/                   Documentation (table above)
