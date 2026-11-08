@@ -1865,10 +1865,18 @@ XrVector2f GetVec2(App& app, XrAction a, XrPath sub) {
     return s.isActive ? s.currentState : XrVector2f{0, 0};
 }
 
+// The runtime can flag a pose valid with an all-zero orientation (seen with
+// PICO's body tracking: one joint, every frame), which the driver rejects
+// ("degenerate quaternion"). Such a pose goes as not valid.
+bool IsRotation(const XrQuaternionf& q) {
+    const float n = q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z;
+    return std::isfinite(n) && n > 0.25f && n < 2.25f;
+}
+
 void AppendPose(std::string& out, const char* id, const XrSpaceLocation& loc) {
     char buf[256];
     const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
-    if ((loc.locationFlags & need) != need) {
+    if ((loc.locationFlags & need) != need || !IsRotation(loc.pose.orientation)) {
         snprintf(buf, sizeof(buf), "{\"type\":\"pose\",\"id\":\"%s\",\"valid\":false,\"src\":\"manual\"}", id);
     } else {
         const XrPosef& p = loc.pose;
