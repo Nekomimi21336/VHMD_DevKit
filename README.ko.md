@@ -173,6 +173,7 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 | 기록과 재생 | `python -m vhmd_client.replay record walk` → `play walk --take` | 드라이버가 디바이스를 움직인 데이터를 시각과 함께 기록하고 같은 간격으로 다시 보낸다. 같은 동작을 몇 번이든 시험할 수 있음 |
 | 디바이스 데이터 읽기 | `python clients/python/examples/read_devices.py --csv out.csv` | 자신의 프로그램에서 자세와 입력을 읽는 예(`VHMDClient.inspect`) |
 | 통계 그래프 | PC 앱의 개발자용 표시 → "통계 그래프" | VHMD Link의 최근 5분간 화면 수·비트레이트·시간과 CSV |
+| 표시 형태(실험적) | PC 앱의 개발자용 표시 → "表示の形 / Display shape", 또는 `python -m vhmd_client.display_view` | SteamVR을 멈추지 않고 IPD, 시야각, 렌더 크기를 변경. SteamVR 시작 시의 값과 현재 값을 나란히 표시하고, 버튼 하나로 시작 시의 값으로 되돌림. 저장하지 않음 |
 
 ## 키보드와 마우스로 조작하기(Windows)
 
@@ -293,7 +294,7 @@ FPS 조작 도구의 "Pico 로 전환" / "VHMD 로 전환" 버튼으로도 같�
 | 종류 | 명령 | 내용 |
 |---|---|---|
 | C++ 단위 테스트 | `ctest --preset vs2022-release` | 73건(파서, 좌표 변환, 설정, 타임아웃, 라우터, UDP, 라벨 생성, VMT 호환 OSC, 보정, 손의 본, 마이크 버퍼, 영상 UDP 수신, 입력 확인, 기록) |
-| Python 단위 테스트 | `python -m pytest tests/python` | 63건(클라이언트, 프리뷰 읽기, VHMD Link의 PC 측, 재생) |
+| Python 단위 테스트 | `python -m pytest tests/python` | 65건(클라이언트, 프리뷰 읽기, VHMD Link의 PC 측, 재생) |
 | VHMD Link 네이티브 부분 | `cargo test`(`link/`에서) | 16건(PC ↔ 헤드셋 간 규약, 오류 정정, 버튼 할당) |
 | Linux 캡처 셀프 테스트 | `ctest`(Linux) | 실제 Vulkan으로 공유 이미지 → 공유 메모리를 확인(SteamVR 불필요) |
 | Linux 실제 장비 확인 | `python3 tests/integration/linux_check.py` | 다이렉트 모드의 표시 경로 + 통합 테스트, 리포트 출력 |

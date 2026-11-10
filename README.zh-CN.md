@@ -173,6 +173,7 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 | 录制与回放 | `python -m vhmd_client.replay record walk` → `play walk --take` | 驱动按时间记录驱动设备的数据，并以相同间隔重新发送，可反复测试同一动作 |
 | 读取设备数据 | `python clients/python/examples/read_devices.py --csv out.csv` | 在自己的程序中读取姿态和输入的示例(`VHMDClient.inspect`) |
 | 统计图表 | PC 应用的开发者视图 →“统计图表” | VHMD Link 最近 5 分钟的画面数、码率、时间，并可导出 CSV |
+| 显示形状(实验性) | PC 应用的开发者视图 →“表示の形 / Display shape”，或 `python -m vhmd_client.display_view` | 在不停止 SteamVR 的情况下更改瞳距、视场角和渲染尺寸。并排显示 SteamVR 启动时的值和当前值，一个按钮即可恢复为启动时的值。不保存 |
 
 ## 用键盘和鼠标操作(Windows)
 
@@ -293,7 +294,7 @@ FPS 操作工具中的"切换到 Pico"/"切换到 VHMD"按钮作用相同(切换
 | 类型 | 命令 | 内容 |
 |---|---|---|
 | C++ 单元测试 | `ctest --preset vs2022-release` | 73 项(解析器、坐标变换、配置、超时、路由器、UDP、标签生成、VMT 兼容 OSC、校正、手部骨骼、麦克风缓冲区、画面的 UDP 接收、输入检查、录制) |
-| Python 单元测试 | `python -m pytest tests/python` | 63 项(客户端、预览读取、VHMD Link 的 PC 端、回放) |
+| Python 单元测试 | `python -m pytest tests/python` | 65 项(客户端、预览读取、VHMD Link 的 PC 端、回放) |
 | VHMD Link 的原生部分 | `cargo test`(在 `link/` 中) | 16 项(PC ↔ 头显的约定、纠错、按键分配) |
 | Linux 捕获自测 | `ctest`(Linux) | 用真实 Vulkan 确认共享图像 → 共享内存(无需 SteamVR) |
 | Linux 实机确认 | `python3 tests/integration/linux_check.py` | 直接模式的显示路径 + 集成测试，输出报告 |

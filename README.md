@@ -173,6 +173,7 @@ with VHMDClient() as c:                            # 127.0.0.1:39570
 | 記録と再生 | `python -m vhmd_client.replay record walk` → `play walk --take` | ドライバが機器を動かしたデータを時刻つきで記録し、同じ間隔で送り直す。同じ動きを何度でも試せる |
 | 機器のデータを読む | `python clients/python/examples/read_devices.py --csv out.csv` | 姿勢と入力を自分のプログラムで読む例(`VHMDClient.inspect`) |
 | 統計のグラフ | PC のアプリの開発者向けの表示 →「統計のグラフ」 | VHMD Link の画像の数・ビットレート・時間の直近 5 分と CSV |
+| 表示の形(実験的) | PC のアプリの開発者向けの表示 →「表示の形」、または `python -m vhmd_client.display_view` | IPD・視野・描画の大きさを、SteamVR を止めずに変える。SteamVR の起動時の値といまの値を並べて表示し、ボタン 1 つで起動時の値に戻す。保存はしない |
 
 ## キーボードとマウスで操作する(Windows)
 
@@ -293,7 +294,7 @@ FPS 操作ツールの「Pico に切り替え」「VHMD に切り替え」ボタ
 | 種類 | コマンド | 内容 |
 |---|---|---|
 | C++ 単体テスト | `ctest --preset vs2022-release` | 73 件(パーサ、座標変換、設定、タイムアウト、ルーター、UDP、ラベル生成、VMT 互換 OSC、補正、手の骨、マイクのバッファ、映像の UDP 受信、入力の確認、記録) |
-| Python 単体テスト | `python -m pytest tests/python` | 63 件(クライアント、プレビュー読み取り、VHMD Link の PC 側、記録の再生) |
+| Python 単体テスト | `python -m pytest tests/python` | 65 件(クライアント、プレビュー読み取り、VHMD Link の PC 側、記録の再生) |
 | VHMD Link のネイティブ部分 | `cargo test`(`link/` で) | 16 件(PC ↔ ヘッドセットの取り決め、誤り訂正、ボタンの割り当て) |
 | Linux キャプチャセルフテスト | `ctest`(Linux) | 実際の Vulkan で共有イメージ → 共有メモリを確認(SteamVR 不要) |
 | Linux 実機確認 | `python3 tests/integration/linux_check.py` | ダイレクトモードの表示経路 + 統合テスト、レポート出力 |

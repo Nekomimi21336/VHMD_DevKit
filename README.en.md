@@ -173,6 +173,7 @@ From other languages, just send JSON over UDP.
 | Record and replay | `python -m vhmd_client.replay record walk` → `play walk --take` | The driver records what moved the devices, with its timing, and sends it again at the same pace: the same motion as often as needed |
 | Read device data | `python clients/python/examples/read_devices.py --csv out.csv` | An example of reading poses and inputs from your own program (`VHMDClient.inspect`) |
 | Statistics over time | PC app, developer view → "Statistics over time" | The last 5 minutes of VHMD Link's pictures, bitrate and times, and a CSV |
+| Display shape (experimental) | PC app, developer view → "Display shape", or `python -m vhmd_client.display_view` | Changes the IPD, field of view and render size while SteamVR runs. Shows the values SteamVR started with next to the current ones; one button goes back to the startup values. Nothing is saved |
 
 ## Keyboard and mouse control (Windows)
 
@@ -293,7 +294,7 @@ The FPS control tool's "Switch to Pico" / "Switch to VHMD" button does the same 
 | Kind | Command | Contents |
 |---|---|---|
 | C++ unit tests | `ctest --preset vs2022-release` | 73 tests (parser, coordinate conversion, config, timeouts, router, UDP, label generation, VMT-compatible OSC, offsets, hand bones, microphone buffer, video UDP receive, input inspection, recording) |
-| Python unit tests | `python -m pytest tests/python` | 63 tests (client, preview reader, VHMD Link PC side, replay) |
+| Python unit tests | `python -m pytest tests/python` | 65 tests (client, preview reader, VHMD Link PC side, replay) |
 | VHMD Link native part | `cargo test` (in `link/`) | 16 tests (PC ↔ headset protocol, error correction, button mapping) |
 | Linux capture self-test | `ctest` (Linux) | Checks shared image → shared memory with real Vulkan (no SteamVR needed) |
 | Linux on-hardware check | `python3 tests/integration/linux_check.py` | Direct-mode display path + integration tests, writes a report |

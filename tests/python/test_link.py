@@ -606,3 +606,87 @@ def test_mode_original_inferred_after_earlier_switch(steamvr):
     rec = mode.original_settings()
     assert rec["driver_pico"]["enable"] is None   # SteamVR's default (physical driver on)
     assert read(mode.ORIGINAL)["inferred"] is True
+
+
+# -- the display window (IPD, field of view, render size while SteamVR runs) -------------
+def _display_report(**now):
+    startup = {"render": [1920, 1920], "ipd": 0.0718, "tan": [[-1.28, 1.28, 1.28, -1.28], [-1.28, 1.28, 1.28, -1.28]]}
+    return {"startup": startup, "now": {**startup, **now}, "changed": bool(now), "live": True}
+
+
+def test_display_controls_and_proposal():
+    from vhmd_client import display_view as dv
+    d = _display_report()
+    s, now = d["startup"], d["now"]
+    # The controls for the startup values, and nothing to send from there.
+    assert dv.controls_from(s, now) == (71.8, 100, 100)
+    assert dv.proposal(s, now, 71.8, 100, 100) == {}
+    # Only what differs from now is named.
+    assert dv.proposal(s, now, 66.0, 100, 100) == {"ipd": 0.066}
+    fov = dv.proposal(s, now, 71.8, 90, 100)
+    assert set(fov) == {"tan"} and fov["tan"][0] == [-1.152, 1.152, 1.152, -1.152] and fov["tan"][1] == fov["tan"][0]
+    assert dv.proposal(s, now, 71.8, 100, 75) == {"render": [1440, 1440]}
+    # Percentages are of the startup values, whatever the current ones are.
+    changed = _display_report(render=[1440, 1440], ipd=0.066)
+    assert dv.controls_from(changed["startup"], changed["now"]) == (66.0, 100, 75)
+    assert dv.proposal(changed["startup"], changed["now"], 66.0, 100, 75) == {}
+    assert dv.proposal(changed["startup"], changed["now"], 71.8, 100, 100) == {"ipd": 0.0718, "render": [1920, 1920]}
+    # Sizes are multiples of 16 within the limits; the IPD stays within the control's range.
+    assert dv.scaled_render({"render": [1832, 1920]}, 85) == [1552, 1632]
+    assert dv.scaled_render({"render": [100, 8000]}, 50) == [64, 4000] and dv.scaled_render({"render": [8000, 8000]}, 150) == [8192, 8192]
+    assert dv.proposal(s, now, 20.0, 100, 100) == {"ipd": 0.04}
+    h, v = dv.fov_degrees([[-1.0, 1.0, 1.0, -1.0]] * 2)
+    assert abs(h - 90.0) < 1e-6 and abs(v - 90.0) < 1e-6
+    assert dv.describe(dv.TEXT["en"], {"ipd": 0.066, "render": [1440, 1440]}) == "IPD 66.0 mm, Render size 1440 x 1440"
+    assert set(dv.TEXT["ja"]) == set(dv.TEXT["en"])
+
+
+def test_display_window_applies_and_resets():
+    tk = pytest.importorskip("tkinter")
+    from vhmd_client import display_view as dv
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display")
+    root.withdraw()
+    state = {"report": _display_report(), "sent": []}
+
+    def request(op, **args):
+        assert op == "display"
+        if args:
+            state["sent"].append(args)
+            if args.get("reset"):
+                state["report"] = _display_report()
+            else:
+                state["report"] = _display_report(**{**{k: v for k, v in state["report"]["now"].items()
+                                                         if state["report"]["changed"]}, **args})
+        return {"ok": True, "display": state["report"]}
+
+    def pump(until, timeout=3.0):
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < timeout and not until():
+            root.update()
+            time.sleep(0.02)
+        return until()
+
+    w = dv.DisplayWindow(root, request, "ja", own_window=False)   # in the hidden root: nothing shows on screen
+    try:
+        assert pump(lambda: w.cells[("ipd", "now")].cget("text") == "71.8 mm")
+        assert w.cells[("size", "startup")].cget("text") == "1920 x 1920" and w.controls() == (71.8, 100, 100)
+        assert "disabled" in w.apply_btn.state() and "disabled" in w.reset_btn.state()   # nothing to send, nothing to undo
+        # Moving a control says what Apply would send, and Apply sends just that.
+        w.vars["c_ipd"].set(66.0)
+        w.vars["c_size"].set(76.0)   # rounds to 75 %
+        assert pump(lambda: "disabled" not in w.apply_btn.state())
+        assert "66.0 mm" in w.will_lbl.cget("text") and "1440 x 1440" in w.will_lbl.cget("text")
+        w.apply()
+        assert pump(lambda: w.cells[("ipd", "now")].cget("text") == "66.0 mm")
+        assert state["sent"] == [{"ipd": 0.066, "render": [1440, 1440]}]
+        assert w.cells[("ipd", "startup")].cget("text") == "71.8 mm"          # the startup column never moves
+        assert pump(lambda: "disabled" not in w.reset_btn.state()) and "disabled" in w.apply_btn.state()
+        # Back to the startup values with one button; the controls follow.
+        w.reset()
+        assert pump(lambda: w.cells[("size", "now")].cget("text") == "1920 x 1920")
+        assert state["sent"][-1] == {"reset": True} and pump(lambda: w.controls() == (71.8, 100, 100))
+    finally:
+        w.close()   # destroys the root

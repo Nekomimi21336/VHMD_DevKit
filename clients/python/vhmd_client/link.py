@@ -37,6 +37,7 @@ from . import bindings, headset_info, mode, offsets, replay, tracking
 from .paths import IS_WINDOWS, config_home, data_dir
 from .ui_style import PALETTES, os_theme, setup_style, ui_fonts, ui_language
 from .headset_bridge import MIC_DEVICE, Bridge, BridgeOptions
+from .display_view import DisplayWindow
 from .inspector import InspectorWindow
 from .stats_view import StatsHistory, StatsWindow, sample_from
 from .tray import TrayIcon
@@ -134,7 +135,7 @@ TEXT = {
         "refresh": "Refresh rate", "r72": "72 Hz", "r90": "90 Hz (more GPU load)",
         "dev_view": "Developer view", "startup": "Open when Windows starts",
         "take_back": "Give control to the headset", "fps_tool": "Keyboard/mouse control", "log": "Log",
-        "inspect": "Inputs and hands", "stats_graph": "Statistics over time",
+        "inspect": "Inputs and hands", "stats_graph": "Statistics over time", "display_shape": "Display shape",
         "headset_stats": "Show the statistics in the headset (Dev edition)",
         "rec_start": "Record", "rec_stop": "Stop recording", "play": "Play", "play_stop": "Stop",
         "rec_on": "Recording {s:.0f} s", "rec_done": "Recorded {s:.1f} s: {name}",
@@ -228,7 +229,7 @@ TEXT = {
         "refresh": "リフレッシュレート", "r72": "72 Hz", "r90": "90 Hz(GPU の負荷が増える)",
         "dev_view": "開発者向けの表示", "startup": "Windows の起動時に開く",
         "take_back": "操作をヘッドセットに戻す", "fps_tool": "キーボード・マウス操作", "log": "ログ",
-        "inspect": "入力と手の確認", "stats_graph": "統計のグラフ",
+        "inspect": "入力と手の確認", "stats_graph": "統計のグラフ", "display_shape": "表示の形",
         "headset_stats": "ヘッドセットの中に統計を表示する(開発版)",
         "rec_start": "記録", "rec_stop": "記録を止める", "play": "再生", "play_stop": "止める",
         "rec_on": "記録中 {s:.0f} 秒", "rec_done": "記録しました({s:.1f} 秒): {name}",
@@ -666,6 +667,9 @@ class LinkApp:
         ttk.Button(btns, text=t["stats_graph"], command=self.open_stats).pack(side="left", padx=(8, 0))
         if IS_WINDOWS:   # the keyboard / mouse tool is Windows only
             ttk.Button(btns, text=t["fps_tool"], command=self.fps_tool).pack(side="left", padx=(8, 0))
+        btns2 = ttk.Frame(dc, style="Card.TFrame")
+        btns2.pack(fill="x", pady=(6, 0))
+        ttk.Button(btns2, text=t["display_shape"], command=self.open_display).pack(side="left")
         hs_stats_var = tk.BooleanVar(value=bool(self.s["headset_stats"]))
         ttk.Checkbutton(dc, text=t["headset_stats"], style="Card.TCheckbutton", variable=hs_stats_var,
                         command=lambda: self.set_perf("headset_stats", hs_stats_var.get())).pack(anchor="w", pady=(8, 0))
@@ -1028,6 +1032,14 @@ class LinkApp:
             self.inspector.win.lift()
             return
         self.inspector = InspectorWindow(self.root, self.bridge.request, self.lang, "left_hand", self.pal, self.fonts)
+
+    def open_display(self) -> None:
+        """IPD, field of view and render size while SteamVR runs, with the startup
+        values next to them and a way back (config op "display")."""
+        if getattr(self, "display_win", None) and not self.display_win.closed:
+            self.display_win.win.lift()
+            return
+        self.display_win = DisplayWindow(self.root, self.bridge.request, self.lang, self.pal, self.fonts, log=self.log)
 
     def fps_tool(self) -> None:
         if FROZEN:   # the same exe runs the tool
