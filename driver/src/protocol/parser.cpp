@@ -330,6 +330,37 @@ std::string ParseConfig(const json& obj, Message& out) {
         for (const auto& d : *devs)
             if (d.is_string() && m.devices.size() < 64) m.devices.push_back(d.get<std::string>().substr(0, 64));
     }
+    if (m.op == "display") {
+        // What the picture looks like: a field that is there but malformed is an
+        // error, never a silent "no change".
+        if (auto it = obj.find("render"); it != obj.end()) {
+            if (!it->is_array() || it->size() != 2 || !(*it)[0].is_number() || !(*it)[1].is_number())
+                return "render: expected [width, height]";
+            m.display.render = {(*it)[0].get<double>(), (*it)[1].get<double>()};
+        }
+        if (auto it = obj.find("ipd"); it != obj.end()) {
+            if (!it->is_number()) return "ipd: expected a number (meters)";
+            m.display.ipd = it->get<double>();
+        }
+        if (auto it = obj.find("tan"); it != obj.end()) {
+            std::array<double, 8> t{};
+            bool ok = it->is_array() && it->size() == 2;
+            for (size_t e = 0; ok && e < 2; ++e) {
+                const auto& eye = (*it)[e];
+                ok = eye.is_array() && eye.size() == 4;
+                for (size_t i = 0; ok && i < 4; ++i) {
+                    ok = eye[i].is_number();
+                    if (ok) t[e * 4 + i] = eye[i].get<double>();
+                }
+            }
+            if (!ok) return "tan: expected [[left, right, up, down], [left, right, up, down]]";
+            m.display.tan = t;
+        }
+        if (auto it = obj.find("reset"); it != obj.end()) {
+            if (!it->is_boolean()) return "reset: expected true or false";
+            m.display.reset = it->get<bool>();
+        }
+    }
     out = std::move(m);
     return {};
 }

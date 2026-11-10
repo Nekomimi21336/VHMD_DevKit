@@ -291,6 +291,31 @@ class VHMDClient:
             raise ValueError(r.get("error", "refresh_rate failed"))
         return float(r.get("hz", 0))
 
+    def display(self, render: Optional[Sequence[int]] = None, ipd: Optional[float] = None,
+                tan: Optional[Sequence[Sequence[float]]] = None, reset: bool = False) -> Dict[str, Any]:
+        """Change the HMD display's shape while SteamVR runs, or (without
+        arguments) read it. Returns {"startup": {...}, "now": {...}, "changed":
+        bool, "live": bool}: the values SteamVR started with and the current ones,
+        each {"render": [w, h], "ipd": meters, "tan": [[l, r, u, d], [l, r, u, d]]}.
+
+        render: per-eye size (64-8192). ipd: meters (0.04-0.09). tan: each eye's
+        field of view as tangents, left eye first (left and down negative).
+        reset=True goes back to the startup values (other arguments apply on top).
+        Nothing is saved: a SteamVR restart also returns to the startup values."""
+        args: Dict[str, Any] = {}
+        if render is not None:
+            args["render"] = [int(render[0]), int(render[1])]
+        if ipd is not None:
+            args["ipd"] = float(ipd)
+        if tan is not None:
+            args["tan"] = [[float(x) for x in eye] for eye in tan]
+        if reset:
+            args["reset"] = True
+        r = self.request("display", **args)
+        if not r.get("ok"):
+            raise ValueError(r.get("error", "display failed"))
+        return r["display"]
+
     def preview_window(self, on: bool = True) -> None:
         """Show (or hide) the preview window: the HMD image in a desktop window
         (Windows, display.mode = direct). Hidden costs nothing."""

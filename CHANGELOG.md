@@ -2,8 +2,14 @@
 
 ## 未公開
 
+### 追加
+- **表示の形を動作中に変える(実験的、開発者向け)**(`config` の `display`、`VHMDClient.display()`): HMD の描画の大きさ、視野、IPD を SteamVR を止めずに変える。ドライバーは SteamVR の起動時の値を覚えていて、返答に起動時の値といまの値を並べて返し、`reset` で起動時の値に戻す。設定には書かないので、SteamVR を再起動しても起動時の値に戻る。視野は SteamVR と映像のストリームの両方に同時に伝える(片方だけ変えると像がゆがむため)。範囲は `vhmd_display` の設定と同じ。SteamVR には `IVRServerDriverHost` の `SetRecommendedRenderTargetSize` / `SetDisplayProjectionRaw` / `SetDisplayEyeToHead` で伝える。**SteamVR での動作確認はまだ**(確認用のスクリプト `tests/integration/display_check.py`)。
+
 ### 修正
 - 体のトラッキングをオンにしていると、ヘッドセットのアプリが回転がすべて 0 の姿勢を毎フレーム送り、ドライバーが毎秒 200 件ほど捨てていた(SteamVR のログに `degenerate quaternion`)。PICO の体のトラッキングは、有効と言いながら回転が 0 の関節を返すことがある。ヘッドセットのアプリは、回転になっていない姿勢を「無効」(`"valid":false`)として送る。トラッカーは増えない。
+
+### テスト
+- C++: `display` の値の検査・反映・リセット、ルーターの操作(単体テスト 73 件)。Python: `VHMDClient.display()`(63 件)。Linux(WSL)でもビルドと単体テストが通る。
 
 ## v0.7.0(2026-11-04)
 

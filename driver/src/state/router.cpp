@@ -11,6 +11,7 @@
 
 #include "protocol/osc.h"
 #include "protocol/parser.h"
+#include "state/display_values.h"
 
 namespace vhmd {
 namespace {
@@ -458,6 +459,23 @@ std::optional<std::string> MessageRouter::HandleConfig(const ConfigMessage& m, C
             r["ok"] = true; // query only
         }
         if (hooks_.refresh_rate) r["hz"] = hooks_.refresh_rate();
+    } else if (m.op == "display") {
+        // {"op":"display","render":[w,h],"ipd":0.065,"tan":[[l,r,u,d],[l,r,u,d]]}
+        // changes the display's shape while SteamVR runs; {"reset":true} goes back
+        // to the startup values; nothing = query. The reply always carries both.
+        if (!hooks_.display_values || !hooks_.set_display) {
+            r["ok"] = false;
+            r["error"] = "display not available";
+        } else {
+            std::string err;
+            if (m.display.Any()) {
+                err = ValidateDisplayChange(m.display);
+                if (err.empty()) err = hooks_.set_display(m.display);
+            }
+            r["ok"] = err.empty();
+            if (!err.empty()) r["error"] = err;
+            r["display"] = json::parse(hooks_.display_values(), nullptr, false);
+        }
     } else if (m.op == "preview_window") {
         if (m.mode != "on" && m.mode != "off") {
             r["ok"] = false;

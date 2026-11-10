@@ -15,6 +15,7 @@
 #include "config/roles.h"
 #include "net/udp_socket.h"
 #include "state/device_state.h"
+#include "state/display_values.h"
 #include "state/mic_buffer.h"
 #include "state/router.h"
 
@@ -264,6 +265,117 @@ TEST(router_refresh_rate_op) {
     CHECK(bad["ok"] == false && hz == 30.0);
     auto bad2 = nlohmann::json::parse(*router.HandleDatagram(R"({"type":"config","op":"refresh_rate","hz":1000})", now));
     CHECK(bad2["ok"] == false);
+}
+
+TEST(display_change_validation_and_apply) {
+    DisplayValues startup;
+    startup.render_width = 1920;
+    startup.render_height = 1920;
+    startup.ipd_meters = 0.0718f;
+    for (int e = 0; e < 2; ++e) {
+        startup.eye_tan[e][0] = startup.eye_tan[e][3] = -1.28f;
+        startup.eye_tan[e][1] = startup.eye_tan[e][2] = 1.28f;
+    }
+    // Only the named fields change.
+    DisplayChange size;
+    size.render = {2160.0, 2160.0};
+    CHECK(ValidateDisplayChange(size).empty());
+    DisplayValues v = ApplyDisplayChange(startup, startup, size);
+    CHECK(v.render_width == 2160 && v.render_height == 2160 && v.ipd_meters == startup.ipd_meters);
+    CHECK(v.eye_tan[1][2] == startup.eye_tan[1][2] && v != startup);
+    DisplayChange ipd;
+    ipd.ipd = 0.064;
+    v = ApplyDisplayChange(v, startup, ipd);
+    CHECK(v.render_width == 2160 && std::abs(v.ipd_meters - 0.064f) < 1e-6f);
+    DisplayChange fov;
+    fov.tan = {-1.0, 0.9, 1.1, -1.2, -0.9, 1.0, 1.1, -1.2};
+    CHECK(ValidateDisplayChange(fov).empty());
+    v = ApplyDisplayChange(v, startup, fov);
+    CHECK(v.eye_tan[0][1] == 0.9f && v.eye_tan[1][0] == -0.9f && v.eye_tan[1][3] == -1.2f);
+    // Reset: everything as SteamVR started; with another field, that one on top.
+    DisplayChange reset;
+    reset.reset = true;
+    CHECK(ApplyDisplayChange(v, startup, reset) == startup);
+    reset.ipd = 0.06;
+    const DisplayValues r = ApplyDisplayChange(v, startup, reset);
+    CHECK(r.render_width == 1920 && r.eye_tan[0][1] == 1.28f && std::abs(r.ipd_meters - 0.06f) < 1e-6f);
+    // Limits: those of the vhmd_display settings.
+    auto bad = [](DisplayChange c) { return !ValidateDisplayChange(c).empty(); };
+    DisplayChange c;
+    c.render = {32.0, 1920.0};
+    CHECK(bad(c));
+    c.render = {1920.0, 9000.0};
+    CHECK(bad(c));
+    c.render = {1920.5, 1920.0};
+    CHECK(bad(c));
+    c = {};
+    c.ipd = 0.03;
+    CHECK(bad(c));
+    c.ipd = 0.1;
+    CHECK(bad(c));
+    c = {};
+    c.tan = {1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0};   // left eye: left > right
+    CHECK(bad(c));
+    c.tan = {-1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0};   // left eye: up < down
+    CHECK(bad(c));
+    c.tan = {-1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 0.0, -1.0};   // a zero
+    CHECK(bad(c));
+    c.tan = {-1.0, 1.0, 1.0, -1.0, -1.0, 11.0, 1.0, -1.0};  // out of range
+    CHECK(bad(c));
+}
+
+TEST(router_display_op) {
+    DriverConfig cfg = DefaultConfig();
+    std::vector<std::shared_ptr<DeviceState>> states;
+    for (const auto& dc : cfg.devices) states.push_back(std::make_shared<DeviceState>(dc, cfg));
+    DisplayValues startup, values;
+    int calls = 0;
+    RouterHooks hooks;
+    hooks.set_display = [&](const DisplayChange& c) -> std::string {
+        ++calls;
+        values = ApplyDisplayChange(values, startup, c);
+        return "";
+    };
+    hooks.display_values = [&] {
+        return nlohmann::json{{"startup", DisplayValuesJson(startup)}, {"now", DisplayValuesJson(values)},
+                              {"changed", values != startup}, {"live", true}}.dump();
+    };
+    MessageRouter router(cfg, states, hooks);
+    const auto now = Clock::now();
+    auto ask = [&](const char* text) { return nlohmann::json::parse(*router.HandleDatagram(text, now)); };
+
+    // A query changes nothing and shows both sets of values.
+    auto q = ask(R"({"type":"config","op":"display"})");
+    CHECK(q["ok"] == true && calls == 0 && q["display"]["changed"] == false);
+    CHECK(q["display"]["startup"]["render"][0] == 1440 && q["display"]["now"]["render"][1] == 1600);
+
+    auto set = ask(R"({"type":"config","op":"display","render":[2000,2100],"ipd":0.07})");
+    CHECK(set["ok"] == true && calls == 1 && values.render_width == 2000 && values.render_height == 2100);
+    CHECK(set["display"]["changed"] == true && set["display"]["startup"]["render"][0] == 1440);
+    CHECK(std::abs(set["display"]["now"]["ipd"].get<double>() - 0.07) < 1e-6);
+
+    auto fov = ask(R"({"type":"config","op":"display","tan":[[-1.2,1.1,1.0,-1.3],[-1.1,1.2,1.0,-1.3]]})");
+    CHECK(fov["ok"] == true && calls == 2 && values.eye_tan[0][0] == -1.2f && values.eye_tan[1][1] == 1.2f);
+
+    // Rejected before the hook: the values stay, the reply still carries them.
+    auto bad = ask(R"({"type":"config","op":"display","ipd":0.5})");
+    CHECK(bad["ok"] == false && calls == 2 && bad["display"]["now"]["render"][0] == 2000);
+    auto bad2 = ask(R"({"type":"config","op":"display","tan":[[1,-1,1,-1],[-1,1,1,-1]]})");
+    CHECK(bad2["ok"] == false && calls == 2);
+    // Malformed fields are errors, not "no change" (the datagram gets no reply and counts as rejected).
+    const uint64_t rejected = router.RejectedMessages();
+    CHECK(!router.HandleDatagram(R"({"type":"config","op":"display","render":"big"})", now).has_value());
+    CHECK(!router.HandleDatagram(R"({"type":"config","op":"display","tan":[[-1,1,1],[-1,1,1,-1]]})", now).has_value());
+    CHECK(!router.HandleDatagram(R"({"type":"config","op":"display","reset":"yes"})", now).has_value());
+    CHECK(router.RejectedMessages() == rejected + 3 && calls == 2);
+
+    auto reset = ask(R"({"type":"config","op":"display","reset":true})");
+    CHECK(reset["ok"] == true && calls == 3 && values == startup && reset["display"]["changed"] == false);
+
+    // Without an HMD behind it.
+    MessageRouter bare(cfg, states, RouterHooks{});
+    auto none = nlohmann::json::parse(*bare.HandleDatagram(R"({"type":"config","op":"display"})", now));
+    CHECK(none["ok"] == false);
 }
 
 TEST(config_shipped_file_parses_cleanly) {

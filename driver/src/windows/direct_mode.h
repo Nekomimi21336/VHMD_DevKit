@@ -85,6 +85,11 @@ public:
         if (stream_) stream_->SetRefreshRate(hz);
     }
     double RefreshRate() const { return refresh_hz_; }
+    // The field of view the frames are rendered with from now on (OpenXR angles,
+    // radians): sent to the headset with the video.
+    void SetStreamFov(const float fov[2][4]) {
+        if (stream_) stream_->SetFov(fov);
+    }
     // Moves the vsync clock by `seconds` (positive = later), spread over the next
     // frames. Replaces a shift still pending.
     void ShiftVsync(double seconds) {

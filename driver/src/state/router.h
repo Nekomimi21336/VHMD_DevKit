@@ -53,6 +53,11 @@ struct RouterHooks {
     std::function<std::string(double hz)> set_refresh_rate;
     // Current frame rate, for replies.
     std::function<double()> refresh_rate;
+    // Changes the display's shape while SteamVR runs (HmdDevice::SetDisplay): an
+    // already validated change; returns an error string (empty = success).
+    std::function<std::string(const DisplayChange&)> set_display;
+    // JSON object: the startup and the current display values (HmdDevice::DisplayValuesReport).
+    std::function<std::string()> display_values;
     // Shows / hides the preview window (Windows direct mode). Returns an error string.
     std::function<std::string(bool on)> set_preview_window;
     // Starts / pauses the direct-mode preview. Returns an error string (empty = success).

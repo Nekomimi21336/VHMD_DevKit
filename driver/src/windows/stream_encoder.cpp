@@ -243,8 +243,14 @@ StreamEncoder::StreamEncoder(ID3D11Device* device, ID3D11DeviceContext* ctx, uin
 StreamEncoder::~StreamEncoder() { Stop(); }
 
 void StreamEncoder::SetFov(const float fov[2][4]) {
-    std::lock_guard<std::mutex> l(impl_->set_mu);
-    std::memcpy(impl_->fov, fov, sizeof(impl_->fov));
+    {
+        std::lock_guard<std::mutex> l(impl_->set_mu);
+        std::memcpy(impl_->fov, fov, sizeof(impl_->fov));
+    }
+    // The client gets the config message again before the next frame (same
+    // stream: its decoder stays).
+    std::lock_guard<std::mutex> l(impl_->client_mu);
+    impl_->config_sent = false;
 }
 
 void StreamEncoder::Start() {

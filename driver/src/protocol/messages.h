@@ -71,6 +71,18 @@ struct MicMessage {
     std::vector<int16_t> pcm;
 };
 
+// "display": the HMD's display values to change while SteamVR runs. Fields left
+// out stay as they are; nothing set = a query.
+struct DisplayChange {
+    std::optional<std::array<double, 2>> render;   // per-eye width, height
+    std::optional<double> ipd;                     // meters
+    // Field of view as tangents, [left, right, up, down] for the left eye, then
+    // the right (OpenXR signs: left and down negative).
+    std::optional<std::array<double, 8>> tan;
+    bool reset = false;                            // back to the values SteamVR started with
+    bool Any() const { return render || ipd || tan || reset; }
+};
+
 struct ConfigMessage {
     std::string op;   // "list", "ping", "set_role", "reset", ...
     std::string id;   // optional device id argument
@@ -93,6 +105,7 @@ struct ConfigMessage {
     std::optional<std::string> device;
     // "record": the recording's file name (letters, digits, '-', '_', '.').
     std::string name;
+    DisplayChange display;   // "display"
 };
 
 using Message = std::variant<PoseMessage, InputMessage, SkeletonMessage, GazeMessage, MicMessage, ConfigMessage>;

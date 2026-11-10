@@ -3,9 +3,11 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 
 #include "config/driver_config.h"
 #include "device_base.h"
+#include "state/display_values.h"
 
 namespace vhmd {
 
@@ -26,11 +28,17 @@ struct DisplayConfig {
 
     // Reads the "vhmd_display" section of the SteamVR settings.
     static DisplayConfig FromSettings();
+    // Render size, IPD and field of view (the tangents, or fov_deg as tangents).
+    DisplayValues Values() const;
 };
 
 class HmdDisplayComponent : public vr::IVRDisplayComponent {
 public:
-    explicit HmdDisplayComponent(const DisplayConfig& cfg) : cfg_(cfg) {}
+    explicit HmdDisplayComponent(const DisplayConfig& cfg) : cfg_(cfg), values_(cfg.Values()) {}
+
+    // Render size and field of view from now on (config op "display"); SteamVR
+    // is told separately (HmdDevice::SetDisplay).
+    void SetValues(const DisplayValues& v);
 
     void GetWindowBounds(int32_t* x, int32_t* y, uint32_t* width, uint32_t* height) override;
     bool IsDisplayOnDesktop() override { return on_desktop_; }
@@ -44,7 +52,9 @@ public:
 
 private:
     bool on_desktop_ = true;
-    DisplayConfig cfg_;
+    DisplayConfig cfg_;       // the window
+    mutable std::mutex mu_;
+    DisplayValues values_;    // guarded by mu_
 };
 
 class DirectModeComponent; // linux/direct_mode.h
@@ -77,6 +87,16 @@ public:
     std::string DisplaySync(double slack_ms, double period_ms, double target_ms, double weight, double* shift_ms);
     // Shows / hides the preview window (Windows direct mode). Returns false if unavailable.
     bool SetPreviewWindow(bool visible);
+    // Changes render size, field of view and IPD while SteamVR runs (config op
+    // "display"; `change` is already validated). SteamVR is told through
+    // IVRServerDriverHost, and a new field of view also goes to the video stream,
+    // so the headset shows the frames with the field of view they were rendered
+    // with. Nothing is written to the settings: the startup values come back with
+    // {"reset": true} or a SteamVR restart. Returns an error string.
+    std::string SetDisplay(const DisplayChange& change);
+    // {"startup": {...}, "now": {...}, "changed": bool, "live": bool}: the values
+    // SteamVR started with and the current ones; live = SteamVR has been told.
+    std::string DisplayValuesReport() const;
 
 protected:
     void OnActivate(vr::PropertyContainerHandle_t container) override;
@@ -89,6 +109,9 @@ protected:
 
 private:
     DisplayConfig display_cfg_;
+    mutable std::mutex display_mu_;
+    DisplayValues startup_values_;   // as SteamVR started (never changes)
+    DisplayValues values_;           // guarded by display_mu_
     bool head_model_;
     HmdDisplayComponent display_;
     std::unique_ptr<DirectModeComponent> direct_;

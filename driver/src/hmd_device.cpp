@@ -82,6 +82,23 @@ DisplayConfig DisplayConfig::FromSettings() {
     return c;
 }
 
+DisplayValues DisplayConfig::Values() const {
+    DisplayValues v;
+    v.render_width = render_width;
+    v.render_height = render_height;
+    v.ipd_meters = ipd_meters;
+    const float t = std::tan(fov_deg * 0.5f * 3.14159265f / 180.0f);
+    const float symmetric[4] = {-t, t, t, -t};
+    for (int e = 0; e < 2; ++e)
+        for (int i = 0; i < 4; ++i) v.eye_tan[e][i] = eye_tan[e][0] != 0.0f ? eye_tan[e][i] : symmetric[i];
+    return v;
+}
+
+void HmdDisplayComponent::SetValues(const DisplayValues& v) {
+    std::lock_guard<std::mutex> lock(mu_);
+    values_ = v;
+}
+
 void HmdDisplayComponent::GetWindowBounds(int32_t* x, int32_t* y, uint32_t* width, uint32_t* height) {
     *x = cfg_.window_x;
     *y = cfg_.window_y;
@@ -90,8 +107,9 @@ void HmdDisplayComponent::GetWindowBounds(int32_t* x, int32_t* y, uint32_t* widt
 }
 
 void HmdDisplayComponent::GetRecommendedRenderTargetSize(uint32_t* width, uint32_t* height) {
-    *width = cfg_.render_width;
-    *height = cfg_.render_height;
+    std::lock_guard<std::mutex> lock(mu_);
+    *width = values_.render_width;
+    *height = values_.render_height;
 }
 
 void HmdDisplayComponent::GetEyeOutputViewport(vr::EVREye eye, uint32_t* x, uint32_t* y, uint32_t* width,
@@ -103,19 +121,12 @@ void HmdDisplayComponent::GetEyeOutputViewport(vr::EVREye eye, uint32_t* x, uint
 }
 
 void HmdDisplayComponent::GetProjectionRaw(vr::EVREye eye, float* left, float* right, float* top, float* bottom) {
-    const float* et = cfg_.eye_tan[eye == vr::Eye_Left ? 0 : 1];
-    if (et[0] != 0.0f) {   // OpenVR's y points down: top is minus the up tangent
-        *left = et[0];
-        *right = et[1];
-        *top = -et[2];
-        *bottom = -et[3];
-        return;
-    }
-    const float t = std::tan(cfg_.fov_deg * 0.5f * 3.14159265f / 180.0f);
-    *left = -t;
-    *right = t;
-    *top = -t;
-    *bottom = t;
+    std::lock_guard<std::mutex> lock(mu_);
+    const float* et = values_.eye_tan[eye == vr::Eye_Left ? 0 : 1];
+    *left = et[0];
+    *right = et[1];
+    *top = -et[2];   // OpenVR's y points down: top is minus the up tangent
+    *bottom = -et[3];
 }
 
 vr::DistortionCoordinates_t HmdDisplayComponent::ComputeDistortion(vr::EVREye /*eye*/, float u, float v) {
@@ -140,7 +151,8 @@ HmdDevice::HmdDevice(std::shared_ptr<DeviceState> state, const DisplayConfig& di
 
 HmdDevice::HmdDevice(std::shared_ptr<DeviceState> state, const DisplayConfig& display, bool direct_mode,
                      const PreviewConfig& preview, bool preview_window)
-    : VirtualDevice(std::move(state)), display_cfg_(display), head_model_(State().Config().head_model), display_(display) {
+    : VirtualDevice(std::move(state)), display_cfg_(display), startup_values_(display.Values()), values_(startup_values_),
+      head_model_(State().Config().head_model), display_(display) {
     (void)preview_window;
 #if defined(VHMD_HAS_DIRECT_MODE)
     if (direct_mode) {
@@ -155,12 +167,8 @@ HmdDevice::HmdDevice(std::shared_ptr<DeviceState> state, const DisplayConfig& di
         cs.stream.enabled = preview.stream_enabled;
         cs.stream.port = preview.stream_port;
         // The fields of view VHMD renders with, as OpenXR angles, for the headset.
-        for (int e = 0; e < 2; ++e) {
-            const float* t = display.eye_tan[e];
-            const float half = display.fov_deg * 0.5f * 3.14159265f / 180.0f;
-            for (int i = 0; i < 4; ++i)
-                cs.stream.fov[e][i] = t[0] != 0.0f ? std::atan(t[i]) : (i == 0 || i == 3 ? -half : half);
-        }
+        for (int e = 0; e < 2; ++e)
+            for (int i = 0; i < 4; ++i) cs.stream.fov[e][i] = std::atan(startup_values_.eye_tan[e][i]);
         direct_ = std::make_unique<DirectModeComponent>(display.display_frequency, cs, preview_window, preview.window_fps);
         std::string err;
         if (!direct_->Init(err)) {
@@ -252,11 +260,79 @@ bool HmdDevice::SetPreviewActive(bool active) {
     return false;
 }
 
+namespace {
+// OpenVR's raw projection: (left, top) and (right, bottom) as tangents, y down.
+vr::HmdRect2_t RawProjection(const float tan[4]) {
+    vr::HmdRect2_t r{};
+    r.vTopLeft.v[0] = tan[0];
+    r.vTopLeft.v[1] = -tan[2];
+    r.vBottomRight.v[0] = tan[1];
+    r.vBottomRight.v[1] = -tan[3];
+    return r;
+}
+
+// An eye `x` meters to the right of the head's centre.
+vr::HmdMatrix34_t EyeToHead(float x) {
+    vr::HmdMatrix34_t m{};
+    m.m[0][0] = m.m[1][1] = m.m[2][2] = 1.0f;
+    m.m[0][3] = x;
+    return m;
+}
+} // namespace
+
+std::string HmdDevice::SetDisplay(const DisplayChange& change) {
+    std::lock_guard<std::mutex> lock(display_mu_);
+    const DisplayValues before = values_;
+    const DisplayValues after = ApplyDisplayChange(before, startup_values_, change);
+    if (after == before) return "";
+    const bool size = after.render_width != before.render_width || after.render_height != before.render_height;
+    const bool fov = std::memcmp(after.eye_tan, before.eye_tan, sizeof(after.eye_tan)) != 0;
+    const bool ipd = after.ipd_meters != before.ipd_meters;
+    values_ = after;
+    display_.SetValues(after);   // what SteamVR reads if it asks the component again
+    if (const uint32_t idx = Index(); idx != vr::k_unTrackedDeviceIndexInvalid) {
+        auto* host = vr::VRServerDriverHost();
+        if (size) host->SetRecommendedRenderTargetSize(idx, after.render_width, after.render_height);
+        if (fov) host->SetDisplayProjectionRaw(idx, RawProjection(after.eye_tan[0]), RawProjection(after.eye_tan[1]));
+        if (ipd) {
+            host->SetDisplayEyeToHead(idx, EyeToHead(-after.ipd_meters / 2), EyeToHead(after.ipd_meters / 2));
+            vr::VRProperties()->SetFloatProperty(vr::VRProperties()->TrackedDeviceToPropertyContainer(idx),
+                                                 vr::Prop_UserIpdMeters_Float, after.ipd_meters);
+        }
+    }
+#if defined(VHMD_WINDOWS_DIRECT_MODE)
+    // The headset shows the video with the field of view it was rendered with:
+    // it has to change together with SteamVR's, or the picture is distorted.
+    if (fov && direct_) {
+        float angles[2][4];
+        for (int e = 0; e < 2; ++e)
+            for (int i = 0; i < 4; ++i) angles[e][i] = std::atan(after.eye_tan[e][i]);
+        direct_->SetStreamFov(angles);
+    }
+#endif
+    Log(LogLevel::Info, "display: %ux%u per eye, IPD %.1f mm, left eye tan [%.4f %.4f %.4f %.4f]%s", after.render_width,
+        after.render_height, after.ipd_meters * 1000.0f, after.eye_tan[0][0], after.eye_tan[0][1], after.eye_tan[0][2],
+        after.eye_tan[0][3], after == startup_values_ ? " (the startup values)" : "");
+    return "";
+}
+
+std::string HmdDevice::DisplayValuesReport() const {
+    std::lock_guard<std::mutex> lock(display_mu_);
+    return nlohmann::json{{"startup", DisplayValuesJson(startup_values_)},
+                          {"now", DisplayValuesJson(values_)},
+                          {"changed", values_ != startup_values_},
+                          {"live", Index() != vr::k_unTrackedDeviceIndexInvalid}}
+        .dump();
+}
+
 std::string HmdDevice::DisplayStatusJson() const {
     nlohmann::json j;
     j["mode"] = direct_ ? "direct" : "window";
-    j["width"] = display_cfg_.render_width;
-    j["height"] = display_cfg_.render_height;
+    {
+        std::lock_guard<std::mutex> lock(display_mu_);
+        j["width"] = values_.render_width;
+        j["height"] = values_.render_height;
+    }
     j["refresh_hz"] = display_cfg_.display_frequency;
 #if defined(VHMD_HAS_DIRECT_MODE)
     if (direct_) {
@@ -305,7 +381,10 @@ void HmdDevice::OnActivate(vr::PropertyContainerHandle_t c) {
     SetCommonProperties(c, "VHMD Virtual HMD", "generic_hmd");
     p->SetBoolProperty(c, vr::Prop_DeviceProvidesBatteryStatus_Bool, false); // until a "battery" input arrives
     SetIcons(c, "headset");
-    p->SetFloatProperty(c, vr::Prop_UserIpdMeters_Float, display_cfg_.ipd_meters);
+    {
+        std::lock_guard<std::mutex> lock(display_mu_);   // "display" may have changed it before SteamVR took the HMD
+        p->SetFloatProperty(c, vr::Prop_UserIpdMeters_Float, values_.ipd_meters);
+    }
     p->SetFloatProperty(c, vr::Prop_UserHeadToEyeDepthMeters_Float, 0.0f);
     p->SetFloatProperty(c, vr::Prop_DisplayFrequency_Float, display_cfg_.display_frequency);
     p->SetFloatProperty(c, vr::Prop_SecondsFromVsyncToPhotons_Float, display_cfg_.seconds_vsync_to_photons);

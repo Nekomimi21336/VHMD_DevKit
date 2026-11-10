@@ -76,6 +76,8 @@ vr::EVRInitError DeviceProvider::Init(vr::IVRDriverContext* driver_context) {
         return "";
     };
     hooks.refresh_rate = [this]() { return hmd_ ? hmd_->RefreshRate() : 0.0; };
+    hooks.set_display = [this](const DisplayChange& c) { return hmd_ ? hmd_->SetDisplay(c) : std::string("no HMD"); };
+    hooks.display_values = [this]() { return hmd_ ? hmd_->DisplayValuesReport() : std::string("{}"); };
     hooks.set_preview_window = [this](bool on) -> std::string {
         if (!hmd_ || !hmd_->SetPreviewWindow(on)) return "the preview window needs display.mode = direct on Windows";
         Log(LogLevel::Info, "preview window %s", on ? "shown" : "hidden");

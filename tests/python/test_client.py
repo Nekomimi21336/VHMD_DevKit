@@ -125,6 +125,34 @@ def test_hand_mode(server):
     assert seen[0]["op"] == "hand_mode" and seen[0]["mode"] == "hands"
 
 
+def test_display(server):
+    values = {"render": [1920, 1920], "ipd": 0.0718, "tan": [[-1.28, 1.28, 1.28, -1.28]] * 2}
+    report = {"startup": values, "now": values, "changed": False, "live": True}
+    seen = []
+
+    def fake_driver():
+        for reply in ({"ok": True, "display": report}, {"ok": True, "display": {**report, "changed": True}},
+                      {"ok": False, "error": "ipd: must be from 0.04 to 0.09 (meters)", "display": report},
+                      {"ok": True, "display": report}):
+            msg, addr = recv_json(server)
+            seen.append(msg)
+            server.sendto(json.dumps({"type": "result", "seq": msg["seq"], **reply}).encode(), addr)
+
+    t = threading.Thread(target=fake_driver)
+    t.start()
+    with VHMDClient(port=server.getsockname()[1]) as c:
+        assert c.display()["startup"]["render"] == [1920, 1920]
+        assert c.display(render=(2160.0, 2160), tan=[(-1, 1, 1, -1), (-1, 1, 1, -1)])["changed"] is True
+        with pytest.raises(ValueError):
+            c.display(ipd=0.5)
+        assert c.display(reset=True)["changed"] is False
+    t.join()
+    # A query names no values; a change names only what it changes.
+    assert not {"render", "ipd", "tan", "reset"} & set(seen[0])
+    assert seen[1]["render"] == [2160, 2160] and seen[1]["tan"][0] == [-1.0, 1.0, 1.0, -1.0] and "ipd" not in seen[1]
+    assert seen[3]["reset"] is True and seen[3]["op"] == "display"
+
+
 def test_inspect(server):
     def fake_driver():
         for reply in ({"ok": True, "id": "left_hand", "devices": [{"serial": "VHMD-CTL-L", "given": {"trigger": 1}}]},
