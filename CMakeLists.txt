@@ -1,5 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
 
+# Makefiles and Ninja build without any optimisation when no build type is
+# given (the Linux driver was shipped that way up to v0.7.0). Release unless
+# asked otherwise; Visual Studio picks the configuration at build time.
+get_property(VHMD_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT VHMD_MULTI_CONFIG AND NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type (Release, RelWithDebInfo, Debug)" FORCE)
+  message(STATUS "No build type given: Release")
+endif()
+
 project(VHMD_DevKit VERSION 0.7.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)

@@ -32,6 +32,8 @@ Linux 版 SteamVR のコンポジタは、Windows のように「デスクトッ
 | v0.3.0 を WSL2 上の Linux 版 SteamVR 2.17.10(ソフトウェア Vulkan)で実行 | ✅ ドライバのロード、ダイレクトモード、統合テスト 21/23、コンポジタが `Headset is using driver direct mode` まで到達 / ❌ llvmpipe がタイムラインセマフォの外部取り込みに非対応でレンダラ初期化が失敗([verification.md](verification.md)) |
 | v0.3.0 を実 GPU の Linux 版 SteamVR 2.17.10 で実行(クラウド GPU: NVIDIA RTX 4000 Ada、ドライバ 595、Ubuntu 26.04、gcc 15.2 でビルド、画面なし + Xvfb) | ✅ `linux_check.py` 全項目合格: コンポジタがスワップテクスチャ(片目 2160×2400)を作り **90 fps で present**、`CannotDRMLeaseDisplay` なし、プレビューに SteamVR の映像、統合テスト 28/28(スケルトン・入力を含む)。2 回連続で合格 |
 | デスクトップ相当の環境(NVIDIA の実 X サーバー + Steam クライアント + SteamVR Home 有効) | ✅ `linux_check.py` 14/14 合格。vrmonitor が動き、SteamVR の正常終了とドライバの終了処理(`vhmd: shutting down`、約 2 秒)まで確認。クラウド GPU(RTX 4000 Ada)で確認。Proxmox VM の GTX 1050(2 GB、Pascal、ドライバ 580)でも 14/14 になったが、**起動から 5〜60 秒後に vrcompositor が GPU 例外(`Xid 13: 3D WIDTH ZT Violation` → `VK_ERROR_DEVICE_LOST`)で描画を止める**。クライアント・プレビュー・SteamVR Home をすべて無しにしても再現し、ドライバ側の原因は見つかっていない(GTX 1050 は SteamVR の最小要件 GTX 970 / 1060 未満) |
+| v0.7.0 以降(コミット 7d125d2 + 修正)を WSL2 の Linux 版 SteamVR 2.17.10 で実行(2026-11-10。コンポジターは WSL では起動しないので、`vrserver --keepalive` だけを動かした) | ✅ ドライバーの読み込み、HMD とコントローラー、ダイレクトモードの vsync、姿勢と入力、トラッカーの追加と役割、手のトラッキングへの切り替え、`refresh_rate`、`display`(IPD・視野・大きさの変更と `reset`。SteamVR から読み返して確認)の 15 項目。統合テストは 33 項目が通過 / ❌ コンポジターが要る 5 項目(入力の焦点、骨格、視線、機能、OpenXR)は WSL では実行できず |
+| サニタイザー(2026-11-10、gcc 13.3) | ✅ AddressSanitizer + UBSan(リークの検出つき)、ThreadSanitizer とも単体テスト 73 件で検出なし。警告 0(`-Wall -Wextra -Wpedantic`) |
 | プレビューの開始・停止(軽量化後、既定で停止し `preview` 操作で開始) | WSL のセルフテストで、取り込み → 一時停止 → 再開を確認。**実 GPU の SteamVR では未確認** |
 | `preview_viewer.py` のウィンドウ表示 | **未確認**(これまでは `--snapshot` と `PreviewReader` での取り出しのみ使用) |
 | Proton 経由の VRChat(Proton Experimental) | ✅ 起動し、仮想 HMD に VR 映像(ログイン画面)を左右とも描画。仮想コントローラーに VRChat の Oculus Touch 用バインディングが適用され、VRChat 内の手が送った姿勢に追従。ログイン後も、アバターの頭・手・指の追従、移動、ボタン、メニュー、コントローラー ⇄ ハンドトラッキングの切り替え(VRChat を止めずに)を確認。フルボディ較正もハンドモードで完了し、足のトラッカーでアバターの脚が動くことを確認。コントローラーモードでも、レーザーをメニューの正面から当てればクリックできる(Windows で確認)。**仮想マシン内では VRChat の Easy Anti-Cheat が `Cannot run under Virtual Machine` で起動を拒否します**(クラウドの KVM では起動した。VM の検出を隠す設定はアンチチート回避になるため行っていません) |
@@ -53,6 +55,8 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+ビルドの種類を指定しなければ Release になります(Makefile と Ninja は、未指定だと最適化なしでビルドします。v0.6.0 と v0.7.0 の Linux 向け配布物の `.so` は、この理由で最適化なしでした)。
 
 出力: `build/driver/vhmd/bin/linux64/driver_vhmd.so`(+ `driver.vrdrivermanifest`、`resources/`)。
 
@@ -124,7 +128,9 @@ cd clients/python && python3 -m vhmd_client.link          # --dev で開発者�
 | 設定の場所 | `%LOCALAPPDATA%\VHMD` | `~/.local/state/vhmd` |
 
 - Rust の部分は Linux でもビルドできます(`cd link && cargo build --release`。Ubuntu 24.04 の `cargo` 1.75 でも読めるよう `Cargo.lock` は版 3)。単体テスト 16 件も Linux で通ります。
-- 確認(WSL の Ubuntu 24.04、2026-11-04): PC のアプリがヘッドセットの代役 `vhmd-link-sim` とつながり、ヘッドセットの表示、マイクの一覧と選択(設定に保存され、ヘッドセットへ送られる)、自動起動のファイルの作成・削除、通知領域が無いときの表示、SteamVR の状態の検出、`vhmd_mic` / `VHMD-Microphone` の作成を確かめた。SteamVR を動かした Linux での映像・音・マイクは未確認(WSL では SteamVR を動かせない。WSLg の PulseAudio は再生の速さが実際と違う)。
+- 確認(WSL の Ubuntu 24.04、2026-11-04): PC のアプリがヘッドセットの代役 `vhmd-link-sim` とつながり、ヘッドセットの表示、マイクの一覧と選択(設定に保存され、ヘッドセットへ送られる)、自動起動のファイルの作成・削除、通知領域が無いときの表示、SteamVR の状態の検出、`vhmd_mic` / `VHMD-Microphone` の作成を確かめた。SteamVR を動かした Linux での映像・音・マイクは未確認(WSL では SteamVR のコンポジターが起動しないので、画像が流れない。WSLg の PulseAudio は再生の速さが実際と違う)。
+- Linux の映像の経路(ffmpeg)にないもの: HEVC / AV1(H.264 だけ)、フォービエーション、解像度の割合、ビットレートの自動調整、UDP の映像。`display` 操作で視野を変えても、映像側には接続し直すまで伝わりません(IPD と大きさは伝わります)。
+- ヘッドセットのアプリ(`headset/vhmd-link.apk`、`vhmd-link-dev.apk`)は Linux 向けの配布物にも入っています(v0.7.0 までは Windows 向けだけ)。`adb install -r headset/vhmd-link.apk` で入れます。
 
 ## 実機での確認(自動)
 

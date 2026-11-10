@@ -13,11 +13,12 @@ and examples, docs and licenses:
 Run tools/install_driver.(ps1|sh) inside the extracted folder; it picks up the
 bundled vhmd/ folder automatically. Output goes to dist/ with SHA256SUMS.txt.
 
-The Windows archive also carries VHMD Link: the PC app as "VHMD Link/VHMD Link.exe"
-(from --exe-dir, default "dist/VHMD Link", built by tools/build_link_exe.py), the
-headset apps (headset/*.apk, from --apk-dir, default headset/android/build) and tools/install_link.ps1,
-which registers the driver, adds VHMD Link to the Start menu and installs the
-headset app over USB.
+Both archives carry VHMD Link's headset apps (headset/*.apk, from --apk-dir,
+default headset/android/build). The Windows archive also has the PC app as
+"VHMD Link/VHMD Link.exe" (from --exe-dir, default "dist/VHMD Link", built by
+tools/build_link_exe.py) and tools/install_link.ps1, which registers the driver,
+adds VHMD Link to the Start menu and installs the headset app over USB. On Linux
+the PC app runs from the Python client (python3 -m vhmd_client.link).
 """
 
 from __future__ import annotations
@@ -40,7 +41,8 @@ COMMON = [
 TOOLS = {
     "win64": ["tools/common.ps1", "tools/install_driver.ps1", "tools/uninstall_driver.ps1", "tools/verify_env.ps1",
               "tools/install_link.ps1", "tools/uninstall_link.ps1", "tools/build_link_exe.py", "headset/README.md"],
-    "linux64": ["tools/common.sh", "tools/install_driver.sh", "tools/uninstall_driver.sh", "tools/verify_env.sh", "tools/vhmd_records.py"],
+    "linux64": ["tools/common.sh", "tools/install_driver.sh", "tools/uninstall_driver.sh", "tools/verify_env.sh", "tools/vhmd_records.py",
+                "headset/README.md"],
 }
 BINARY = {"win64": "driver_vhmd.dll", "linux64": "driver_vhmd.so"}
 SKIP_PARTS = {"__pycache__", ".pytest_cache", "results", "obj"}
@@ -74,7 +76,8 @@ def collect(platform: str, driver_dir: Path, apk_dir: Path | None = None,
             if SKIP_PARTS & set(s.parts) or s.suffix == ".pyc" or (rel.startswith(SKIP_BUILT) and "/bin/" in rel):
                 continue
             files.append((rel, s))
-    if platform == "win64" and apk_dir:
+    # The headset apps go into both archives: a Linux PC needs them as much (installed with adb).
+    if apk_dir:
         for name in APKS:
             if (apk_dir / name).exists():
                 files.append((f"headset/{name}", apk_dir / name))

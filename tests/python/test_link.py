@@ -547,7 +547,6 @@ def test_bridge_set_tracking():
 # -- switching SteamVR between VHMD and the original ---------------------------
 @pytest.fixture
 def steamvr(tmp_path, monkeypatch):
-    pytest.importorskip("winreg")
     from vhmd_client import headset_info, mode
     settings = tmp_path / "steamvr.vrsettings"
     original = {"steamvr": {"enableHomeApp": False}, "driver_pico": {"other": 1},

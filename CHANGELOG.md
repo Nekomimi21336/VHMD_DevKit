@@ -7,11 +7,16 @@
 - **PC のアプリの「表示の形」の窓**(開発者向けの表示、`python -m vhmd_client.display_view`): IPD(mm)、視野(起動時の値に対する %)、描画の大きさ(同)の 3 つのつまみ。起動時の値といまの値を並べて表示し、つまみを動かすと「適用で送る内容」を先に見せる。「適用」で送り、「起動時の値に戻す」で戻す。SteamVR 2.18.4 で、窓から適用した値が SteamVR に届き、戻せることを確認。
 
 ### 修正
+- **Linux 用のドライバーが最適化なしでビルドされていた**: ビルドの種類(`CMAKE_BUILD_TYPE`)を指定しないと、Makefile と Ninja は最適化の指定を何も渡さない。v0.6.0 と v0.7.0 の Linux 向け配布物の `driver_vhmd.so` はこの状態だった(5.5 MB、`assert` が有効)。未指定なら Release にする(`-O3 -DNDEBUG`、2.8 MB)。Windows は無関係。
+- Linux 向けの配布物にヘッドセットのアプリ(`headset/*.apk`)と `headset/README.md` が入っていなかった: 両方の配布物に入れる。
+- モードの切り替えの単体テスト 3 件が Linux で常に飛ばされていた(Windows にしかない `winreg` を要求していた): Linux でも実行し、通る。
+- 単体テスト `router_tracking_op` が、消えたあとの JSON を読んでいた(AddressSanitizer で検出。テスト側の誤りで、ドライバーには影響なし)。
 - 体のトラッキングをオンにしていると、ヘッドセットのアプリが回転がすべて 0 の姿勢を毎フレーム送り、ドライバーが毎秒 200 件ほど捨てていた(SteamVR のログに `degenerate quaternion`)。PICO の体のトラッキングは、有効と言いながら回転が 0 の関節を返すことがある。ヘッドセットのアプリは、回転になっていない姿勢を「無効」(`"valid":false`)として送る。トラッカーは増えない。
 
 ### テスト
 - C++: `display` の値の検査・反映・リセット、ルーターの操作(単体テスト 73 件)。Python: `VHMDClient.display()`(63 件)。Linux(WSL)でもビルドと単体テストが通る。
 - Python: 「表示の形」の窓の計算と、窓の操作(適用・戻す)(65 件)。
+- Linux(WSL2 の Ubuntu 24.04、Linux 版 SteamVR 2.17.10 の `vrserver` だけを動かして確認): ドライバーの読み込みから `display` 操作まで 15 項目、統合テスト 33 項目が通過(コンポジターが要る 5 項目は WSL では実行できない)。AddressSanitizer + UBSan と ThreadSanitizer は検出なし。Rust 16 件、Python 65 件(pytest の代用品で実行)も Linux で通過。
 - 統合テストに `display_check.py` を追加(SteamVR から値を読み返し、最後に必ず `reset` する。72 件すべて通過)。
 - 映像の自己テスト(`vhmd_stream_selftest`)に、配信中の視野の変更を追加: 設定のメッセージが新しい視野で送り直され、フレームは途切れない(AMF の経路で、設定 2 回・その後 325 枚)。
 

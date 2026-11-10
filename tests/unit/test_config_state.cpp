@@ -866,7 +866,10 @@ TEST(router_tracking_op) {
     CHECK(!ask(R"({"type":"config","op":"tracking","id":"nope","mode":"paused"})")["ok"].get<bool>());
     CHECK(!ask(R"({"type":"config","op":"tracking","id":"left_hand","mode":"nap"})")["ok"].get<bool>());
 
-    for (const auto& d : ask(R"({"type":"config","op":"list"})")["devices"]) {
+    // Kept in a variable: a range-for over ask(...)["devices"] would read from a
+    // reply that is already destroyed (found by AddressSanitizer).
+    const auto list = ask(R"({"type":"config","op":"list"})");
+    for (const auto& d : list["devices"]) {
         CHECK(d["tracking"] == (d["id"] == "left_hand" ? "paused" : "active"));
     }
 }
