@@ -292,8 +292,8 @@ The FPS control tool's "Switch to Pico" / "Switch to VHMD" button does the same 
 
 | Kind | Command | Contents |
 |---|---|---|
-| C++ unit tests | `ctest --preset vs2022-release` | 71 tests (parser, coordinate conversion, config, timeouts, router, UDP, label generation, VMT-compatible OSC, offsets, hand bones, microphone buffer, video UDP receive, input inspection, recording) |
-| Python unit tests | `python -m pytest tests/python` | 62 tests (client, preview reader, VHMD Link PC side, replay) |
+| C++ unit tests | `ctest --preset vs2022-release` | 73 tests (parser, coordinate conversion, config, timeouts, router, UDP, label generation, VMT-compatible OSC, offsets, hand bones, microphone buffer, video UDP receive, input inspection, recording) |
+| Python unit tests | `python -m pytest tests/python` | 63 tests (client, preview reader, VHMD Link PC side, replay) |
 | VHMD Link native part | `cargo test` (in `link/`) | 16 tests (PC ↔ headset protocol, error correction, button mapping) |
 | Linux capture self-test | `ctest` (Linux) | Checks shared image → shared memory with real Vulkan (no SteamVR needed) |
 | Linux on-hardware check | `python3 tests/integration/linux_check.py` | Direct-mode display path + integration tests, writes a report |

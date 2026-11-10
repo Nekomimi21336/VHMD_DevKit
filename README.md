@@ -292,8 +292,8 @@ FPS 操作ツールの「Pico に切り替え」「VHMD に切り替え」ボタ
 
 | 種類 | コマンド | 内容 |
 |---|---|---|
-| C++ 単体テスト | `ctest --preset vs2022-release` | 71 件(パーサ、座標変換、設定、タイムアウト、ルーター、UDP、ラベル生成、VMT 互換 OSC、補正、手の骨、マイクのバッファ、映像の UDP 受信、入力の確認、記録) |
-| Python 単体テスト | `python -m pytest tests/python` | 62 件(クライアント、プレビュー読み取り、VHMD Link の PC 側、記録の再生) |
+| C++ 単体テスト | `ctest --preset vs2022-release` | 73 件(パーサ、座標変換、設定、タイムアウト、ルーター、UDP、ラベル生成、VMT 互換 OSC、補正、手の骨、マイクのバッファ、映像の UDP 受信、入力の確認、記録) |
+| Python 単体テスト | `python -m pytest tests/python` | 63 件(クライアント、プレビュー読み取り、VHMD Link の PC 側、記録の再生) |
 | VHMD Link のネイティブ部分 | `cargo test`(`link/` で) | 16 件(PC ↔ ヘッドセットの取り決め、誤り訂正、ボタンの割り当て) |
 | Linux キャプチャセルフテスト | `ctest`(Linux) | 実際の Vulkan で共有イメージ → 共有メモリを確認(SteamVR 不要) |
 | Linux 実機確認 | `python3 tests/integration/linux_check.py` | ダイレクトモードの表示経路 + 統合テスト、レポート出力 |

@@ -167,7 +167,7 @@ def main() -> int:
     startup.close()
     input_phase = {"results": [], "info": {}}
     for script in ("input_check.py", "skeleton_check.py", "eye_check.py", "openxr_check.py", "features_check.py",
-                   "vmt_check.py"):
+                   "display_check.py", "vmt_check.py"):
         proc = subprocess.run([sys.executable, str(HERE / script), "--port", str(args.port)],
                               capture_output=True, text=True, timeout=180)
         try:

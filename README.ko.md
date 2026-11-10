@@ -292,8 +292,8 @@ FPS 조작 도구의 "Pico 로 전환" / "VHMD 로 전환" 버튼으로도 같�
 
 | 종류 | 명령 | 내용 |
 |---|---|---|
-| C++ 단위 테스트 | `ctest --preset vs2022-release` | 71건(파서, 좌표 변환, 설정, 타임아웃, 라우터, UDP, 라벨 생성, VMT 호환 OSC, 보정, 손의 본, 마이크 버퍼, 영상 UDP 수신, 입력 확인, 기록) |
-| Python 단위 테스트 | `python -m pytest tests/python` | 62건(클라이언트, 프리뷰 읽기, VHMD Link의 PC 측, 재생) |
+| C++ 단위 테스트 | `ctest --preset vs2022-release` | 73건(파서, 좌표 변환, 설정, 타임아웃, 라우터, UDP, 라벨 생성, VMT 호환 OSC, 보정, 손의 본, 마이크 버퍼, 영상 UDP 수신, 입력 확인, 기록) |
+| Python 단위 테스트 | `python -m pytest tests/python` | 63건(클라이언트, 프리뷰 읽기, VHMD Link의 PC 측, 재생) |
 | VHMD Link 네이티브 부분 | `cargo test`(`link/`에서) | 16건(PC ↔ 헤드셋 간 규약, 오류 정정, 버튼 할당) |
 | Linux 캡처 셀프 테스트 | `ctest`(Linux) | 실제 Vulkan으로 공유 이미지 → 공유 메모리를 확인(SteamVR 불필요) |
 | Linux 실제 장비 확인 | `python3 tests/integration/linux_check.py` | 다이렉트 모드의 표시 경로 + 통합 테스트, 리포트 출력 |

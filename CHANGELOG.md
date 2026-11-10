@@ -3,13 +3,15 @@
 ## 未公開
 
 ### 追加
-- **表示の形を動作中に変える(実験的、開発者向け)**(`config` の `display`、`VHMDClient.display()`): HMD の描画の大きさ、視野、IPD を SteamVR を止めずに変える。ドライバーは SteamVR の起動時の値を覚えていて、返答に起動時の値といまの値を並べて返し、`reset` で起動時の値に戻す。設定には書かないので、SteamVR を再起動しても起動時の値に戻る。視野は SteamVR と映像のストリームの両方に同時に伝える(片方だけ変えると像がゆがむため)。範囲は `vhmd_display` の設定と同じ。SteamVR には `IVRServerDriverHost` の `SetRecommendedRenderTargetSize` / `SetDisplayProjectionRaw` / `SetDisplayEyeToHead` で伝える。**SteamVR での動作確認はまだ**(確認用のスクリプト `tests/integration/display_check.py`)。
+- **表示の形を動作中に変える(実験的、開発者向け)**(`config` の `display`、`VHMDClient.display()`): HMD の描画の大きさ、視野、IPD を SteamVR を止めずに変える。ドライバーは SteamVR の起動時の値を覚えていて、返答に起動時の値といまの値を並べて返し、`reset` で起動時の値に戻す。設定には書かないので、SteamVR を再起動しても起動時の値に戻る。視野は SteamVR と映像のストリームの両方に同時に伝える(片方だけ変えると像がゆがむため)。範囲は `vhmd_display` の設定と同じ。SteamVR には `IVRServerDriverHost` の `SetRecommendedRenderTargetSize` / `SetDisplayProjectionRaw` / `SetDisplayEyeToHead` で伝える。SteamVR 2.18.4 で確認: どの変更も即座に SteamVR に届き(視野は `GetProjectionRaw`、目の位置は `GetEyeToHeadTransform` で左右に IPD の半分ずつ、アプリに伝わる大きさは 1920 → 1440 で 2352 → 1764)、`reset` で元に戻る。**大きさの変更で変わるのはアプリが描く大きさだけ**で、SteamVR がドライバーに渡す画像(2880×2880)は起動時のまま。視野を変えた直後の数フレームは、古い視野で描いた映像が新しい視野で表示される。
 
 ### 修正
 - 体のトラッキングをオンにしていると、ヘッドセットのアプリが回転がすべて 0 の姿勢を毎フレーム送り、ドライバーが毎秒 200 件ほど捨てていた(SteamVR のログに `degenerate quaternion`)。PICO の体のトラッキングは、有効と言いながら回転が 0 の関節を返すことがある。ヘッドセットのアプリは、回転になっていない姿勢を「無効」(`"valid":false`)として送る。トラッカーは増えない。
 
 ### テスト
 - C++: `display` の値の検査・反映・リセット、ルーターの操作(単体テスト 73 件)。Python: `VHMDClient.display()`(63 件)。Linux(WSL)でもビルドと単体テストが通る。
+- 統合テストに `display_check.py` を追加(SteamVR から値を読み返し、最後に必ず `reset` する。72 件すべて通過)。
+- 映像の自己テスト(`vhmd_stream_selftest`)に、配信中の視野の変更を追加: 設定のメッセージが新しい視野で送り直され、フレームは途切れない(AMF の経路で、設定 2 回・その後 325 枚)。
 
 ## v0.7.0(2026-11-04)
 

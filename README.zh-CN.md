@@ -292,8 +292,8 @@ FPS 操作工具中的"切换到 Pico"/"切换到 VHMD"按钮作用相同(切换
 
 | 类型 | 命令 | 内容 |
 |---|---|---|
-| C++ 单元测试 | `ctest --preset vs2022-release` | 71 项(解析器、坐标变换、配置、超时、路由器、UDP、标签生成、VMT 兼容 OSC、校正、手部骨骼、麦克风缓冲区、画面的 UDP 接收、输入检查、录制) |
-| Python 单元测试 | `python -m pytest tests/python` | 62 项(客户端、预览读取、VHMD Link 的 PC 端、回放) |
+| C++ 单元测试 | `ctest --preset vs2022-release` | 73 项(解析器、坐标变换、配置、超时、路由器、UDP、标签生成、VMT 兼容 OSC、校正、手部骨骼、麦克风缓冲区、画面的 UDP 接收、输入检查、录制) |
+| Python 单元测试 | `python -m pytest tests/python` | 63 项(客户端、预览读取、VHMD Link 的 PC 端、回放) |
 | VHMD Link 的原生部分 | `cargo test`(在 `link/` 中) | 16 项(PC ↔ 头显的约定、纠错、按键分配) |
 | Linux 捕获自测 | `ctest`(Linux) | 用真实 Vulkan 确认共享图像 → 共享内存(无需 SteamVR) |
 | Linux 实机确认 | `python3 tests/integration/linux_check.py` | 直接模式的显示路径 + 集成测试，输出报告 |
