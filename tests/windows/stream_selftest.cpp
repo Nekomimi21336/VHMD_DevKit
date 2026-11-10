@@ -2,10 +2,12 @@
 // moving test pattern (both "eyes" side by side), the encoder streams it to a
 // local TCP client, and the client checks the messages: one config, then
 // access units with increasing frame indices, the pose, and a keyframe with
-// parameter sets first. Writes the elementary stream next to the executable
+// parameter sets first. Half-way a new field of view is set (config op
+// "display"): the config comes again with it and the frames go on. Writes the elementary stream next to the executable
 // (stream_selftest.h264 / .hevc / .av1) for inspection with ffprobe.
 //
-//   vhmd_stream_selftest [h264|hevc|av1] [eye_width] [source_eye_width (1280)] [frame_interval_us] [auto|amf|mf] [fov]
+//   vhmd_stream_selftest [h264|hevc|av1] [eye_width] [source_eye_width (1280)] [frame_interval_us] [auto|amf|mf] [fov|-] [keepfov]
+// (keepfov: leave the field of view alone, to tell an encoder problem from that step.)
 // Exit codes: 0 pass, 1 fail, 77 skipped (no hardware encoder).
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -119,6 +121,7 @@ int main(int argc, char** argv) {
     const std::string backend = argc > 5 ? argv[5] : "auto";   // encoder: AMF on AMD, else Media Foundation
     // argv[6] "fov": foveated encoding (centre 40 %, edges squeezed 4 times).
     const bool foveated = argc > 6 && std::string(argv[6]) == "fov";
+    const bool change_fov = !(argc > 7 && std::string(argv[7]) == "keepfov");
     const std::string settings = "{\"codec\":\"" + codec + "\",\"bitrate_mbps\":20,\"eye_width\":" +
                                  std::to_string(eye_out) + ",\"buffer\":1,\"encoder\":\"" + backend + "\"" +
                                  (foveated ? ",\"foveation\":[0.4,4,0.4,4]" : "") + "}\n";
@@ -129,7 +132,8 @@ int main(int argc, char** argv) {
     uint64_t last_index = 0, bytes = 0;
     uint64_t bytes_a = 0, bytes_b = 0;   // frames 72..215 at 20 Mbit/s, 288..431 after asking for 8
     bool ordered = true;
-    std::string config;
+    std::string config, first_config;
+    int frames_after_fov = 0;   // frames that followed the second config (the new field of view)
     const std::string out_path = std::string("stream_selftest.") + codec;
     FILE* out = std::fopen(out_path.c_str(), "wb");
     std::thread reader([&] {
@@ -142,8 +146,10 @@ int main(int argc, char** argv) {
             if (h.kind == 1) {
                 ++configs;
                 config.assign(payload.begin(), payload.end());
+                if (configs == 1) first_config = config;
             } else if (h.kind == 2) {
                 ++frames;
+                if (configs >= 2) ++frames_after_fov;
                 bytes += h.size;
                 if (h.index >= 72 && h.index < 216) bytes_a += h.size;
                 if (h.index >= 288 && h.index < 432) bytes_b += h.size;
@@ -192,6 +198,10 @@ int main(int argc, char** argv) {
             const std::string lower = "{\"bitrate_mbps\":8}\n";
             send(c, lower.data(), int(lower.size()), 0);
         }
+        if (n == 108 && change_fov) {   // a new field of view while streaming
+            const float fov[2][4] = {{-0.5f, 0.75f, 0.25f, -1.0f}, {-0.75f, 0.5f, 0.25f, -1.0f}};
+            enc.SetFov(fov);
+        }
         const uint32_t bar = (n * 13) % eye_w;
         for (uint32_t y = 0; y < td.Height; ++y)
             for (uint32_t x = 0; x < td.Width; ++x) {
@@ -223,13 +233,19 @@ int main(int argc, char** argv) {
                 configs, frames, posed, keyframes_with_ps, bytes * 8.0 / 6.0 / 1e6, ordered ? "yes" : "no");
     const double mbps_a = bytes_a * 8.0 / 2.0 / 1e6, mbps_b = bytes_b * 8.0 / 2.0 / 1e6;
     std::printf("bitrate: %.1f Mbit/s asked 20, then %.1f Mbit/s asked 8 while streaming\n", mbps_a, mbps_b);
-    std::printf("config: %s\nstream written to %s\n", config.c_str(), out_path.c_str());
+    std::printf("config: %s\nstream written to %s\n", first_config.c_str(), out_path.c_str());
+    std::printf("after the new field of view: config %s, then %d frames\n", configs >= 2 ? config.c_str() : "(none)",
+                frames_after_fov);
     if (st.state.rfind("error: no hardware", 0) == 0) {
         std::printf("SKIP: %s\n", st.state.c_str());
         return 77;
     }
     // The first frames go while the encoder starts (a few hundred ms).
-    const bool pass = configs == 1 && frames >= total * 7 / 10 && posed >= frames - 2 && keyframes_with_ps >= 1 &&
+    // The new field of view: the config again, same stream, and the frames after
+    // it (about 4.5 s of the 6) keep coming.
+    const bool fov_ok = !change_fov ? configs == 1 : configs == 2 && config.find("\"fov\":[[-0.5,0.75,0.25,-1.0],[-0.75,0.5,0.25,-1.0]]") != std::string::npos &&
+                        first_config.find("\"fov\":[[-0.5,") == std::string::npos && frames_after_fov >= total * 6 / 10;
+    const bool pass = fov_ok && frames >= total * 7 / 10 && posed >= frames - 2 && keyframes_with_ps >= 1 &&
                       ordered && config.find("\"buffer\":1") != std::string::npos &&
                       // The lower bitrate must show, unless the simple pattern never needed 8 Mbit/s
                       // (AMF's CBR adds no filler).
