@@ -111,19 +111,57 @@ link\target\release\vhmd-link-sim.exe --pc 127.0.0.1 --usb --seconds 30 --check
 
 ### USB なしでデバッグする(adb over Wi-Fi)
 
-一度 USB でつないで次を実行すると、以降はケーブルなしで `adb` を使えます(`192.168.0.15` はヘッドセットの Wi-Fi の IP アドレス)。
+一度 USB でつないで有効にすると、以降はケーブルなしで `adb` を使えます。Windows では `adb` にパスが通っていないことが多いので、下の例は Android SDK の場所を指定しています(PowerShell)。
 
-```bash
-adb tcpip 5555
+**1. USB でつなぎ、ヘッドセットが見えることを確かめる**
+
+```powershell
+& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" devices -l
 ```
 
-```bash
-adb connect 192.168.0.15:5555
+`PA9…  device  product:sparrow model:A9210` のような行が出れば OK です。`unauthorized` なら、ヘッドセットの中の「USB デバッグを許可」で許可します。
+
+**2. ヘッドセットの Wi-Fi の IP アドレスを調べる**
+
+```powershell
+& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" shell ip -f inet addr show wlan0
 ```
 
-- ヘッドセットを再起動すると元に戻るので、もう一度 USB で `adb tcpip 5555` を実行します。
-- USB も同時につないでいると 2 台に見えるので、`adb -s 192.168.0.15:5555 logcat` のように指定します。
+`inet 192.168.1.188/24` の `192.168.1.188` の部分です(以下はこの値の例)。
+
+**3. Wi-Fi の adb を有効にして、つなぐ**
+
+```powershell
+& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" tcpip 5555
+```
+
+```powershell
+& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" connect 192.168.1.188:5555
+```
+
+**4. 確かめて、ケーブルを抜く**
+
+```powershell
+& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" -s 192.168.1.188:5555 shell echo ok
+```
+
+`ok` と返ればケーブルを抜いて構いません。
+
+**知っておくこと**
+
+- **ヘッドセットを再起動すると元に戻ります。** もう一度 USB で 1〜4 を行います。
+- **ヘッドセットの IP アドレスが変わったら**、手順 2 で調べ直して `adb connect` だけをやり直します(ヘッドセットを再起動していなければ、USB は要りません)。
+- **つながっているかを見る:** `adb devices -l` に `192.168.1.188:5555  device` があれば使えます。消えていたら `adb connect 192.168.1.188:5555` をやり直します。
+- **adb が固まったら:** `adb kill-server` で止めてからやり直します(この PC では SteamVR の再起動のあとなどに起きることがあります)。
+- USB も同時につないでいると 2 台に見えるので、`adb -s 192.168.1.188:5555 logcat` のように指定します。
 - PC のアプリの `adb reverse` は USB の接続だけに行います。Wi-Fi の adb に使うと、姿勢と映像が adb のトンネルを通って遅くなるためです。
+- adb のポート 5555 が LAN に開きます。初めてつなぐ PC はヘッドセットの中で許可しないと使えません。閉じたいときはヘッドセットを再起動します。
+
+**ヘッドセットのアプリだけで有効にはできません(2026-11-11 に確認、Pico 4 Ultra、Pico OS 5.15.7、Android 14)**
+
+- Android 標準の「ワイヤレスデバッグ」(`adb pair` で使う方式)は、初めての Wi-Fi で「このネットワークでワイヤレスデバッグを許可しますか」の画面を出してから有効になります。Pico にはこの画面(`com.android.systemui/.wifi.WifiDebuggingActivity`)がなく、有効にしようとしても Android が自動で取り消します(`settings put global adb_wifi_enabled 1` がすぐ 0 に戻り、ログに `Unable to start customAdbWifiNetworkConfirmation` と出る)。
+- 上の `adb tcpip` の方式は、adb の内部の設定(`service.adb.tcp.port`)を変えて adb を起動し直すもので、USB の adb からしか実行できません。普通のアプリには、その権限がありません。
+- このため、再起動のあとは USB が 1 回必要です。
 
 ### PICO Motion Tracker(腰と足)
 
